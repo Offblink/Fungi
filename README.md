@@ -34,11 +34,12 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 
 ## 快速开始
 
-要求 Python ≥ 3.13，PyQt6（托盘/通知），ruff + pytest（开发）。
+要求 Python ≥ 3.13。运行时唯一第三方依赖是 PyQt6（托盘/通知）；LLM 与 HTTP 均走标准库。开发另需 ruff + pytest。
 
 ```powershell
 # 依赖
 pip install PyQt6
+pip install ruff pytest  # 仅开发
 
 # 模型配置（config.json，同目录；不入库）
 # { "api_key": "...", "endpoint": "https://api.z.ai/api/paas/v4/chat/completions", "model": "glm-5.3-flash" }
