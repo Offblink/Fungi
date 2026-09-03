@@ -120,7 +120,13 @@ ask 是普通消息，不需要独立协调设施：
   （核心洞见 2 不破）。
 - **文件传输（C2，落对端本地盘）**：字节面 store-and-forward——`POST /api/transfer`
   服务端从 store 复制暂存（上限 `max_file_mb`，config.json，默认 200），envelope 只传元数据；
-  控制面复用 consent——接收方 comm clone 向属主本机 clone 发 ask（始终允许规则适用），
+  控制面复用 consent——接收方 comm clone 向属主本机 clone 发 ask（同意模式由滑块控制，见下），
   同意后经 `GET /api/transfer` 下载落盘 `<inbox_dir>/<来源host>/<文件名>`（config.json
   `inbox_dir`，默认 `<repo>/inbox`，重名加序号，basename 消毒）。落盘路径经 result envelope
   回执发送方。transfers 注册表在内存，server 重启丢失未拉取的暂存文件（v1 容忍，与 §3 一致）。
+- **同意模式滑块（2026-09-04 修订）**：一次性「始终允许」废除——持久放行改为每个好友的
+  可见可逆开关（WebUI 好友会话顶部滑块，左=允许，右=询问），存于 `~/.fungi/consent_rules.json`
+  的 `modes`（host → allow|ask，默认 ask）；旧版 `always_allow` 地址列表自动迁移为 host 模式。
+  判定键为 ask body 的 `from`（逻辑请求方）——传输回执的 envelope src 是接收方自己的
+  comm clone，按 src 键控会错挂到自家 host。ask_user（通用提问）永不自动放行。
+

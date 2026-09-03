@@ -7,8 +7,10 @@ cursor). Roster diffs (server monitor thread / client heartbeat) add and
 remove comm clones on both ends. The WebUI starts lazily from the tray and
 runs the local clone's toolset with hub-backed sessions.
 
-Always-allow: consent-shaped asks from a remote orchestrator the user granted
-「始终允许」 are auto-answered yes at on_ask — no notification, no card.
+Consent modes (WebUI friend-view slider): a host set to "allow" gets its
+consent-shaped asks (file ops, transfers) auto-answered yes at on_ask — no
+notification, no card. Mode "ask" (default) raises a card; modes are visible
+and reversible in the friend view.
 """
 
 import contextlib
@@ -172,16 +174,21 @@ class RoomBase:
     # ── incoming asks: auto-allow -> cards + notification ──
 
     def _on_ask(self, env: Envelope) -> None:
-        if _is_consent(env.body) and self.rules.allows(env.src):
-            self._send_answer(env, "yes")  # always-allowed: silent grant
+        # The logical requester is body["from"] (ask_consent/transfer both set
+        # it). For transfer receipts the envelope src is the receiving host's
+        # OWN comm clone — keying the mode on env.src would key the friend's
+        # slider to the wrong host.
+        src = str(env.body.get("from") or env.src)
+        if _is_consent(env.body) and self.rules.allows(src):
+            self._send_answer(env, "yes")  # slider says allow: silent grant
             return
         if not self.cards.record(env):
             return  # replay/duplicate
         if self.notifier is not None:
             try:
-                src_host, _role, _peer = parse_addr(env.src)
+                src_host, _role, _peer = parse_addr(src)
             except Exception:
-                src_host = env.src
+                src_host = src
             self.notifier.ask(src_host, _summary(env.body))
 
     def _send_answer(self, ask: Envelope, value) -> None:
@@ -467,10 +474,6 @@ class RoomRuntime(WebUIRuntime):
             ask_id, value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
         )
         if card is not None:
-            if value == "always":
-                # always-allow: remember this orchestrator; future asks auto-grant
-                self.room.rules.allow(card.src)
-                value = "yes"
             self.room._send_answer(card, value)
             return True
         return resolve_ask(ask_id, value)
@@ -506,6 +509,13 @@ class RoomRuntime(WebUIRuntime):
                     }
                 )
         return out
+
+    # ── consent slider (per-friend mode, visible + reversible) ──
+    def consent_mode(self, host: str) -> str:
+        return self.room.rules.mode_for(host)
+
+    def set_consent_mode(self, host: str, mode: str) -> None:
+        self.room.rules.set_mode(host, mode)
 
     # ── friends / comm conversations ──
     def peers(self) -> list[str]:

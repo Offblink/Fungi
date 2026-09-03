@@ -100,6 +100,13 @@ class WebUIRuntime:
         """Read-only clone-to-clone conversation with `host` (room mode)."""
         return []
 
+    def consent_mode(self, host: str) -> str:  # noqa: ARG002 (room mode overrides)
+        """Per-friend consent mode: "allow" or "ask" (room mode)."""
+        return "ask"
+
+    def set_consent_mode(self, host: str, mode: str) -> None:
+        pass
+
     def mcp_tools(self) -> dict:
         return mcp_extra_tools(load_config().mcp_servers)
 
@@ -202,6 +209,12 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self._send_json(data)
         elif route == "/peers":
             self._send_json({"peers": self.runtime.peers()})
+        elif route == "/consent-mode":
+            host = (parse_qs(url.query).get("host") or [None])[0]
+            if not host:
+                self._send_json({"error": "missing host"}, status=400)
+            else:
+                self._send_json({"mode": self.runtime.consent_mode(host)})
         elif route == "/comm-log":
             host = (parse_qs(url.query).get("host") or [None])[0]
             if not host:
@@ -268,6 +281,15 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 [{"role": "system", "content": self.runtime.new_session_prompt()}],
             )
             self._send_json({"id": session_id, "title": "(new session)"})
+        elif url.path == "/consent-mode":
+            data = self._read_body()
+            host = str(data.get("host") or "")
+            mode = str(data.get("mode") or "")
+            if not host or mode not in ("allow", "ask"):
+                self._send_json({"error": "need host and mode (allow|ask)"}, status=400)
+            else:
+                self.runtime.set_consent_mode(host, mode)
+                self._send_json({"ok": True, "mode": mode})
         elif url.path == "/pickfile":
             self._handle_pickfile()
         else:

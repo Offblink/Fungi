@@ -457,7 +457,7 @@ async function pumpStream(url, body) {
 function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
-  const visible = currentSessionId === t.sessionId;
+  const visible = currentSessionId === t.sessionId && !friendView;
   switch (obj.type) {
     case 'text': {
       const last = t.entries[t.entries.length - 1];
@@ -746,12 +746,12 @@ function buildPendingAskCard(a) {
     card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + ' \u00b7 consent</div>'
       + '<div class="ask-block">' + askQuestionHtml(q, 0).replace('<div class="ask-options"></div>', '') + '</div>'
       + '<div class="ask-consent-actions"><input placeholder="Custom answer... (optional)">'
-      + '<button class="ask-allow">允许</button><button class="ask-always">始终允许</button>'
-      + '<button class="ask-deny">禁止</button><button class="ask-send">Send</button></div>';
+      + '<button class="ask-allow">允许</button>'
+      + '<button class="ask-deny">禁止</button><button class="ask-send">Send</button></div>'
+      + '<div class="ask-hint">· 需要长期放行？在好友会话顶部把滑块拨到「允许」</div>';
     const inp = card.querySelector('input');
     const send = v => answerPendingAsk(a, card, v);
     card.querySelector('.ask-allow').addEventListener('click', () => send('yes'));
-    card.querySelector('.ask-always').addEventListener('click', () => send('always'));
     card.querySelector('.ask-deny').addEventListener('click', () => send('no'));
     const custom = () => { if (inp.value.trim()) send(inp.value.trim()); else inp.focus(); };
     card.querySelector('.ask-send').addEventListener('click', custom);
@@ -789,7 +789,7 @@ function answerPendingAsk(a, card, value) {
   const done = document.createElement('div');
   done.className = 'msg ask-card answered';
   const verdict = value === 'no' ? '\u274C denied'
-    : value === 'always' ? '\u2705 always allowed' : '\u2705 ' + (Array.isArray(value) ? value.join(', ') : value);
+    : '\u2705 ' + (Array.isArray(value) ? value.join(', ') : value);
   done.textContent = (a.kind === 'consent' ? 'Consent ' : 'Ask ') + verdict;
   card.replaceWith(done);
   setTimeout(() => done.remove(), 8000);
@@ -847,11 +847,19 @@ let friendView = null; // host name while viewing a friend conversation
 let allPeers = [];
 
 function leaveFriendView() {
+  const wasViewing = friendView !== null;
   friendView = null;
   document.getElementById('input-area').style.display = '';
   document.getElementById('friend-back').style.display = 'none';
   document.getElementById('friend-title').textContent = '';
+  document.getElementById('friend-bar').classList.remove('visible');
   renderFriendList();
+  if (wasViewing) {
+    // Returning from a friend conversation: openFriendChat wiped the message
+    // area without touching session state, so re-render what was on screen.
+    if (currentSessionId) reloadSessionFromServer();
+    else { msgs.innerHTML = ''; tray.innerHTML = ''; }
+  }
 }
 
 async function loadPeers() {
@@ -888,8 +896,37 @@ async function openFriendChat(host) {
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('friend-back').style.display = '';
   document.getElementById('friend-title').textContent = ' \u2014 @' + host + ' \u00b7 clone conversation (read-only)';
+  document.getElementById('friend-bar').classList.add('visible');
   renderFriendList();
+  initConsentSlider();
+  try {
+    const cm = await (await fetch('/consent-mode?host=' + encodeURIComponent(host))).json();
+    setConsentSlider(cm.mode || 'ask');
+  } catch (e) { setConsentSlider('ask'); }
   await refreshFriendChat();
+}
+
+function setConsentSlider(mode) {
+  const s = document.getElementById('consent-slider');
+  if (!s) return;
+  s.dataset.mode = mode;
+  s._mode = mode;
+}
+
+function initConsentSlider() {
+  const s = document.getElementById('consent-slider');
+  if (!s || s._wired) return;
+  s._wired = true;
+  const apply = clientX => {
+    const rect = s.getBoundingClientRect();
+    const mode = (clientX - rect.left) < rect.width / 2 ? 'allow' : 'ask';
+    if (mode === s._mode || !friendView) return;
+    setConsentSlider(mode);
+    fetch('/consent-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host: friendView, mode }) }).catch(() => {});
+  };
+  s.addEventListener('pointerdown', e => { s.setPointerCapture(e.pointerId); apply(e.clientX); });
+  s.addEventListener('pointermove', e => { if (s.hasPointerCapture && s.hasPointerCapture(e.pointerId)) apply(e.clientX); });
 }
 
 async function refreshFriendChat() {

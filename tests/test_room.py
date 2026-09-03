@@ -2,6 +2,7 @@
 
 import json
 import time
+import urllib.request
 
 import pytest
 
@@ -47,16 +48,19 @@ def test_ask_cards_record_take_and_dedup():
     assert cards.record(a) is False  # answered ids stay known (replay dedup)
 
 
-def test_consent_rules_persist(tmp_path):
+def test_consent_modes_persist_and_legacy_migrates(tmp_path):
     path = tmp_path / "rules.json"
+    path.write_text(json.dumps({"always_allow": ["beta:comm-alpha"]}), encoding="utf-8")
     rules = ConsentRules(path)
-    assert rules.allows("beta:comm-alpha") is False
-    rules.allow("beta:comm-alpha")
+    assert rules.mode_for("beta") == "allow"  # legacy grant migrated to a visible mode
     assert rules.allows("beta:comm-alpha") is True
+
+    rules.set_mode("beta", "ask")
+    assert rules.mode_for("beta") == "ask"
+    assert rules.allows("beta:comm-alpha") is False
     reloaded = ConsentRules(path)
-    assert reloaded.allows("beta:comm-alpha") is True
-    data = json.loads(path.read_text(encoding="utf-8"))
-    assert data == {"always_allow": ["beta:comm-alpha"]}
+    assert reloaded.mode_for("beta") == "ask"
+    assert "always_allow" not in json.loads(path.read_text(encoding="utf-8"))
 
 
 # ── server role ──
@@ -107,9 +111,9 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
     assert room.hub.asks.get(ask.id)["status"] == "answered"
 
 
-def test_server_always_allow_silently_answers(server_room):
+def test_server_allow_mode_silently_answers(server_room):
     room = server_room
-    room.rules.allow("alpha:comm-beta")
+    room.rules.set_mode("alpha", "allow")
 
     requester_inbox = room.hub.relay.register_local("alpha:comm-beta")
     _send_ask(
@@ -132,7 +136,7 @@ def test_server_always_allow_silently_answers(server_room):
     ), "auto-allowed ask was never answered yes"
 
 
-def test_route_answer_always_grants_future_asks(server_room):
+def test_card_answer_is_one_shot_but_slider_mode_persists(server_room):
     room = server_room
     requester_inbox = room.hub.relay.register_local("alpha:comm-gamma")
     ask = _send_ask(
@@ -149,10 +153,10 @@ def test_route_answer_always_grants_future_asks(server_room):
     )
     assert _wait(room.cards.pending)
     runtime = room.webui_runtime()
-    assert runtime.route_answer(ask.id, "always") is True
-    assert room.rules.allows("alpha:comm-gamma")
+    assert runtime.route_answer(ask.id, "yes") is True
+    assert room.rules.mode_for("alpha") == "ask"  # a one-shot card grants nothing
 
-    # next consent ask from the same orchestrator: no card, silent yes
+    # same-source ask right after: a new card, not a silent yes
     second = _send_ask(
         room.hub,
         "alpha:comm-gamma",
@@ -165,13 +169,48 @@ def test_route_answer_always_grants_future_asks(server_room):
             "question": "Allow again?",
         },
     )
+    assert _wait(lambda: any(c["id"] == second.id for c in room.cards.pending()))
+
+    # slider: allow mode makes future asks silent and reversible
+    runtime.set_consent_mode("alpha", "allow")
+    third = _send_ask(
+        room.hub,
+        "alpha:comm-gamma",
+        "alpha:local",
+        {
+            "from": "alpha:comm-gamma",
+            "action": "write",
+            "path": "homes/alpha/w.md",
+            "reason": "r",
+            "question": "Allow a third time?",
+        },
+    )
     assert _wait(
         lambda: any(
-            m.type == "answer" and m.reply_to == second.id and m.body == {"value": "yes"}
+            m.type == "answer" and m.reply_to == third.id and m.body == {"value": "yes"}
             for m in _all_msgs(requester_inbox)
         )
-    ), "second ask was not auto-answered"
-    assert not [c for c in room.cards.pending() if c["id"] == second.id]
+    ), "allow-mode ask was not auto-answered"
+    assert not [c for c in room.cards.pending() if c["id"] == third.id]
+
+    runtime.set_consent_mode("alpha", "ask")  # reversible: back to cards
+    assert room.rules.mode_for("alpha") == "ask"
+
+
+def test_consent_mode_endpoint_roundtrip(server_room):
+    room = server_room
+    url = room.open_webui(open_browser=False)
+    d = json.loads(urllib.request.urlopen(url + "/consent-mode?host=alpha", timeout=5).read())
+    assert d["mode"] == "ask"
+    req = urllib.request.Request(
+        url + "/consent-mode",
+        data=json.dumps({"host": "alpha", "mode": "allow"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    assert json.loads(urllib.request.urlopen(req, timeout=5).read())["ok"] is True
+    assert room.rules.mode_for("alpha") == "allow"
+    assert room.webui_runtime().consent_mode("alpha") == "allow"
 
 
 def test_server_roster_monitor_adds_and_removes_comm_clones(server_room):
@@ -194,6 +233,47 @@ def test_server_runtime_sessions_backed_by_hub_store(server_room):
     assert runtime.new_session_prompt().startswith("You are the local Orchestrator on host alpha")
     runtime.sessions_delete(sid)
     assert runtime.sessions_list() == []
+
+
+def test_slider_keys_on_logical_requester_not_envelope_src(server_room):
+    """Transfer receipts: the ask envelope's src is the receiving host's own
+    comm clone; the friend's slider must still govern (body.from wins)."""
+    room = server_room
+    room.rules.set_mode("alpha", "allow")
+    requester_inbox = room.hub.relay.host_buffer("beta")  # answer dst host = beta
+    _send_ask(
+        room.hub,
+        "beta:comm-alpha",  # envelope src: our OWN comm clone (transfer path)
+        "alpha:local",
+        {
+            "from": "alpha:comm-beta",  # logical requester: the friend
+            "action": "receive file",
+            "path": "report.txt",
+            "reason": "r",
+            "question": "Accept file?",
+        },
+    )
+    assert _wait(
+        lambda: any(
+            m.type == "answer" and m.body == {"value": "yes"} for m in _all_msgs(requester_inbox)
+        )
+    ), "allow-mode transfer ask was not auto-answered"
+    assert room.cards.pending() == []
+
+
+def test_slider_does_not_auto_allow_generic_ask_user(server_room):
+    room = server_room
+    room.rules.set_mode("alpha", "allow")
+    requester_inbox = room.hub.relay.register_local("alpha:comm-beta")
+    _send_ask(
+        room.hub,
+        "alpha:comm-beta",
+        "alpha:local",
+        {"from": "alpha:comm-beta", "questions": [{"question": "Pick one?", "options": []}]},
+    )
+    time.sleep(0.3)
+    assert not any(m.type == "answer" for m in _all_msgs(requester_inbox))
+    assert room.cards.pending(), "generic ask_user must still raise a card"
 
 
 # ── client role ──
