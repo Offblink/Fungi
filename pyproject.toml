@@ -1,0 +1,39 @@
+[project]
+name = "fungi"
+version = "0.1.0"
+description = "Fungi — LAN multi-host Orchestrator network built on the YESIR TriLayer agent harness"
+requires-python = ">=3.13"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+extend-exclude = ["web", "sessions", "docs"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+    "PL",  # pylint
+    "ARG", # unused arguments
+    "PTH", # use pathlib
+    "RET", # return simplification
+]
+ignore = [
+    "PLR0911", # too many return statements (tool dispatch)
+    "PLR0912", # too many branches (UI/server dispatch)
+    "PLR0913", # too many arguments (tool signatures)
+    "PLR0915", # too many statements (ported handlers)
+    "PLR2004", # magic values (protocol constants)
+    "SIM108",  # ternary instead of if/else (readability)
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
