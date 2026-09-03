@@ -152,11 +152,18 @@ class TriLayer:
         sink: Sink,
         llm: Callable[[list[dict], list[dict]], LLMResult] | None = None,
         should_abort: Callable[[], bool] | None = None,
+        child_tool_names: frozenset[str] | None = None,
+        child_extra_tools: dict[str, BoundTool] | None = None,
     ) -> None:
+        """child_tool_names/child_extra_tools: when set, spawned subagents use
+        this surface instead of the native defaults — a clone's spawn inherits
+        the clone's file restrictions (spec 6.1)."""
         self.cfg = cfg
         self.sink = sink
         self._llm = llm
         self._should_abort = should_abort
+        self._child_tool_names = child_tool_names
+        self._child_extra_tools = child_extra_tools or {}
         self._active = 0
         self._lock = threading.Lock()
         # spec_id -> {id, call_id, layer, goal, reply_format, status, events: [...]}
@@ -186,6 +193,29 @@ class TriLayer:
             parallel_tools={"spawn"},
             llm=self._llm,
             model=self.cfg.model_for(1),
+            should_abort=self._should_abort,
+        )
+
+    def build_clone_agent(
+        self,
+        sink: Sink,
+        *,
+        system_prompt: str,
+        extra_tools: dict[str, BoundTool],
+        tool_names: frozenset[str] | set[str] = frozenset(),
+        model: str | None = None,
+    ) -> Agent:
+        """A clone turn agent: clone's prompt/tools + spawn; children inherit
+        the clone's file surface (see __init__ child_* params)."""
+        return Agent(
+            self.cfg,
+            sink,
+            system_prompt=system_prompt,
+            tool_names=tool_names,
+            extra_tools={"spawn": self.bound_spawn(1), **extra_tools},
+            parallel_tools={"spawn"},
+            llm=self._llm,
+            model=model or self.cfg.model_for(1),
             should_abort=self._should_abort,
         )
 
@@ -255,11 +285,15 @@ class TriLayer:
             self.cfg,
             child_sink,
             system_prompt=L3_SYSTEM if spec.layer == 3 else L2_SYSTEM,
-            tool_names=tools.L3_TOOL_NAMES if spec.layer == 3 else tools.BASE_TOOL_NAMES,
+            tool_names=(
+                self._child_tool_names
+                if self._child_tool_names is not None
+                else (tools.L3_TOOL_NAMES if spec.layer == 3 else tools.BASE_TOOL_NAMES)
+            ),
             extra_tools=(
-                {"spawn": self.bound_spawn(spec.layer), **mcp_extra_tools(self.cfg.mcp_servers)}
+                {"spawn": self.bound_spawn(spec.layer), **self._child_extra_tools}
                 if spec.layer == 2
-                else {}
+                else dict(self._child_extra_tools)
             ),
             parallel_tools={"spawn"},
             llm=self._llm,

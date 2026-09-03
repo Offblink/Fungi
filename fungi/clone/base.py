@@ -9,6 +9,7 @@ worker thread, keeping turns serial per clone.
 import queue
 import threading
 
+from .. import tools
 from ..agent import Agent, BoundTool
 from ..config import Config
 from ..events import Sink
@@ -17,8 +18,10 @@ from ..hub.client import HubClient
 from ..hub.relay import Relay
 from ..pending import PendingAsks
 from ..protocol import Envelope, parse_addr
+from ..trilayer import TriLayer
 
 TURN_TYPES = ("chat", "task")
+MAX_CHAT_HISTORY = 40  # chat messages kept per clone; older entries are dropped
 
 
 class LocalTransport:
@@ -85,6 +88,9 @@ class Clone:
         poll_timeout: float = 5.0,
         on_ask=None,
         pending: PendingAsks | None = None,
+        tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
+        child_tool_names: frozenset[str] | None = None,
+        child_extra_tools: dict[str, BoundTool] | None = None,
     ):
         self.addr = addr
         self.host, self.role, self.peer = parse_addr(addr)
@@ -92,6 +98,12 @@ class Clone:
         self.cfg = cfg
         self.sink = sink
         self.tools = tools or {}
+        # Native base-tool whitelist; comm clones pass frozenset() so only the
+        # guarded extra tools exist (spec 6.1; the path guard is server-side).
+        self.tool_names = frozenset(tool_names)
+        # Spawned worker surface (None -> TriLayer native defaults)
+        self.child_tool_names = child_tool_names
+        self.child_extra_tools = child_extra_tools
         self.system_prompt = system_prompt
         self.llm = llm
         self.model = model
@@ -99,6 +111,7 @@ class Clone:
         self.on_ask = on_ask
         # `is not None` (not `or`): an empty PendingAsks is falsy via __len__
         self.pending = pending if pending is not None else PendingAsks()
+        self.history: list[dict] = []  # chat exchanges kept locally (no-reply stays)
         self._cursor = 0
         self._stop = threading.Event()
         self._work: queue.Queue[Envelope] = queue.Queue()
@@ -175,25 +188,46 @@ class Clone:
         return f"[{env.src}] {env.body.get('text', '')}"
 
     def build_agent(self) -> Agent:
-        return Agent(
+        """Per-turn agent: clone's whitelist + guarded extra tools + spawn
+        (TriLayer L2/L3; children inherit this clone's file surface)."""
+        trilayer = TriLayer(
             self.cfg,
+            self.sink,
+            llm=self.llm,
+            child_tool_names=self.child_tool_names,
+            child_extra_tools=self.child_extra_tools,
+        )
+        return trilayer.build_clone_agent(
             self.sink,
             system_prompt=self.system_prompt,
             extra_tools=self.tools,
-            llm=self.llm,
+            tool_names=self.tool_names,
             model=self.model,
         )
 
     def run_turn(self, env: Envelope) -> None:
         agent = self.build_agent()
-        messages: list[dict] = [{"role": "user", "content": self.render_input(env)}]
+        if env.type == "chat":
+            # Chat turns ride the accumulated local history.
+            messages = [*self.history, {"role": "user", "content": self.render_input(env)}]
+        else:
+            messages = [{"role": "user", "content": self.render_input(env)}]
         result = agent.run(messages)
         reply = (result.content or "").strip()
-        if env.type == "task":
-            body = {"ok": True, "payload": reply}
-        else:
-            body = {"text": reply}
-        out_type = "result" if env.type == "task" else "chat"
+        if env.type == "chat":
+            # spec 6.x: the Orchestrator decides whether to reply — via an
+            # explicit send_peer call. No auto-reply; the exchange is kept.
+            self.history.append({"role": "user", "content": self.render_input(env)})
+            if reply:
+                self.history.append({"role": "assistant", "content": reply})
+            del self.history[:-MAX_CHAT_HISTORY]
+            return
         self.transport.send(
-            Envelope(src=self.addr, dst=env.src, type=out_type, body=body, reply_to=env.id)
+            Envelope(
+                src=self.addr,
+                dst=env.src,
+                type="result",
+                body={"ok": True, "payload": reply},
+                reply_to=env.id,
+            )
         )

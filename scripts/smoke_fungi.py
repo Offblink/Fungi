@@ -257,7 +257,8 @@ def final_text(events: list[dict], base: str) -> str:
     with urllib.request.urlopen(f"{base}/session?id={sid}", timeout=10) as resp:
         data = json.loads(resp.read())
     assistant = [
-        m["content"] for m in data.get("messages", [])
+        m["content"]
+        for m in data.get("messages", [])
         if m.get("role") == "assistant" and m.get("content")
     ]
     return assistant[-1] if assistant else ""

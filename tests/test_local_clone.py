@@ -109,8 +109,6 @@ def test_delegate_roundtrip_via_full_loop(room):
             LLMResult(content="done"),
         ]
     )
-    # capture the local clone's chat reply on the hub-side local clone address
-    reply_inbox = hub.relay.register_local("srv:local")
     local = build_local_clone(
         "alpha",
         RemoteTransport(clients["alpha"]),
@@ -126,9 +124,17 @@ def test_delegate_roundtrip_via_full_loop(room):
         hub.send(
             Envelope(src="srv:local", dst="alpha:local", type="chat", body={"text": "sync please"})
         )
-        replies, _cursor = reply_inbox.after(0, 10.0)
-        assert replies and replies[0].type == "chat"
-        assert replies[0].body == {"text": "done"}
+        # chat turns never auto-reply (the Orchestrator chooses via send_peer);
+        # the turn still runs and the exchange lands in the local history.
+        _wait(
+            lambda: (
+                local.history
+                and local.history[-1].get("role") == "assistant"
+                and local.history[-1].get("content") == "done"
+            ),
+            10.0,
+            "chat turn never completed into history",
+        )
         # the delegate tool result (the remote payload) reached the agent conversation
         tool_results = [
             m.get("content", "") for call in fake.calls for m in call if m.get("role") == "tool"

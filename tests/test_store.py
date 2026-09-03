@@ -23,10 +23,19 @@ def test_public_free_for_any_host(store):
     assert store.read(store.resolve("beta", "public/x.txt")) == "hello"
 
 
-def test_own_home_free(store):
+def test_own_home_read_free_write_needs_consent(store):
     p = store.resolve("alpha", "homes/alpha/notes/a.md")
-    store.write(p, "# notes")
+    store.write(p, "# notes")  # direct store.write bypasses the guard
+    # own-home read: free
     assert "notes" in store.read(store.resolve("alpha", "homes/alpha/notes/a.md"))
+    # own-home write via the guarded fs path: needs the own user's consent
+    with pytest.raises(GuardError):
+        store.resolve("alpha", "homes/alpha/notes/b.md", mutating=True)
+    ask = store.asks.open("alpha", {"action": "write", "path": "homes/alpha/notes/b.md"})
+    store.asks.resolve(ask["ask_id"], value="yes")
+    p2 = store.resolve("alpha", "homes/alpha/notes/b.md", consent_id=ask["ask_id"], mutating=True)
+    store.write(p2, "own write")
+    assert "own write" in store.read(store.resolve("alpha", "homes/alpha/notes/b.md"))
 
 
 def test_other_home_requires_consent(store):

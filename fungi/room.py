@@ -33,6 +33,7 @@ from .hub.relay import Inbox
 from .protocol import Envelope, parse_addr
 from .server import WebUIRuntime, make_webui_server
 from .tools.ask import make_ask_tool, resolve_ask
+from .trilayer import TriLayer
 
 MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
@@ -436,13 +437,20 @@ class RoomRuntime(WebUIRuntime):
         # ask_user rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).
         tools["ask_user"] = make_ask_tool(sink)
-        return Agent(
+        trilayer = TriLayer(
             self.room.cfg,
+            sink,
+            llm=self.room.llm,
+            should_abort=should_abort,
+            child_tool_names=clone.child_tool_names,
+            child_extra_tools=clone.child_extra_tools,
+        )
+        return trilayer.build_clone_agent(
             sink,
             system_prompt=clone.system_prompt,
             extra_tools=tools,
-            llm=self.room.llm,
-            should_abort=should_abort,
+            tool_names=clone.tool_names,
+            model=clone.model,
         )
 
     # ── answers ──

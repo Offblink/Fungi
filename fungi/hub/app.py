@@ -39,7 +39,9 @@ def fs_via_hub(
             else:
                 result = store.grep(root, pattern or "")
         else:
-            target = store.resolve(host, path, consent_id=consent_id)
+            target = store.resolve(
+                host, path, consent_id=consent_id, mutating=op in {"write", "edit"}
+            )
             if op == "ls":
                 result = store.ls(target)
             elif op == "read":

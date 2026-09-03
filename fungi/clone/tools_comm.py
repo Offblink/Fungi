@@ -118,6 +118,14 @@ class CommTools:
     def grep_files(self, args: dict) -> str:
         return self._fs("grep", str(args.get("path") or ""), pattern=str(args.get("pattern") or ""))
 
+    def fs_bound(self) -> dict[str, BoundTool]:
+        """Guarded fs tools only — the surface spawned workers inherit."""
+        return {
+            name: bound
+            for name, bound in self.bound().items()
+            if name in {"read_file", "write_file", "edit_file", "glob_files", "grep_files"}
+        }
+
     # ── registration ──
 
     def bound(self) -> dict[str, BoundTool]:

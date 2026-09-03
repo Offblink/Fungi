@@ -47,12 +47,20 @@ class Store:
             raise GuardError(f"homes path needs an owner: {rel!r}")
         return pure
 
-    def resolve(self, host: str, rel: str, consent_id: str | None = None) -> Path:
-        """Guard a relative path for a host; returns the resolved absolute path."""
+    def resolve(
+        self, host: str, rel: str, consent_id: str | None = None, *, mutating: bool = False
+    ) -> Path:
+        """Guard a relative path for a host; returns the resolved absolute path.
+
+        Non-owner homes/ access always needs consent (read and write). Own-home
+        WRITES need the own user's consent too (spec 6.1); own-home reads stay
+        free — the clone belongs to that host."""
         pure = self._parse_rel(rel)
         owner = pure.parts[1] if pure.parts[0] == "homes" else None
         if owner is not None and owner != host and not self._consent_ok(consent_id):
             raise GuardError(f"consent required: {host} -> homes/{owner}/")
+        if owner == host and mutating and not self._consent_ok(consent_id):
+            raise GuardError(f"consent required for own-home write: {host} -> homes/{host}/")
         resolved = (self.root / pure).resolve()
         if resolved != self.root and self.root not in resolved.parents:
             raise GuardError(f"path escapes data root: {rel!r}")
