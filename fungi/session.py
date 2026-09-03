@@ -30,33 +30,89 @@ def get_session_title(messages: list[dict[str, Any]]) -> str:
     return "(empty)"
 
 
+class SessionStore:
+    """Session directory backend; the hub points it at data/sessions."""
+
+    def __init__(self, directory: Path):
+        self.dir = directory
+
+    def ensure_dir(self) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def list_sessions(self) -> list[dict[str, Any]]:
+        """Metadata for all sessions, newest first. Broken files are skipped."""
+        self.ensure_dir()
+        result = []
+        for path in sorted(
+            self.dir.glob("*.json"),
+            key=lambda p: (p.stat().st_mtime, p.name),
+            reverse=True,
+        ):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            result.append(
+                {
+                    "id": data.get("id"),
+                    "title": data.get("title"),
+                    "created": data.get("created"),
+                    "updated": data.get("updated"),
+                    "msgCount": len(data.get("messages", [])),
+                }
+            )
+        return result
+
+    def save(
+        self,
+        session_id: str,
+        title: str,
+        messages: list[dict[str, Any]],
+        subagents: list[dict[str, Any]] | None = None,
+        asks: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.ensure_dir()
+        path = self.dir / f"{session_id}.json"
+        created = _now()
+        if path.is_file():
+            with contextlib.suppress(OSError, json.JSONDecodeError):
+                created = json.loads(path.read_text(encoding="utf-8-sig")).get("created", created)
+        payload = {
+            "id": session_id,
+            "title": title,
+            "created": created,
+            "updated": _now(),
+            "messages": messages,
+            "subagents": subagents or [],
+            "asks": asks or [],
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def load(self, session_id: str) -> dict[str, Any] | None:
+        path = self.dir / f"{session_id}.json"
+        if not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def delete(self, session_id: str) -> None:
+        path = self.dir / f"{session_id}.json"
+        path.unlink(missing_ok=True)
+
+
+def _store() -> SessionStore:
+    """Rebuild from the current module global so tests can monkeypatch SESSIONS_DIR."""
+    return SessionStore(SESSIONS_DIR)
+
+
 def ensure_dir() -> None:
-    SESSIONS_DIR.mkdir(exist_ok=True)
+    _store().ensure_dir()
 
 
 def list_sessions() -> list[dict[str, Any]]:
-    """Metadata for all sessions, newest first. Broken files are skipped."""
-    ensure_dir()
-    result = []
-    for path in sorted(
-        SESSIONS_DIR.glob("*.json"),
-        key=lambda p: (p.stat().st_mtime, p.name),
-        reverse=True,
-    ):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        result.append(
-            {
-                "id": data.get("id"),
-                "title": data.get("title"),
-                "created": data.get("created"),
-                "updated": data.get("updated"),
-                "msgCount": len(data.get("messages", [])),
-            }
-        )
-    return result
+    return _store().list_sessions()
 
 
 def save_session(
@@ -66,34 +122,12 @@ def save_session(
     subagents: list[dict[str, Any]] | None = None,
     asks: list[dict[str, Any]] | None = None,
 ) -> None:
-    ensure_dir()
-    path = SESSIONS_DIR / f"{session_id}.json"
-    created = _now()
-    if path.is_file():
-        with contextlib.suppress(OSError, json.JSONDecodeError):
-            created = json.loads(path.read_text(encoding="utf-8-sig")).get("created", created)
-    payload = {
-        "id": session_id,
-        "title": title,
-        "created": created,
-        "updated": _now(),
-        "messages": messages,
-        "subagents": subagents or [],
-        "asks": asks or [],
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _store().save(session_id, title, messages, subagents, asks)
 
 
 def load_session(session_id: str) -> dict[str, Any] | None:
-    path = SESSIONS_DIR / f"{session_id}.json"
-    if not path.is_file():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    return _store().load(session_id)
 
 
 def delete_session(session_id: str) -> None:
-    path = SESSIONS_DIR / f"{session_id}.json"
-    path.unlink(missing_ok=True)
+    _store().delete(session_id)

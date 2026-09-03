@@ -18,8 +18,6 @@
 | `public/` | server 存储上的公共目录，通讯 clone 自由读写 |
 | `homes/<host>/` | server 存储上各 host 的属地目录，非属主访问需属主用户 consent |
 
-clone 编址 `host:role[-peer]`，如 `alpha:local`、`alpha:comm-beta`。
-
 ## 2. 拓扑与生命周期
 
 - server 启动：生成/读取房间 token，起 hub HTTP 服务 + 本机 clone；通讯 clone 按名册动态增删。
@@ -32,7 +30,7 @@ clone 编址 `host:role[-peer]`，如 `alpha:local`、`alpha:comm-beta`。
 JSON envelope，HTTP 承载：
 
 ```json
-{"v": 1, "id": "uuid", "from": "alpha:comm-beta", "to": "beta:comm-alpha",
+{"v": 1, "id": "uuid", "src": "alpha:comm-beta", "dst": "beta:comm-alpha",
  "type": "chat", "ts": 1730000000, "reply_to": null, "body": {}}
 ```
 
