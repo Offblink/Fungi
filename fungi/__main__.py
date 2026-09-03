@@ -53,6 +53,20 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _lan_ip() -> str:
+    """Best-effort LAN address for the printed join command."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))  # routing lookup only, no packet sent
+            return sock.getsockname()[0]
+    except OSError:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "127.0.0.1"
+
+
 def run_room(args: argparse.Namespace) -> int:
     from PyQt6.QtCore import QSharedMemory, Qt  # noqa: PLC0415 (Qt only in tray mode)
     from PyQt6.QtWidgets import QApplication  # noqa: PLC0415
@@ -104,7 +118,7 @@ def run_room(args: argparse.Namespace) -> int:
     if args.server:
         port = args.port or room.hub.port
         print(f"Fungi server: name={host} data={data_dir_for_tray}")
-        print(f"Join command: python -m fungi --join http://<this-host>:{port} --token {token}")
+        print(f"Join command: python -m fungi --join http://{_lan_ip()}:{port} --token {token}")
     else:
         print(f"Fungi client: name={host} joined {args.join}")
 
