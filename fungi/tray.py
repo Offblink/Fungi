@@ -61,6 +61,8 @@ class TrayController(QSystemTrayIcon):
         menu.addAction("退出", QApplication.quit)
         self.setContextMenu(menu)
         self.activated.connect(self._on_activated)
+        # Qt delivers toast clicks via a dedicated signal, not an activation reason
+        self.messageClicked.connect(self._on_open_webui)
 
     def _open_data_dir(self) -> None:
         if self._data_root is not None:
@@ -70,7 +72,6 @@ class TrayController(QSystemTrayIcon):
         if reason in (
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
-            QSystemTrayIcon.ActivationReason.Message,
         ):
             self._on_open_webui()
 
