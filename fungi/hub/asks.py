@@ -21,9 +21,9 @@ class Asks:
         self._asks: dict[str, dict] = {}
         self._guard = threading.Lock()
 
-    def open(self, dst_host: str, payload: dict) -> dict:
+    def open(self, dst_host: str, payload: dict, ask_id: str | None = None) -> dict:
         record = {
-            "ask_id": new_id(),
+            "ask_id": ask_id or new_id(),
             "dst_host": dst_host,
             "payload": payload,
             "status": PENDING,

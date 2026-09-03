@@ -1,56 +1,11 @@
 """Hub integration: real HTTP server, two simulated hosts over urllib."""
 
-import json
 import threading
-import urllib.error
-import urllib.request
 
-import pytest
-
-from fungi.hub.app import Hub
 from fungi.protocol import Envelope
 
 
-class Client:
-    """Minimal API client simulating one host's process."""
-
-    def __init__(self, base: str, token: str):
-        self.base = base.rstrip("/")
-        self.token = token
-
-    def post(self, path: str, obj: dict) -> tuple[int, dict]:
-        data = json.dumps(obj).encode("utf-8")
-        req = urllib.request.Request(
-            self.base + path, data=data, headers={"Content-Type": "application/json"}
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status, json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    def get(self, path: str) -> tuple[int, dict]:
-        try:
-            with urllib.request.urlopen(self.base + path, timeout=10) as resp:
-                return resp.status, json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    def poll(self, host: str, after: int = 0, timeout: float = 0.0) -> tuple[int, dict]:
-        return self.get(f"/api/poll?host={host}&token={self.token}&after={after}&timeout={timeout}")
-
-
-@pytest.fixture()
-def room(tmp_path):
-    hub = Hub("srv", "room-token", tmp_path)
-    hub.start()
-    names = ("alpha", "beta", "srv")
-    clients = {n: Client(f"http://127.0.0.1:{hub.port}", "room-token") for n in names}
-    yield hub, clients
-    hub.stop()
-
-
-def _send(client: Client, src: str, dst: str, text: str, mid: str = "") -> dict:
+def _send(client, src: str, dst: str, text: str, mid: str = "") -> dict:
     env = Envelope(src=src, dst=dst, type="chat", body={"text": text}, id=mid)
     _code, out = client.post("/api/send", {"token": client.token, "envelope": env.serialize()})
     return out
@@ -82,14 +37,14 @@ def test_chat_via_relay_and_dedup(room):
     out = _send(clients["alpha"], "alpha:comm-beta", "beta:comm-alpha", "ping", mid="m1")
     assert out == {"ok": True, "status": "queued"}
 
-    _code, polled = clients["beta"].poll("beta")
+    _code, polled = clients["beta"].poll_raw("beta")
     assert len(polled["messages"]) == 1
     msg = polled["messages"][0]
     assert msg["src"] == "alpha:comm-beta"
     assert msg["body"] == {"text": "ping"}
     # drained + dedup: replay the same id, poll again → nothing new
     _send(clients["alpha"], "alpha:comm-beta", "beta:comm-alpha", "ping", mid="m1")
-    _code, polled = clients["beta"].poll("beta", after=polled["cursor"])
+    _code, polled = clients["beta"].poll_raw("beta", after=polled["cursor"])
     assert polled["messages"] == []
 
 
@@ -98,7 +53,7 @@ def test_unreachable_bounces_err_back(room):
     clients["alpha"].post("/api/join", {"name": "alpha", "token": "room-token"})
     out = _send(clients["alpha"], "alpha:local", "ghost:local", "hi")
     assert out["ok"] is False
-    _code, polled = clients["alpha"].poll("alpha")
+    _code, polled = clients["alpha"].poll_raw("alpha")
     assert polled["messages"][0]["type"] == "err"
 
 
@@ -180,7 +135,7 @@ def test_leave_stops_poll(room):
     _hub, clients = room
     clients["beta"].post("/api/join", {"name": "beta", "token": "room-token"})
     clients["beta"].post("/api/leave", {"name": "beta", "token": "room-token"})
-    code, _out = clients["beta"].poll("beta")
+    code, _out = clients["beta"].poll_raw("beta")
     assert code == 404
 
 
@@ -197,5 +152,5 @@ def test_reaper_removes_silent_hosts(room):
 
     force_reap()
     assert done.is_set()
-    code, _out = clients["beta"].poll("beta")
+    code, _out = clients["beta"].poll_raw("beta")
     assert code == 404

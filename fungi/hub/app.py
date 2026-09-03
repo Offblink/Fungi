@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..protocol import Envelope, ProtocolError, deserialize
+from ..protocol import Envelope, ProtocolError, deserialize, parse_addr
 from .asks import Asks
 from .relay import Relay
 from .roster import Roster
@@ -16,6 +16,43 @@ MAX_BODY = 5 * 1024 * 1024
 MAX_POLL = 25.0
 ASK_TIMEOUT = 600.0
 REAP_INTERVAL = 5.0
+
+
+def fs_via_hub(
+    store: Store,
+    host: str,
+    op: str,
+    path: str,
+    *,
+    content: str | None = None,
+    old_string: str | None = None,
+    new_string: str | None = None,
+    pattern: str | None = None,
+    consent_id: str | None = None,
+) -> dict:
+    """Shared fs dispatch for the HTTP handler and server-local clones."""
+    try:
+        if op in {"glob", "grep"}:
+            root = store.check_search_root(host, path)
+            if op == "glob":
+                result = store.glob(root, pattern or "*")
+            else:
+                result = store.grep(root, pattern or "")
+        else:
+            target = store.resolve(host, path, consent_id=consent_id)
+            if op == "ls":
+                result = store.ls(target)
+            elif op == "read":
+                result = store.read(target)
+            elif op == "write":
+                result = store.write(target, content or "")
+            elif op == "edit":
+                result = store.edit(target, old_string or "", new_string or "")
+            else:
+                return {"error": f"unknown op: {op}"}
+        return {"ok": True, "result": result}
+    except GuardError as exc:
+        return {"error": str(exc)}
 
 
 class Hub:
@@ -64,7 +101,7 @@ class Hub:
                 self.relay.drop_host(name)
             self.asks.sweep(ASK_TIMEOUT)
 
-    # ── operations shared by handler and tests ──
+    # ── operations shared by handler, clones, and tests ──
 
     def join(self, name: str, addr: str) -> dict:
         new = self.roster.join(name, addr)
@@ -73,6 +110,14 @@ class Hub:
         return {"ok": True, "host": name, "new": new, "peers": self.roster.peers(name)}
 
     def send(self, env: Envelope) -> dict:
+        # ask/answer envelopes maintain the consent registry transparently:
+        # ask -> opened with the envelope id (so consent_id == envelope id),
+        # answer -> resolves the referenced ask.
+        if env.type == "ask":
+            host, _role, _peer = parse_addr(env.dst)
+            self.asks.open(host, env.body, ask_id=env.id)
+        elif env.type == "answer" and env.reply_to:
+            self.asks.resolve(env.reply_to, value=env.body.get("value"))
         status = self.relay.deliver(env)
         return {"ok": status != "bounced", "status": status}
 
@@ -196,34 +241,18 @@ class _Handler(BaseHTTPRequestHandler):
         if not self.hub.roster.known(host):
             self._reply({"error": "unknown host"}, 403)
             return
-        rel = str(body.get("path") or "")
-        pattern = str(body.get("pattern") or "")
-        store = self.hub.store
-        try:
-            if op in {"glob", "grep"}:
-                root = store.check_search_root(host, rel)
-                if op == "glob":
-                    result = store.glob(root, pattern or "*")
-                else:
-                    result = store.grep(root, pattern)
-            else:
-                path = store.resolve(host, rel, consent_id=body.get("consent_id"))
-                if op == "ls":
-                    result = store.ls(path)
-                elif op == "read":
-                    result = store.read(path)
-                elif op == "write":
-                    result = store.write(path, str(body.get("content") or ""))
-                elif op == "edit":
-                    result = store.edit(
-                        path, str(body.get("old_string") or ""), str(body.get("new_string") or "")
-                    )
-                else:
-                    self._reply({"error": "not found"}, 404)
-                    return
-            self._reply({"ok": True, "result": result})
-        except GuardError as exc:
-            self._reply({"error": str(exc)}, 403)
+        out = fs_via_hub(
+            self.hub.store,
+            host,
+            op,
+            str(body.get("path") or ""),
+            content=body.get("content"),
+            old_string=body.get("old_string"),
+            new_string=body.get("new_string"),
+            pattern=body.get("pattern"),
+            consent_id=body.get("consent_id"),
+        )
+        self._reply(out, 403 if "error" in out else 200)
 
     # ── sessions ──
 
