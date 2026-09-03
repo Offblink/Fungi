@@ -4,6 +4,7 @@ Single-host:  python -m fungi [query]           console single-shot
               python -m fungi --web [--port P]  WebUI server (browser opens)
 Room mode:    python -m fungi --server [--name N] [--token T] [--port P] [--data DIR]
               python -m fungi --join URL --token T [--name N]
+GUI launcher: python -m fungi --gui   (host / join / model config)
 
 Room mode starts tray-only (PyQt6); the WebUI opens from the tray.
 """
@@ -27,6 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("query", nargs="*", help="single-shot query (console mode)")
     parser.add_argument("--version", action="version", version=f"fungi {__version__}")
     parser.add_argument("--web", action="store_true", help="single-host WebUI server mode")
+    parser.add_argument(
+        "--gui", action="store_true", help="graphical launcher (host / join / config)"
+    )
     parser.add_argument("--server", action="store_true", help="room mode: host the hub (tray)")
     parser.add_argument("--join", metavar="URL", help="room mode: join the hub at URL (tray)")
     parser.add_argument("--token", help="room token (join requires the server's token)")
@@ -50,6 +54,10 @@ def main(argv: list[str] | None = None) -> int:
 
         run_server(args.port)
         return 0
+    if args.gui:
+        from fungi.gui import run_gui  # noqa: PLC0415
+
+        return run_gui()
     if args.server or args.join:
         return run_room(args)
     build_parser().print_help()
@@ -111,7 +119,7 @@ def run_room(args: argparse.Namespace) -> int:
 
         token = args.token or secrets.token_urlsafe(12)
         data_root = Path(args.data) if args.data else PROJECT_ROOT / "data"
-        room = RoomServer(host, cfg, sink, token, data_root, display=display)
+        room = RoomServer(host, cfg, sink, token, data_root, display=display, port=args.port or 0)
         data_dir_for_tray: Path | None = data_root
     else:
         from fungi.room import RoomClient  # noqa: PLC0415

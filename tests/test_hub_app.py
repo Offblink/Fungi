@@ -1,7 +1,11 @@
 """Hub integration: real HTTP server, two simulated hosts over urllib."""
 
+import json
+import socket
 import threading
+import urllib.request
 
+from fungi.hub.app import Hub
 from fungi.protocol import Envelope
 
 
@@ -58,6 +62,25 @@ def test_display_sanitized_not_rejected(room):
     )
     _code, out = clients["alpha"].get("/api/peers?host=alpha&token=room-token")
     assert out["peers"] == [{"name": "beta", "display": "ab x y " + "z" * (64 - 7)}]
+
+
+def test_hub_binds_requested_port(room):
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        fixed = probe.getsockname()[1]
+    hub = Hub("srv", "room-token", room[0].store.root.parent, port=fixed)
+    hub.start()
+    try:
+        assert hub.port == fixed
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{fixed}/api/join",
+            data=json.dumps({"name": "alpha", "token": "room-token"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert json.loads(resp.read())["ok"] is True
+    finally:
+        hub.stop()
 
 
 def test_bad_token_rejected(room):

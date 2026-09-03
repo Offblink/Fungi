@@ -314,11 +314,12 @@ class RoomServer(RoomBase):
         llm=None,
         rules_path=None,
         display="",
+        port: int = 0,
     ):
         super().__init__(
             host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
         )
-        self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb)
+        self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb, port=port)
         self._monitor: threading.Thread | None = None
         # selftest state (FUNGI_SELFTEST=1)
         self.selftest_answered: str | None = None

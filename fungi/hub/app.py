@@ -124,9 +124,11 @@ class Hub:
         data_root: Path,
         heartbeat_timeout: float = 30.0,
         max_file_mb: int = 200,
+        port: int = 0,
     ):
         self.name = name
         self.token = token
+        self._bind_port = port
         data_root = Path(data_root)
         self.roster = Roster(heartbeat_timeout)
         self.relay = Relay(name)
@@ -147,7 +149,7 @@ class Hub:
 
     def start(self) -> None:
         handler = type("HubHandler", (_Handler,), {"hub": self})
-        self._server = ThreadingHTTPServer(("0.0.0.0", 0), handler)
+        self._server = ThreadingHTTPServer(("0.0.0.0", self._bind_port), handler)
         self._server.daemon_threads = True
         self._thread = threading.Thread(
             target=self._server.serve_forever, name="fungi-hub", daemon=True
