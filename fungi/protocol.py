@@ -4,12 +4,25 @@ An address is ``host:local`` or ``host:comm-<peer>`` — e.g. ``alpha:local``,
 ``alpha:comm-beta``. Wire fields are src/dst (``from`` is a Python keyword).
 """
 
+import re
 import time
 import uuid
 from dataclasses import dataclass
 
 ENVELOPE_VERSION = 1
 TYPES = ("chat", "task", "result", "ask", "answer", "err", "transfer")
+
+# Host names ride envelope addresses, HTTP query strings, data/ file names,
+# and homes/ directories — the ASCII-safe charset keeps every one of those
+# encodings sound (an emoji name breaks http.client's ASCII URL selector).
+HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+
+
+def valid_host_name(name: str) -> bool:
+    return isinstance(name, str) and bool(HOSTNAME_RE.match(name))
+
+
+BAD_NAME_MSG = "bad name: use ASCII letters, digits, '-', '_' (max 32 chars, start alphanumeric)"
 
 
 class ProtocolError(Exception):

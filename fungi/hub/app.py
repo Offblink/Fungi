@@ -13,7 +13,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..protocol import Envelope, ProtocolError, deserialize, new_id, parse_addr
+from ..protocol import (
+    BAD_NAME_MSG,
+    Envelope,
+    ProtocolError,
+    deserialize,
+    new_id,
+    parse_addr,
+    valid_host_name,
+)
 from .asks import Asks
 from .commlog import CommLog
 from .relay import Relay
@@ -166,6 +174,8 @@ class Hub:
     # ── operations shared by handler, clones, and tests ──
 
     def join(self, name: str, addr: str) -> dict:
+        if not valid_host_name(name):
+            raise ValueError(BAD_NAME_MSG)
         new = self.roster.join(name, addr)
         self.store.ensure_home(name)
         self.relay.host_buffer(name)
@@ -287,10 +297,10 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _join(self, body: dict) -> None:
         name = body.get("name")
-        if not isinstance(name, str) or not name or "/" in name:
-            self._reply({"error": "bad name"}, 400)
-            return
-        self._reply(self.hub.join(name, self.client_address[0]))
+        try:
+            self._reply(self.hub.join(str(name), self.client_address[0]))
+        except ValueError as exc:
+            self._reply({"error": str(exc)}, 400)
 
     def _leave(self, body: dict) -> None:
         name = body.get("name")

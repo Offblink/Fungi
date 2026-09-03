@@ -22,6 +22,15 @@ def test_join_and_peers(room):
     assert out["new"] is False
 
 
+def test_join_rejects_unsafe_host_names(room):
+    _hub, clients = room
+    for name in ("\U0001f602", "a/b", "a b", "-x", "x" * 33):
+        code, out = clients["alpha"].post("/api/join", {"name": name, "token": "room-token"})
+        assert code == 400 and "bad name" in out["error"]
+    code, out = clients["alpha"].post("/api/join", {"name": "A-b_9", "token": "room-token"})
+    assert code == 200 and out["ok"] is True
+
+
 def test_bad_token_rejected(room):
     _hub, clients = room
     code, _out = clients["alpha"].post("/api/join", {"name": "alpha", "token": "wrong"})

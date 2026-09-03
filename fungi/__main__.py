@@ -74,6 +74,7 @@ def run_room(args: argparse.Namespace) -> int:
     from fungi.config import load_config  # noqa: PLC0415
     from fungi.events import ConsoleSink  # noqa: PLC0415
     from fungi.notify import Notifier  # noqa: PLC0415
+    from fungi.protocol import BAD_NAME_MSG, valid_host_name  # noqa: PLC0415
     from fungi.tray import TrayController  # noqa: PLC0415
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -91,6 +92,12 @@ def run_room(args: argparse.Namespace) -> int:
 
     cfg = load_config()
     host = args.name or socket.gethostname().split(".")[0]
+    if not valid_host_name(host):
+        # Reject before any network work: the name rides envelope addresses,
+        # HTTP query strings, and data/ file names (emoji names break ASCII
+        # URL encoding on a peer's client — 2026-09-04 real-machine finding).
+        print(f"Invalid host name {host!r}: {BAD_NAME_MSG}")
+        return 2
     sink = ConsoleSink()
 
     if args.server:
