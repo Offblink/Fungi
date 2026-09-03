@@ -31,6 +31,35 @@ def test_join_rejects_unsafe_host_names(room):
     assert code == 200 and out["ok"] is True
 
 
+def test_join_carries_display_name(room):
+    _hub, clients = room
+    code, out = clients["alpha"].post(
+        "/api/join", {"name": "alpha", "token": "room-token", "display": "\U0001f602阿法"}
+    )
+    assert code == 200 and out["roster"] == []  # emoji display is fine (presentation only)
+    clients["beta"].post("/api/join", {"name": "beta", "token": "room-token", "display": "β"})
+    code, out = clients["beta"].get("/api/peers?host=beta&token=room-token")
+    assert out["peers"] == [{"name": "alpha", "display": "\U0001f602阿法"}]
+    # re-join refreshes the nickname
+    clients["alpha"].post("/api/join", {"name": "alpha", "token": "room-token", "display": "新"})
+    _code, out = clients["beta"].get("/api/peers?host=beta&token=room-token")
+    assert out["peers"] == [{"name": "alpha", "display": "新"}]
+    # heartbeat carries the roster for client-side display caching
+    _code, hb = clients["beta"].post("/api/heartbeat", {"name": "beta", "token": "room-token"})
+    assert {"name": "alpha", "display": "新"} in hb["roster"]
+
+
+def test_display_sanitized_not_rejected(room):
+    _hub, clients = room
+    clients["alpha"].post("/api/join", {"name": "alpha", "token": "room-token"})
+    clients["beta"].post(
+        "/api/join",
+        {"name": "beta", "token": "room-token", "display": "a\x01b\x7f x  y " + "z" * 80},
+    )
+    _code, out = clients["alpha"].get("/api/peers?host=alpha&token=room-token")
+    assert out["peers"] == [{"name": "beta", "display": "ab x y " + "z" * (64 - 7)}]
+
+
 def test_bad_token_rejected(room):
     _hub, clients = room
     code, _out = clients["alpha"].post("/api/join", {"name": "alpha", "token": "wrong"})

@@ -65,7 +65,7 @@ def test_peers_endpoint_excludes_self(room):
     _hub, clients = _joined_room(room)
     code, out = clients["alpha"].get("/api/peers?host=alpha&token=room-token")
     assert code == 200
-    assert out["peers"] == ["beta"]
+    assert out["peers"] == [{"name": "beta", "display": ""}]  # display records, not bare names
 
 
 # ── chat fallback (real-machine 2026-09-03 finding: reply text was dropped) ──

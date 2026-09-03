@@ -17,6 +17,7 @@ from ..protocol import (
     BAD_NAME_MSG,
     Envelope,
     ProtocolError,
+    clean_display,
     deserialize,
     new_id,
     parse_addr,
@@ -173,13 +174,19 @@ class Hub:
 
     # ── operations shared by handler, clones, and tests ──
 
-    def join(self, name: str, addr: str) -> dict:
+    def join(self, name: str, addr: str, display: str = "") -> dict:
         if not valid_host_name(name):
             raise ValueError(BAD_NAME_MSG)
-        new = self.roster.join(name, addr)
+        new = self.roster.join(name, addr, clean_display(display))
         self.store.ensure_home(name)
         self.relay.host_buffer(name)
-        return {"ok": True, "host": name, "new": new, "peers": self.roster.peers(name)}
+        return {
+            "ok": True,
+            "host": name,
+            "new": new,
+            "peers": self.roster.peers(name),
+            "roster": self.roster.entries(name),
+        }
 
     def send(self, env: Envelope) -> dict:
         # ask/answer envelopes maintain the consent registry transparently:
@@ -298,7 +305,9 @@ class _Handler(BaseHTTPRequestHandler):
     def _join(self, body: dict) -> None:
         name = body.get("name")
         try:
-            self._reply(self.hub.join(str(name), self.client_address[0]))
+            self._reply(
+                self.hub.join(str(name), self.client_address[0], str(body.get("display") or ""))
+            )
         except ValueError as exc:
             self._reply({"error": str(exc)}, 400)
 
@@ -317,6 +326,7 @@ class _Handler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "peers": self.hub.roster.peers(name),
+                "roster": self.hub.roster.entries(name),
                 "pending_asks": self.hub.asks.pending_for(name),
             }
         )
@@ -326,7 +336,7 @@ class _Handler(BaseHTTPRequestHandler):
         if not self.hub.roster.known(host):
             self._reply({"error": "unknown host"}, 404)
             return
-        self._reply({"ok": True, "peers": self.hub.roster.peers(host)})
+        self._reply({"ok": True, "peers": self.hub.roster.entries(host)})
 
     def _comm_log(self, params: dict) -> None:
         host = (params.get("host") or [""])[0]

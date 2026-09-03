@@ -24,6 +24,16 @@ def valid_host_name(name: str) -> bool:
 
 BAD_NAME_MSG = "bad name: use ASCII letters, digits, '-', '_' (max 32 chars, start alphanumeric)"
 
+# Display names are presentation-only: they never ride addresses, URLs, or file
+# names (that is what the ASCII host-name rule protects), so any visible text —
+# CJK, emoji — is safe. Normalize whitespace, drop control chars, cap length.
+MAX_DISPLAY = 64
+
+
+def clean_display(value) -> str:
+    text = " ".join(str(value or "").split())
+    return "".join(ch for ch in text if 32 <= ord(ch) != 127)[:MAX_DISPLAY]
+
 
 class ProtocolError(Exception):
     pass

@@ -111,8 +111,10 @@ class RoomBase:
         notifier=None,
         llm=None,
         rules_path: Path | None = None,
+        display: str = "",
     ):
         self.host = host
+        self.display = display
         self.cfg = cfg
         self.sink = sink
         self.notifier = notifier
@@ -148,6 +150,15 @@ class RoomBase:
 
     def _peers(self) -> list[str]:
         raise NotImplementedError
+
+    def display_of(self, host: str) -> str:
+        """Presentation nickname for `host` ("" -> UI falls back to the name)."""
+        if getattr(self, "hub", None) is not None:  # server role: direct roster
+            return self.hub.roster.display(host)
+        for entry in getattr(self, "_entries", None) or []:  # client role: cached
+            if entry.get("name") == host:
+                return str(entry.get("display") or "")
+        return ""
 
     def add_comm_clone(self, peer: str, transport) -> None:
         with self._guard:
@@ -189,7 +200,7 @@ class RoomBase:
                 src_host, _role, _peer = parse_addr(src)
             except Exception:
                 src_host = src
-            self.notifier.ask(src_host, _summary(env.body))
+            self.notifier.ask(self.display_of(src_host) or src_host, _summary(env.body))
 
     def _send_answer(self, ask: Envelope, value) -> None:
         self.local.transport.send(
@@ -293,9 +304,20 @@ class RoomServer(RoomBase):
     role = "server"
 
     def __init__(
-        self, host, cfg, sink, token, data_root: Path, notifier=None, llm=None, rules_path=None
+        self,
+        host,
+        cfg,
+        sink,
+        token,
+        data_root: Path,
+        notifier=None,
+        llm=None,
+        rules_path=None,
+        display="",
     ):
-        super().__init__(host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path)
+        super().__init__(
+            host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
+        )
         self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb)
         self._monitor: threading.Thread | None = None
         # selftest state (FUNGI_SELFTEST=1)
@@ -306,7 +328,7 @@ class RoomServer(RoomBase):
     def start(self) -> None:
         self.hub.start()
         # Own roster entry: peers must see this host; the monitor keeps it alive.
-        self.hub.join(self.host, "127.0.0.1")
+        self.hub.join(self.host, "127.0.0.1", self.display)
         self._local = self._make_local(
             LocalTransport(self.hub.relay, self.local_addr, hub=self.hub)
         )
@@ -345,17 +367,30 @@ class RoomClient(RoomBase):
     role = "client"
 
     def __init__(
-        self, host, cfg, sink, server_url: str, token: str, notifier=None, llm=None, rules_path=None
+        self,
+        host,
+        cfg,
+        sink,
+        server_url: str,
+        token: str,
+        notifier=None,
+        llm=None,
+        rules_path=None,
+        display="",
     ):
-        super().__init__(host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path)
-        self.client = HubClient(server_url, token, host)
+        super().__init__(
+            host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
+        )
+        self.client = HubClient(server_url, token, host, display)
         self.poller = HostPoller(self.client, host)
         self._peers_known: set[str] = set()
+        self._entries: list[dict] = []  # roster display records from join/heartbeat
         self._hb: threading.Thread | None = None
 
     def start(self) -> None:
         out = self.client.join()
         self._peers_known = set(out.get("peers") or [])
+        self._entries = list(out.get("roster") or [])
         self.poller.start()
         self._local = self._make_local(
             RemoteTransport(self.client, inbox=self.poller.inbox_for(self.local_addr))
@@ -383,6 +418,7 @@ class RoomClient(RoomBase):
         """One beat: refresh peers (add/remove comm clones), replay pending asks."""
         out = self.client.heartbeat()
         self._peers_known = set(out.get("peers") or [])
+        self._entries = list(out.get("roster") or [])
         with self._guard:
             current = set(self._clones)
         for peer in self._peers_known - current:
@@ -518,8 +554,10 @@ class RoomRuntime(WebUIRuntime):
         self.room.rules.set_mode(host, mode)
 
     # ── friends / comm conversations ──
-    def peers(self) -> list[str]:
-        return self.room._peers()
+    def peers(self) -> list[dict]:
+        if getattr(self.room, "hub", None) is not None:  # server role: direct
+            return self.room.hub.roster.entries(self.room.host)
+        return list(self.room._entries)  # client role: cached roster
 
     def comm_log(self, host: str) -> list[dict]:
         if getattr(self.room, "hub", None) is not None:  # server role: direct

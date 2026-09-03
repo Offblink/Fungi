@@ -740,7 +740,8 @@ const pendingAskIds = new Set();
 function buildPendingAskCard(a) {
   const card = document.createElement('div');
   card.className = 'msg ask-card pending-ask';
-  const from = escapeHtml(a.from || a.src || 'remote host');
+  const fromRaw = String(a.from || a.src || 'remote host');
+  const from = escapeHtml(displayOf(fromRaw.split(':')[0]));
   if (a.kind === 'consent') {
     const q = a.questions[0] || { question: '(consent request)' };
     card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + ' \u00b7 consent</div>'
@@ -843,8 +844,15 @@ pollPendingAsks();
 })();
 
 /* ---------- friends: room members + read-only comm clone conversations ---------- */
-let friendView = null; // host name while viewing a friend conversation
-let allPeers = [];
+let friendView = null; // host name while viewing a friend conversation (wire identity)
+let allPeers = []; // [{name, display}] — display is the nickname, "" falls back to name
+
+function peerName(p) { return typeof p === 'string' ? p : (p && p.name) || ''; }
+function peerDisplay(p) { return typeof p === 'string' ? p : ((p && p.display) || peerName(p)); }
+function displayOf(host) {
+  for (const p of allPeers) if (peerName(p) === host) return peerDisplay(p);
+  return host; // no display -> wire name
+}
 
 function leaveFriendView() {
   const wasViewing = friendView !== null;
@@ -881,10 +889,12 @@ function renderFriendList() {
   if (!allPeers.length) { empty.style.display = ''; return; }
   empty.style.display = 'none';
   allPeers.forEach(p => {
+    const name = peerName(p);
     const row = document.createElement('div');
-    row.className = 'friend-row' + (p === friendView ? ' active' : '');
-    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(p) + '</span>';
-    row.addEventListener('click', () => openFriendChat(p));
+    row.className = 'friend-row' + (name === friendView ? ' active' : '');
+    row.title = name;
+    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
+    row.addEventListener('click', () => openFriendChat(name));
     list.appendChild(row);
   });
 }
@@ -895,7 +905,7 @@ async function openFriendChat(host) {
   tray.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('friend-back').style.display = '';
-  document.getElementById('friend-title').textContent = ' \u2014 @' + host + ' \u00b7 clone conversation (read-only)';
+  document.getElementById('friend-title').textContent = ' \u2014 @' + displayOf(host) + ' \u00b7 clone conversation (read-only)';
   document.getElementById('friend-bar').classList.add('visible');
   renderFriendList();
   initConsentSlider();
@@ -947,15 +957,16 @@ function renderFriendChat(rows) {
   }
   rows.forEach(row => {
     const srcHost = String(row.src || '').split(':')[0];
+    const srcLabel = displayOf(srcHost);
     if (row.kind === 'chat') {
       const cls = srcHost === friendView ? 'msg friend-msg peer' : 'msg friend-msg own';
-      addDiv(cls, '<div class="friend-msg-src">' + escapeHtml(srcHost) + '</div>' + marked.parse(row.text || ''));
+      addDiv(cls, '<div class="friend-msg-src">' + escapeHtml(srcLabel) + '</div>' + marked.parse(row.text || ''));
     } else if (row.kind === 'task') {
       addDiv('msg friend-event task', '&#x1F4E5 Task delegated to ' + escapeHtml(srcHost) + ': ' + escapeHtml(row.text || ''));
     } else if (row.kind === 'transfer') {
       addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     } else if (row.kind === 'result') {
-      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(srcHost) + ': ' + escapeHtml(String(row.text || '').slice(0, 200)));
+      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(srcLabel) + ': ' + escapeHtml(String(row.text || '').slice(0, 200)));
     }
   });
   msgs.scrollTop = msgs.scrollHeight;

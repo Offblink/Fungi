@@ -129,4 +129,10 @@ ask 是普通消息，不需要独立协调设施：
   的 `modes`（host → allow|ask，默认 ask）；旧版 `always_allow` 地址列表自动迁移为 host 模式。
   判定键为 ask body 的 `from`（逻辑请求方）——传输回执的 envelope src 是接收方自己的
   comm clone，按 src 键控会错挂到自家 host。ask_user（通用提问）永不自动放行。
+- **display-name 层（2026-09-04）**：wire 身份仍是 ASCII 安全的 host 名（envelope 地址、
+  URL、文件名——主机名强校验的理由不变），昵称只走展示层。`Member.display` 随 join 携带、
+  re-join 刷新（UI 改名无需重启）；`/api/peers` 与 join/heartbeat 的 `roster` 字段返回
+  `[{name, display}]`；WebUI 侧栏/好友会话标题/旁观消息来源/通知标题显示昵称，无昵称回退
+  显示 name。入口 `--display`，config.json `display` 可存；昵称做清洗（去控制字符、归一
+  空白、截断 64 字符）但不受 ASCII 限制，中文/emoji 均可，且永不进入任何 wire 地址。
 

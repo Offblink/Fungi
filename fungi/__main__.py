@@ -31,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--join", metavar="URL", help="room mode: join the hub at URL (tray)")
     parser.add_argument("--token", help="room token (join requires the server's token)")
     parser.add_argument("--name", help="host name (default: hostname)")
+    parser.add_argument(
+        "--display", help="nickname shown to friends (default: config.json display or --name)"
+    )
     parser.add_argument("--port", type=int, help="hub port (server) / WebUI port (--web)")
     parser.add_argument("--data", metavar="DIR", help="server data directory (default: ./data)")
     return parser
@@ -98,6 +101,9 @@ def run_room(args: argparse.Namespace) -> int:
         # URL encoding on a peer's client — 2026-09-04 real-machine finding).
         print(f"Invalid host name {host!r}: {BAD_NAME_MSG}")
         return 2
+    # display is presentation-only: never validated as a host name, never
+    # allowed to touch addresses/URLs/file names.
+    display = (args.display or cfg.display or "").strip()
     sink = ConsoleSink()
 
     if args.server:
@@ -105,7 +111,7 @@ def run_room(args: argparse.Namespace) -> int:
 
         token = args.token or secrets.token_urlsafe(12)
         data_root = Path(args.data) if args.data else PROJECT_ROOT / "data"
-        room = RoomServer(host, cfg, sink, token, data_root)
+        room = RoomServer(host, cfg, sink, token, data_root, display=display)
         data_dir_for_tray: Path | None = data_root
     else:
         from fungi.room import RoomClient  # noqa: PLC0415
@@ -113,7 +119,7 @@ def run_room(args: argparse.Namespace) -> int:
         if not args.join or not args.token:
             print("--join requires --token (ask the server host for the join command)")
             return 2
-        room = RoomClient(host, cfg, sink, args.join, args.token)
+        room = RoomClient(host, cfg, sink, args.join, args.token, display=display)
         data_dir_for_tray = None
 
     tray = TrayController(on_open_webui=room.open_webui, data_root=data_dir_for_tray)
@@ -124,14 +130,21 @@ def run_room(args: argparse.Namespace) -> int:
 
     if args.server:
         port = args.port or room.hub.port
-        print(f"Fungi server: name={host} data={data_dir_for_tray}")
+        print(
+            f"Fungi server: name={host} data={data_dir_for_tray}"
+            + (f" display={display}" if display else "")
+        )
         print(f"Join command: python -m fungi --join http://{_lan_ip()}:{port} --token {token}")
     else:
-        print(f"Fungi client: name={host} joined {args.join}")
+        print(
+            f"Fungi client: name={host} joined {args.join}"
+            + (f" display={display}" if display else "")
+        )
 
     if not args.server or not os.environ.get("FUNGI_SELFTEST"):
         tray.notify(
-            "Fungi 已启动", f"host {host}" + (" · hub 已就绪" if args.server else " · 已加入房间")
+            "Fungi 已启动",
+            f"host {display or host}" + (" · hub 已就绪" if args.server else " · 已加入房间"),
         )
 
     if args.server and os.environ.get("FUNGI_SELFTEST"):

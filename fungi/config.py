@@ -27,6 +27,8 @@ class Config:
     # File transfer: per-file size cap and the local landing directory.
     max_file_mb: int = 200
     inbox_dir: str = ""  # empty -> PROJECT_ROOT / "inbox"
+    # Presentation nickname shown to friends; never used on the wire.
+    display: str = ""
 
     @property
     def configured(self) -> bool:
@@ -65,6 +67,8 @@ def load_config(path: Path | None = None) -> Config:
             cfg.max_file_mb = int(data["max_file_mb"])
         if data.get("inbox_dir"):
             cfg.inbox_dir = str(data["inbox_dir"])
+        if data.get("display"):
+            cfg.display = str(data["display"])
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -89,4 +93,6 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["max_file_mb"] = cfg.max_file_mb
     if cfg.inbox_dir:
         data["inbox_dir"] = cfg.inbox_dir
+    if cfg.display:
+        data["display"] = cfg.display
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")

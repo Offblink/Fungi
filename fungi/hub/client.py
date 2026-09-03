@@ -15,10 +15,11 @@ class HubError(Exception):
 
 
 class HubClient:
-    def __init__(self, base_url: str, token: str, host: str):
+    def __init__(self, base_url: str, token: str, host: str, display: str = ""):
         self.base = base_url.rstrip("/")
         self.token = token
         self.host = host
+        self.display = display
 
     # ── plumbing ──
 
@@ -48,7 +49,7 @@ class HubClient:
     # ── room ops ──
 
     def join(self) -> dict:
-        return self._request("POST", "/api/join", {"name": self.host})
+        return self._request("POST", "/api/join", {"name": self.host, "display": self.display})
 
     def leave(self) -> dict:
         return self._request("POST", "/api/leave", {"name": self.host})
@@ -110,7 +111,8 @@ class HubClient:
 
     # ── peers / comm log ──
 
-    def peers(self) -> list[str]:
+    def peers(self) -> list[dict]:
+        """Peers as display records ``[{"name", "display"}]``."""
         return self._request("GET", f"/api/peers?host={self.host}").get("peers", [])
 
     def comm_log(self, other: str) -> list[dict]:
