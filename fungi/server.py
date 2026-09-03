@@ -1,4 +1,10 @@
-"""Web server: ThreadingHTTPServer + NDJSON streaming + static files from web/."""
+"""WebUI server: ThreadingHTTPServer + NDJSON streaming + static files from web/.
+
+Single-host mode keeps the original YESIR behavior (TriLayer in the request
+thread, local session files). Room mode (fungi/room.py) injects a WebUIRuntime
+that runs the local clone's toolset, backs sessions with the hub, and routes
+card answers back out as answer envelopes.
+"""
 
 import json
 import socket
@@ -8,8 +14,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fungi import session
-from fungi.agent import SYSTEM_PROMPT
+from fungi.agent import SYSTEM_PROMPT, Agent
 from fungi.config import load_config, save_config
+from fungi.events import Sink
 from fungi.tools.ask import resolve_ask
 from fungi.tools.mcp import mcp_extra_tools
 from fungi.trilayer import TriLayer
@@ -29,19 +36,64 @@ RETRY_STRIP_PREFIXES = ("(LLM error:", "(Hit max tool rounds", "(Aborted")
 
 def sanitize_for_retry(messages: list[dict]) -> list[dict]:
     """Drop the synthetic tail a failed turn left behind, so Alt+R continues
-    from real context: error markers, max-rounds notices, and any dangling
-    assistant tool_calls that never got results."""
+    from real context. Marker lines are recognized anywhere in the tail block;
+    everything from the first marker on is discarded (tool calls without their
+    results would poison the next completion)."""
     out = list(messages)
     while out:
         last = out[-1]
-        if last.get("role") != "assistant":
-            break
-        content = str(last.get("content") or "")
-        if content.startswith(RETRY_STRIP_PREFIXES) or last.get("tool_calls"):
+        content = last.get("content")
+        if isinstance(content, str) and content.startswith(RETRY_STRIP_PREFIXES):
             out.pop()
-        else:
-            break
+            continue
+        if last.get("role") == "assistant" and last.get("content") is None:
+            out.pop()  # dangling tool_calls
+            continue
+        break
     return out
+
+
+class WebUIRuntime:
+    """Turn/sessions/answer wiring for the WebUI. Default = single-host mode."""
+
+    def sessions_list(self) -> list[dict]:
+        return session.list_sessions()
+
+    def sessions_load(self, session_id: str) -> dict | None:
+        return session.load_session(session_id)
+
+    def sessions_save(
+        self,
+        session_id: str,
+        title: str,
+        messages: list[dict],
+        subagents: list | None = None,
+        asks: list | None = None,
+    ) -> None:
+        session.save_session(session_id, title, messages, subagents=subagents, asks=asks)
+
+    def sessions_delete(self, session_id: str) -> None:
+        session.delete_session(session_id)
+
+    def new_session_id(self) -> str:
+        return session.new_session_id()
+
+    def new_session_prompt(self) -> str:
+        return SYSTEM_PROMPT
+
+    def build_agent(self, sink: Sink, should_abort) -> Agent:
+        return TriLayer(load_config(), sink, should_abort=should_abort).build_orchestrator(sink)
+
+    def route_answer(self, ask_id: str, value: str | list[str]) -> bool:
+        """Resolve an /answer submission. Default: in-process ask_user only."""
+        return resolve_ask(ask_id, value)
+
+    def pending_asks(self) -> list[dict]:
+        """Out-of-band asks awaiting a card answer (room mode: envelope asks)."""
+        return []
+
+    def mcp_tools(self) -> dict:
+        return mcp_extra_tools(load_config().mcp_servers)
 
 
 # Interrupt support: one Event per running turn, keyed by session id. /stop
@@ -63,29 +115,24 @@ def _session_lock(session_id: str) -> threading.Lock:
 class WebSink:
     """Thread-safe NDJSON writer over the /chat response stream."""
 
-    def __init__(self, handler: BaseHTTPRequestHandler) -> None:
-        self._handler = handler
-        self._lock = threading.Lock()
+    def __init__(self, handler: "YesSirHandler"):
+        self.handler = handler
         self.closed = False
 
-    def emit(self, event_type: str, content=None) -> None:
+    def emit(self, kind: str, content) -> None:
         if self.closed:
             return
-        obj: dict = {"type": event_type}
-        if content is not None:
-            obj["content"] = content
         try:
-            with self._lock:
-                line = json.dumps(obj, ensure_ascii=False) + "\n"
-                self._handler.wfile.write(line.encode("utf-8"))
-                self._handler.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
-            print(f"[websink] stream write failed: {type(exc).__name__}: {exc}", flush=True)
+            data = json.dumps({"type": kind, "content": content}, ensure_ascii=False)
+            self.handler.wfile.write((data + "\n").encode("utf-8"))
+            self.handler.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
             self.closed = True
 
 
 class YesSirHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    runtime: WebUIRuntime = None  # type: ignore[assignment]
 
     # ---- plumbing ---------------------------------------------------------
     def log_message(self, fmt, *args):  # quiet
@@ -134,11 +181,13 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_json({"model": load_config().model})
         elif route == "/config-status":
             self._send_json({"configured": load_config().configured})
+        elif route == "/asks":
+            self._send_json({"asks": self.runtime.pending_asks()})
         elif route == "/sessions":
-            self._send_json(session.list_sessions())
+            self._send_json({"sessions": self.runtime.sessions_list()})
         elif route == "/session":
             session_id = (parse_qs(url.query).get("id") or [None])[0]
-            data = session.load_session(session_id) if session_id else None
+            data = self.runtime.sessions_load(session_id) if session_id else None
             if data is None:
                 self._send_json({"error": "not found"}, status=404)
             else:
@@ -168,7 +217,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 value = [str(v) for v in value]
             else:
                 value = str(value or "")
-            ok = resolve_ask(str(data.get("id") or ""), value)
+            ok = self.runtime.route_answer(str(data.get("id") or ""), value)
             self._send_json({"ok": ok}, status=200 if ok else 404)
         elif url.path == "/configure":
             data = self._read_body()
@@ -183,11 +232,11 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": True})
         elif url.path == "/save":
             data = self._read_body()
-            existing = session.load_session(data.get("id", ""))
+            existing = self.runtime.sessions_load(data.get("id", ""))
             if existing is None:
                 self._send_json({"ok": False}, status=400)
                 return
-            session.save_session(
+            self.runtime.sessions_save(
                 data["id"],
                 data.get("title") or existing.get("title") or "",
                 existing.get("messages", []),
@@ -196,9 +245,11 @@ class YesSirHandler(BaseHTTPRequestHandler):
             )
             self._send_json({"ok": True})
         elif url.path == "/new":
-            session_id = session.new_session_id()
-            session.save_session(
-                session_id, "(new session)", [{"role": "system", "content": SYSTEM_PROMPT}]
+            session_id = self.runtime.new_session_id()
+            self.runtime.sessions_save(
+                session_id,
+                "(new session)",
+                [{"role": "system", "content": self.runtime.new_session_prompt()}],
             )
             self._send_json({"id": session_id, "title": "(new session)"})
         elif url.path == "/pickfile":
@@ -212,7 +263,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
         if url.path == "/session":
             session_id = (parse_qs(url.query).get("id") or [None])[0]
             if session_id:
-                session.delete_session(session_id)
+                self.runtime.sessions_delete(session_id)
             self._send_json({"ok": True})
         else:
             self._send_json({"error": "not found"}, status=404)
@@ -226,7 +277,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
         context (synthetic error tail is stripped; see sanitize_for_retry)."""
         data = self._read_body()
         session_id = data.get("sessionId")
-        stored = session.load_session(session_id) if session_id else None
+        stored = self.runtime.sessions_load(session_id) if session_id else None
         if not stored:
             self._send_json({"error": "no session to retry"}, status=400)
             return
@@ -237,14 +288,14 @@ class YesSirHandler(BaseHTTPRequestHandler):
         self._run_turn(session_id, user_msg=None, messages=messages)
 
     def _run_turn(self, session_id: str | None, user_msg: str | None, messages=None) -> None:
-        stored = session.load_session(session_id) if session_id else None
+        stored = self.runtime.sessions_load(session_id) if session_id else None
         if messages is None:
             if stored:
                 messages = list(stored["messages"])
             else:
                 if not session_id:
-                    session_id = session.new_session_id()
-                messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+                    session_id = self.runtime.new_session_id()
+                messages = [{"role": "system", "content": self.runtime.new_session_prompt()}]
             if user_msg is not None:
                 messages.append({"role": "user", "content": user_msg})
 
@@ -260,9 +311,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
         self.close_connection = True
         try:
             with _session_lock(session_id):
-                cfg = load_config()
-                trilayer = TriLayer(cfg, sink, should_abort=abort_event.is_set)
-                agent = trilayer.build_orchestrator(sink)
+                agent = self.runtime.build_agent(sink, abort_event.is_set)
                 try:
                     agent.run(messages)
                 finally:
@@ -270,12 +319,15 @@ class YesSirHandler(BaseHTTPRequestHandler):
                     # turn that never saves is a turn whose context is lost.
                     prior = (stored or {}).get("subagents", []) if isinstance(stored, dict) else []
                     prior_asks = (stored or {}).get("asks", []) if isinstance(stored, dict) else []
-                    session.save_session(
+                    subs = getattr(agent, "subagents", None)
+                    new_subs = list(subs.values()) if isinstance(subs, dict) else []
+                    new_asks = list(getattr(agent, "asks", None) or [])
+                    self.runtime.sessions_save(
                         session_id,
                         session.get_session_title(messages),
                         messages,
-                        subagents=prior + list(trilayer.subagents.values()),
-                        asks=prior_asks + list(trilayer.asks),
+                        subagents=prior + new_subs,
+                        asks=prior_asks + new_asks,
                     )
             sink.emit("sessionId", session_id)
             sink.emit("done", None)
@@ -306,6 +358,12 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_json({"path": None, "error": str(exc)})
 
 
+def make_webui_server(port: int | None, runtime: WebUIRuntime) -> ThreadingHTTPServer:
+    """Build (not start) the WebUI server; room mode embeds this in-process."""
+    handler = type("BoundHandler", (YesSirHandler,), {"runtime": runtime})
+    return ThreadingHTTPServer(("127.0.0.1", _free_port(port)), handler)
+
+
 def _free_port(preferred: int | None) -> int:
     port = preferred or 0
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -313,16 +371,16 @@ def _free_port(preferred: int | None) -> int:
         return sock.getsockname()[1]
 
 
-def run_server(port: int | None = None) -> None:
+def run_server(port: int | None = None, runtime: WebUIRuntime | None = None) -> None:
     import webbrowser  # noqa: PLC0415 (only needed to open the browser)
 
-    bound = _free_port(port)
-    server = ThreadingHTTPServer(("127.0.0.1", bound), YesSirHandler)
-    url = f"http://localhost:{bound}"
+    rt = runtime or WebUIRuntime()
+    server = make_webui_server(port, rt)
+    url = f"http://localhost:{server.server_address[1]}"
     print(f"  YESIR web UI: {url}")
     print("  Press Ctrl+C to stop")
     webbrowser.open(url)
-    mcp_tools = mcp_extra_tools(load_config().mcp_servers)
+    mcp_tools = rt.mcp_tools()
     if mcp_tools:
         print(f"  MCP: {len(mcp_tools)} tools loaded -> {', '.join(sorted(mcp_tools))}")
     elif load_config().mcp_servers:

@@ -38,3 +38,7 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Chinese UI literals (tray menu / notifications) are intentional
+"fungi/tray.py" = ["RUF001", "RUF002", "RUF003"]

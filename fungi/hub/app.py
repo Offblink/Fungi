@@ -80,7 +80,9 @@ class Hub:
         handler = type("HubHandler", (_Handler,), {"hub": self})
         self._server = ThreadingHTTPServer(("0.0.0.0", 0), handler)
         self._server.daemon_threads = True
-        self._thread = threading.Thread(target=self._server.serve_forever, name="fungi-hub")
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, name="fungi-hub", daemon=True
+        )
         self._thread.start()
         self._reaper = threading.Thread(target=self._reap_loop, name="fungi-reaper", daemon=True)
         self._reaper.start()
@@ -115,7 +117,7 @@ class Hub:
         # answer -> resolves the referenced ask.
         if env.type == "ask":
             host, _role, _peer = parse_addr(env.dst)
-            self.asks.open(host, env.body, ask_id=env.id)
+            self.asks.open(host, env.body, ask_id=env.id, src=env.src)
         elif env.type == "answer" and env.reply_to:
             self.asks.resolve(env.reply_to, value=env.body.get("value"))
         status = self.relay.deliver(env)
@@ -213,7 +215,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not self.hub.roster.beat(name):
             self._reply({"error": "unknown host"}, 404)
             return
-        self._reply({"ok": True, "pending_asks": self.hub.asks.pending_for(name)})
+        self._reply(
+            {
+                "ok": True,
+                "peers": self.hub.roster.peers(name),
+                "pending_asks": self.hub.asks.pending_for(name),
+            }
+        )
 
     def _send(self, body: dict) -> None:
         try:

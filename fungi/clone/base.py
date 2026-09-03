@@ -28,7 +28,7 @@ class LocalTransport:
         self.relay = relay
         self.hub = hub
         self.inbox = relay.register_local(self_addr)
-        self.host = parse_addr(self_addr).host
+        self.host, _role, _peer = parse_addr(self_addr)
 
     def send(self, env: Envelope) -> dict:
         # via hub.send so ask/answer registry maintenance applies locally too
@@ -46,15 +46,23 @@ class LocalTransport:
 
 
 class RemoteTransport:
-    """For clones on client hosts: HTTP to the hub."""
+    """For clones on client hosts: HTTP to the hub.
 
-    def __init__(self, client: HubClient):
+    Poll source is injectable: a multi-clone client host runs one HostPoller
+    over the shared host buffer and feeds each clone its own Inbox — polling
+    the shared buffer directly would let clones steal each other's messages.
+    """
+
+    def __init__(self, client: HubClient, inbox=None):
         self.client = client
+        self.inbox = inbox
 
     def send(self, env: Envelope) -> dict:
         return self.client.send(env)
 
     def poll(self, after: int, timeout: float) -> tuple[list[Envelope], int]:
+        if self.inbox is not None:
+            return self.inbox.after(after, timeout)
         return self.client.poll(after, timeout)
 
     def fs(self, op: str, path: str, **kw) -> dict:
@@ -100,9 +108,11 @@ class Clone:
     # ── lifecycle ──
 
     def start(self) -> None:
-        self._loop_thread = threading.Thread(target=self._loop, name=f"clone-loop-{self.addr}")
+        self._loop_thread = threading.Thread(
+            target=self._loop, name=f"clone-loop-{self.addr}", daemon=True
+        )
         self._worker_thread = threading.Thread(
-            target=self._work_loop, name=f"clone-turn-{self.addr}"
+            target=self._work_loop, name=f"clone-turn-{self.addr}", daemon=True
         )
         self._loop_thread.start()
         self._worker_thread.start()

@@ -1,0 +1,42 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fungi</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="/style.css">
+</head><body>
+<div id="config-overlay"><div id="config-modal"><h2>Configure Fungi</h2><p>Set your API endpoint and key to get started.</p><label>Endpoint</label><input id="cfg-endpoint" placeholder="https://api.openai.com/v1/chat/completions"><label>API Key</label><input id="cfg-apikey" type="password" placeholder="sk-..."><label>Model</label><input id="cfg-model" placeholder="gpt-4o"><div class="cfg-err" id="cfg-err"></div><div class="cfg-actions"><button class="cfg-skip" id="cfg-skip">Skip</button><button class="cfg-save" id="cfg-save">Save</button></div></div></div>
+<div id="app-shell">
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-header-row">
+      <button id="sidebar-toggle" title="Toggle (Ctrl+B)">&#x2630;</button>
+      <input type="text" id="session-filter" placeholder="Filter..." autocomplete="off" spellcheck="false">
+    </div>
+    <button id="btn-new-session">+ New Session</button>
+  </div>
+  <div id="session-list"><div id="session-list-empty">No sessions yet.<br>Click + New Session to start.</div></div>
+</aside>
+<div id="main-area">
+  <div id="header">
+    <button id="hamburger-sidebar" title="Toggle sidebar">&#x2630;</button>
+    <span class="dot"></span><strong>Fungi</strong><span id="model-name"></span>
+  </div>
+  <div id="messages"><button id="scroll-bottom" title="Scroll to bottom">&#x2193;</button></div>
+  <div id="asks-banner"></div>
+  <div id="agent-tray" title="Subagents"></div>
+  <div id="status"></div>
+  <div id="input-area">
+    <textarea id="input" rows="1" placeholder="Ask anything... (Enter to send, Shift+Enter for newline)"></textarea>
+    <button id="btn-browse" title="Browse for file">&#x1F4C2;</button>
+    <button id="send">Send</button>
+  </div>
+</div>
+</div>
+<div id="confirm-overlay"><div id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <h2 id="confirm-title"></h2>
+  <p id="confirm-message"></p>
+  <div class="confirm-actions"><button id="confirm-cancel"></button><button id="confirm-ok"></button></div>
+</div></div>
+<div id="agent-modal-overlay"></div>
+<script src="/app.js"></script>
+</body></html>
