@@ -7,13 +7,12 @@ Supports one question (question/options/allow_custom) or a question list
 reported via the on_answer callback for session persistence.
 """
 
-import threading
-import time
 import uuid
 from collections.abc import Callable
 
 from fungi.agent import BoundTool
 from fungi.events import Sink
+from fungi.pending import PendingAsks
 
 ASK_TIMEOUT_S = 300
 HEARTBEAT_S = 15
@@ -81,20 +80,13 @@ ASK_SCHEMA = {
     },
 }
 
-# ask id -> {"event": Event, "value": str | list[str] | None}
-_pending: dict[str, dict] = {}
-_lock = threading.Lock()
+# Ask registry shared by every ask_user tool instance; /answer resolves in-process.
+_pending = PendingAsks()
 
 
 def resolve_ask(ask_id: str, value: str | list[str]) -> bool:
     """Wake a pending ask (called by POST /answer). False for unknown/expired ids."""
-    with _lock:
-        entry = _pending.get(ask_id)
-    if entry is None:
-        return False
-    entry["value"] = value
-    entry["event"].set()
-    return True
+    return _pending.resolve(ask_id, value)
 
 
 def _normalize_options(options) -> list[dict]:
@@ -160,34 +152,29 @@ def make_ask_tool(sink: Sink, on_answer: Callable[[dict], None] | None = None) -
         if not questions:
             return "ERROR: Missing required argument: question"
         ask_id = uuid.uuid4().hex[:6]
-        entry = {"event": threading.Event(), "value": None}
-        with _lock:
-            _pending[ask_id] = entry
+        _pending.register(ask_id)
         sink.emit("ask", {"id": ask_id, "questions": questions})
         try:
             # Heartbeat while blocked: browsers/proxies kill a fully silent
             # response stream (~300s); pings keep the NDJSON stream alive.
-            deadline = time.monotonic() + ASK_TIMEOUT_S
-            answered = False
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or entry["event"].wait(min(HEARTBEAT_S, remaining)):
-                    answered = entry["event"].is_set()
-                    break
-                sink.emit("ping", None)
+            answered, value = _pending.wait(
+                ask_id,
+                timeout_s=ASK_TIMEOUT_S,
+                heartbeat_s=HEARTBEAT_S,
+                on_heartbeat=lambda: sink.emit("ping", None),
+            )
         finally:
-            with _lock:
-                _pending.pop(ask_id, None)
+            _pending.discard(ask_id)
         record = {
             "id": ask_id,
             "questions": questions,
-            "answers": entry["value"] if answered else None,
+            "answers": value if answered else None,
             "status": "answered" if answered else "timeout",
         }
         if on_answer is not None:
             on_answer(record)
         if not answered:
             return "ERROR: 用户未回答"
-        return _format_answer(entry["value"])
+        return _format_answer(value)
 
     return BoundTool(schema=ASK_SCHEMA, fn=ask)

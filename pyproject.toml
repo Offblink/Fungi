@@ -27,6 +27,7 @@ select = [
     "RET", # return simplification
 ]
 ignore = [
+    "E501",    # line length (ruff format already keeps code wrapped)
     "PLR0911", # too many return statements (tool dispatch)
     "PLR0912", # too many branches (UI/server dispatch)
     "PLR0913", # too many arguments (tool signatures)
