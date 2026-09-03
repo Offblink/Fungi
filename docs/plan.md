@@ -10,13 +10,13 @@
 
 ## Phase 1: protocol + hub
 
-- protocol.py envelope；hub/app.py join/heartbeat/send/poll/fs/session 端点；roster 心跳剔除；relay 投递函数；store 路径守卫。
+- protocol.py envelope；hub/app.py join/heartbeat/send/poll/fs/session 端点；roster 心跳剔除；relay 投递函数；store 路径守卫与内存锁；pending-ask 注册表。
 - 验收：单测（协议校验、守卫、relay 单元）；localhost 两进程 join 后互发 chat 的集成测试。
 
-## Phase 2: bus（Redis 协调面）
+## Phase 2: ask 机制（PendingAsk 适配消息面）
 
-- bus/coord.py：ask 状态机（stream/hash/pub-sub）、presence、锁；fakeredis 单测。
-- 验收：单测绿；WSL redis-server 冒烟脚本跑通一个 ask 全生命周期。
+- PendingAsk 抽成可复用组件：本进程 `/answer` 与 answer envelope 双唤醒源；ask/answer envelope 全生命周期（注册 → 阻塞 → 唤醒/超时）。
+- 验收：单测覆盖超时/拒绝/自定义回答三分支；进程内模拟两端的 ask→answer 集成测试。
 
 ## Phase 3: clones
 
@@ -25,7 +25,7 @@
 
 ## Phase 4: 本机集成（托盘/WebUI/通知）
 
-- tray.py + notify.py；WebUI 默认关、托盘唤起；web/app.js consent 卡片。
+- tray.py + notify.py（PyQt6，信号桥模式）；WebUI 默认关、托盘唤起；web/app.js consent 卡片。
 - 验收：进程启动仅托盘驻留；模拟 ask → 系统通知弹出 → WebUI 打开 → 卡片回答 → clone 解除阻塞（DONGJIAN_SELFTEST 式自测钩子）。
 
 ## Phase 5: E2E

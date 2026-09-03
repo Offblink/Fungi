@@ -73,3 +73,9 @@ TriLayer 的 spawn（L2/L3）保留，白名单继承所在 clone 的文件限�
 - Option C 被需求直接否决，如实记录；A 与 B 的 cons 均为真实代价。
 - 推荐 A 的依据是需求忠实度与可测试性，不是偏好。
 - 真正的开放问题：Redis 承载方式、托盘依赖栈、consent 征求对象——留给 human review。
+
+## 修订记录
+
+- 2026-09-03 用户评审：去掉 Redis——LAN 无高并发需求，ask 本质是两跳消息，由消息面（relay）+ 进程内 PendingAsk（threading.Event）承载即可，见 spec §5；保留 relay 消息面（Option A 的消息面部分，协调面取消）。
+- 托盘栈定 PyQt6（洞见同款，托盘+通知一体）。
+- consent 裁决者：目录属主 host 的用户（homes/<owner>/ 非属主访问 → 属主用户裁决；本机属主操作 → 本机用户）。
