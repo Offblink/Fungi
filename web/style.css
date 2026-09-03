@@ -170,3 +170,27 @@ html,body{font-family:var(--font);font-size:14.5px;line-height:1.6;color:var(--t
 .ask-always{background:#d97706;color:#fff}.ask-always:hover{background:#b45309}
 .ask-deny{background:var(--error-text);color:#fff}.ask-deny:hover{background:#c41e1e}
 .ask-send{background:var(--accent);color:#fff}.ask-send:hover{background:var(--accent-hover)}
+
+/* ---- friends (room members + read-only comm conversations) ---- */
+#friends-section{border-top:1px solid var(--border);flex-shrink:0;max-height:40vh;display:flex;flex-direction:column}
+#friends-header{padding:10px 16px 6px;font-size:0.72rem;font-weight:600;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em}
+#friends-count{color:var(--accent2)}
+#friend-list{overflow-y:auto;padding:0 0 6px}
+.friend-row{display:flex;align-items:center;height:38px;padding:0 16px;cursor:pointer;border-left:3px solid transparent;transition:all 0.2s;user-select:none;gap:10px;font-size:13px;color:var(--text2)}
+.friend-row:hover{background:rgba(236,72,153,0.04);color:var(--text)}
+.friend-row.active{background:rgba(236,72,153,0.08);border-left-color:var(--accent);color:var(--accent2);font-weight:500}
+.friend-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;box-shadow:0 0 6px rgba(34,197,94,0.5)}
+.friend-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#friends-empty{padding:10px 16px 14px;color:var(--dim);font-size:11.5px;display:none}
+#friend-back{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:var(--radius-xs);padding:4px 10px;font-family:var(--font);font-size:0.76rem;cursor:pointer;transition:all 0.2s}
+#friend-back:hover{color:var(--text);border-color:var(--accent)}
+#friend-title{color:var(--accent2);font-weight:500}
+.msg.friend-msg{max-width:76%}
+.msg.friend-msg.own{align-self:flex-start;background:var(--surface);border:1px solid var(--border-light);box-shadow:var(--shadow-card)}
+.msg.friend-msg.peer{align-self:flex-end;background:var(--surface2);border:1px solid var(--border)}
+.friend-msg-src{font-size:0.7rem;font-family:var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.3rem}
+.msg.friend-event{align-self:center;max-width:90%;font-size:0.78rem;padding:0.5rem 1rem;border-radius:var(--radius-sm);color:var(--text2)}
+.msg.friend-event.task{background:var(--tool-bg);border:1px solid var(--tool-border)}
+.msg.friend-event.file{background:#f0fdf4;border:1px solid #bbf7d0}
+.msg.friend-event.result{background:var(--surface2);border:1px dashed var(--border);font-family:var(--mono);font-size:0.72rem}
+.msg.friend-empty{align-self:center;color:var(--dim);font-size:0.85rem;background:none;padding:2rem 0}

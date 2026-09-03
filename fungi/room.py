@@ -151,7 +151,15 @@ class RoomBase:
         with self._guard:
             if peer in self._clones or self._stop.is_set():
                 return
-            clone = build_comm_clone(self.host, peer, transport, self.cfg, self.sink, llm=self.llm)
+            clone = build_comm_clone(
+                self.host,
+                peer,
+                transport,
+                self.cfg,
+                self.sink,
+                llm=self.llm,
+                inbox_dir=Path(self.cfg.inbox_dir) if self.cfg.inbox_dir else None,
+            )
             self._clones[peer] = clone
         clone.start()
 
@@ -281,7 +289,7 @@ class RoomServer(RoomBase):
         self, host, cfg, sink, token, data_root: Path, notifier=None, llm=None, rules_path=None
     ):
         super().__init__(host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path)
-        self.hub = Hub(host, token, data_root)
+        self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb)
         self._monitor: threading.Thread | None = None
         # selftest state (FUNGI_SELFTEST=1)
         self.selftest_answered: str | None = None
@@ -498,6 +506,15 @@ class RoomRuntime(WebUIRuntime):
                     }
                 )
         return out
+
+    # ── friends / comm conversations ──
+    def peers(self) -> list[str]:
+        return self.room._peers()
+
+    def comm_log(self, host: str) -> list[dict]:
+        if getattr(self.room, "hub", None) is not None:  # server role: direct
+            return self.room.hub.commlog.read(self.room.host, host)
+        return self.room.client.comm_log(host)  # client role: hub API
 
     def mcp_tools(self) -> dict:
         return {}  # room mode keeps clone toolsets lean; MCP is a single-host concern

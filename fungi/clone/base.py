@@ -2,12 +2,14 @@
 
 Thread model (design.md): the loop thread polls the transport and dispatches
 control envelopes (answer/result/err) immediately — that is what wakes blocked
-asks while a turn is running. Turn envelopes (chat/task) are queued to a single
-worker thread, keeping turns serial per clone.
+asks while a turn is running. Turn envelopes (chat/task/transfer) are queued
+to a single worker thread, keeping turns serial per clone.
 """
 
 import queue
+import shutil
 import threading
+from pathlib import Path
 
 from .. import tools
 from ..agent import Agent, BoundTool
@@ -20,7 +22,7 @@ from ..pending import PendingAsks
 from ..protocol import Envelope, parse_addr
 from ..trilayer import TriLayer
 
-TURN_TYPES = ("chat", "task")
+TURN_TYPES = ("chat", "task", "transfer")
 MAX_CHAT_HISTORY = 40  # chat messages kept per clone; older entries are dropped
 
 
@@ -47,6 +49,20 @@ class LocalTransport:
             return {"error": "no hub attached"}
         return fs_via_hub(self.hub.store, self.host, op, path, **kw)
 
+    def transfer(self, path: str, name: str, to_host: str) -> dict:
+        if self.hub is None:
+            return {"error": "no hub attached"}
+        return self.hub.create_transfer(self.host, path, to_host, name)
+
+    def download_transfer(self, transfer_id: str, dest: Path) -> None:
+        if self.hub is None:
+            raise RuntimeError("no hub attached")
+        found = self.hub.transfers.fetchable(transfer_id, self.host)
+        if found is None:
+            raise RuntimeError("transfer not found or not for this host")
+        _rec, path = found
+        shutil.copyfile(path, dest)
+
 
 class RemoteTransport:
     """For clones on client hosts: HTTP to the hub.
@@ -71,6 +87,12 @@ class RemoteTransport:
     def fs(self, op: str, path: str, **kw) -> dict:
         return self.client.fs(op, path, **kw)
 
+    def transfer(self, path: str, name: str, to_host: str) -> dict:
+        return self.client.create_transfer(path, name, to_host)
+
+    def download_transfer(self, transfer_id: str, dest: Path) -> None:
+        self.client.download_transfer(transfer_id, dest)
+
 
 class Clone:
     """One Orchestrator clone: role prompt + toolset + inbox loop."""
@@ -87,6 +109,8 @@ class Clone:
         model: str | None = None,
         poll_timeout: float = 5.0,
         on_ask=None,
+        on_transfer=None,
+        on_chat_end=None,
         pending: PendingAsks | None = None,
         tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
         child_tool_names: frozenset[str] | None = None,
@@ -109,6 +133,12 @@ class Clone:
         self.model = model
         self.poll_timeout = poll_timeout
         self.on_ask = on_ask
+        # transfer envelopes: handled by comm clones (consent -> download);
+        # None -> the transfer is answered with an error result.
+        self.on_transfer = on_transfer
+        # chat turns: called with (env, final_text) after the turn — comm
+        # clones use it to auto-send an undelivered reply (no send_peer call).
+        self.on_chat_end = on_chat_end
         # `is not None` (not `or`): an empty PendingAsks is falsy via __len__
         self.pending = pending if pending is not None else PendingAsks()
         self.history: list[dict] = []  # chat exchanges kept locally (no-reply stays)
@@ -206,6 +236,9 @@ class Clone:
         )
 
     def run_turn(self, env: Envelope) -> None:
+        if env.type == "transfer":
+            self._run_transfer(env)
+            return
         agent = self.build_agent()
         if env.type == "chat":
             # Chat turns ride the accumulated local history.
@@ -216,11 +249,15 @@ class Clone:
         reply = (result.content or "").strip()
         if env.type == "chat":
             # spec 6.x: the Orchestrator decides whether to reply — via an
-            # explicit send_peer call. No auto-reply; the exchange is kept.
+            # explicit send_peer call; if the turn produced text but never
+            # called send_peer, on_chat_end delivers it as a fallback (an LLM
+            # that forgets the tool call must not silently drop its reply).
             self.history.append({"role": "user", "content": self.render_input(env)})
             if reply:
                 self.history.append({"role": "assistant", "content": reply})
             del self.history[:-MAX_CHAT_HISTORY]
+            if self.on_chat_end is not None:
+                self.on_chat_end(env, reply)
             return
         self.transport.send(
             Envelope(
@@ -228,6 +265,25 @@ class Clone:
                 dst=env.src,
                 type="result",
                 body={"ok": True, "payload": reply},
+                reply_to=env.id,
+            )
+        )
+
+    def _run_transfer(self, env: Envelope) -> None:
+        """Incoming file transfer: consent via on_transfer, result back to src."""
+        if self.on_transfer is None:
+            body: dict = {"ok": False, "error": "transfers not supported here"}
+        else:
+            try:
+                body = self.on_transfer(env)
+            except Exception as exc:
+                body = {"ok": False, "error": str(exc)}
+        self.transport.send(
+            Envelope(
+                src=self.addr,
+                dst=env.src,
+                type="result",
+                body=body,
                 reply_to=env.id,
             )
         )

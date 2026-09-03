@@ -15,11 +15,17 @@
     <button id="btn-new-session">+ New Session</button>
   </div>
   <div id="session-list"><div id="session-list-empty">No sessions yet.<br>Click + New Session to start.</div></div>
+  <div id="friends-section">
+    <div id="friends-header">Friends <span id="friends-count"></span></div>
+    <div id="friend-list"></div>
+    <div id="friends-empty">No other hosts in the room.</div>
+  </div>
 </aside>
 <div id="main-area">
   <div id="header">
     <button id="hamburger-sidebar" title="Toggle sidebar">&#x2630;</button>
-    <span class="dot"></span><strong>Fungi</strong><span id="model-name"></span>
+    <button id="friend-back" title="Back to session" style="display:none">&#8592; Back</button>
+    <span class="dot"></span><strong>Fungi</strong><span id="friend-title"></span><span id="model-name"></span>
   </div>
   <div id="messages"><button id="scroll-bottom" title="Scroll to bottom">&#x2193;</button></div>
   <div id="asks-banner"></div>

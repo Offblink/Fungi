@@ -24,6 +24,9 @@ class Config:
     system_prompt: str | None = None
     # MCP servers (stdio): name -> {command, args?, env?}
     mcp_servers: dict[str, dict] = field(default_factory=dict)
+    # File transfer: per-file size cap and the local landing directory.
+    max_file_mb: int = 200
+    inbox_dir: str = ""  # empty -> PROJECT_ROOT / "inbox"
 
     @property
     def configured(self) -> bool:
@@ -54,12 +57,14 @@ def load_config(path: Path | None = None) -> Config:
             cfg.layer_models = {
                 int(k): str(v) for k, v in models.items() if str(k) in ("1", "2", "3") and v
             }
-        if data.get("system_prompt"):
-            cfg.system_prompt = data["system_prompt"]
         if isinstance(data.get("mcp_servers"), dict):
             cfg.mcp_servers = {
                 str(k): v for k, v in data["mcp_servers"].items() if isinstance(v, dict)
             }
+        if data.get("max_file_mb"):
+            cfg.max_file_mb = int(data["max_file_mb"])
+        if data.get("inbox_dir"):
+            cfg.inbox_dir = str(data["inbox_dir"])
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -80,4 +85,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["system_prompt"] = cfg.system_prompt
     if cfg.mcp_servers:
         data["mcp_servers"] = cfg.mcp_servers
+    if cfg.max_file_mb != 200:
+        data["max_file_mb"] = cfg.max_file_mb
+    if cfg.inbox_dir:
+        data["inbox_dir"] = cfg.inbox_dir
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")

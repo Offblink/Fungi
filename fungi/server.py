@@ -92,6 +92,14 @@ class WebUIRuntime:
         """Out-of-band asks awaiting a card answer (room mode: envelope asks)."""
         return []
 
+    def peers(self) -> list[str]:
+        """Other hosts currently in the room (room mode)."""
+        return []
+
+    def comm_log(self, host: str) -> list[dict]:  # noqa: ARG002 (room mode overrides)
+        """Read-only clone-to-clone conversation with `host` (room mode)."""
+        return []
+
     def mcp_tools(self) -> dict:
         return mcp_extra_tools(load_config().mcp_servers)
 
@@ -192,6 +200,14 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "not found"}, status=404)
             else:
                 self._send_json(data)
+        elif route == "/peers":
+            self._send_json({"peers": self.runtime.peers()})
+        elif route == "/comm-log":
+            host = (parse_qs(url.query).get("host") or [None])[0]
+            if not host:
+                self._send_json({"error": "missing host"}, status=400)
+            else:
+                self._send_json({"messages": self.runtime.comm_log(host)})
         else:
             self._send_json({"error": "not found"}, status=404)
 

@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 
 ENVELOPE_VERSION = 1
-TYPES = ("chat", "task", "result", "ask", "answer", "err")
+TYPES = ("chat", "task", "result", "ask", "answer", "err", "transfer")
 
 
 class ProtocolError(Exception):

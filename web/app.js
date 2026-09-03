@@ -112,6 +112,7 @@ async function closeCurrentSession() {
   loadSessions();
 }
 async function switchSession(id) {
+  leaveFriendView();
   if (id === currentSessionId) return;
   await closeCurrentSession();
   sessionDirty = false;
@@ -172,6 +173,7 @@ function renderMessages(s) {
   if (turn && turn.sessionId === currentSessionId) renderTurnLive();
 }
 async function newSession() {
+  leaveFriendView();
   // Any untouched "(new session)" on disk? Focus it instead of creating
   // another one — repeated clicks and switches must not litter the list.
   const empty = allSessions.find(s => s.title === '(new session)' && (s.msgCount || 0) <= 1);
@@ -839,3 +841,89 @@ pollPendingAsks();
     }
   } catch (e) {}
 })();
+
+/* ---------- friends: room members + read-only comm clone conversations ---------- */
+let friendView = null; // host name while viewing a friend conversation
+let allPeers = [];
+
+function leaveFriendView() {
+  friendView = null;
+  document.getElementById('input-area').style.display = '';
+  document.getElementById('friend-back').style.display = 'none';
+  document.getElementById('friend-title').textContent = '';
+  renderFriendList();
+}
+
+async function loadPeers() {
+  try {
+    const r = await fetch('/peers');
+    if (!r.ok) return;
+    const d = await r.json();
+    allPeers = d.peers || [];
+    document.getElementById('friends-count').textContent = allPeers.length ? '(' + allPeers.length + ')' : '';
+    renderFriendList();
+    if (friendView) refreshFriendChat();
+  } catch (e) {}
+}
+
+function renderFriendList() {
+  const list = document.getElementById('friend-list');
+  const empty = document.getElementById('friends-empty');
+  list.querySelectorAll('.friend-row').forEach(r => r.remove());
+  if (!allPeers.length) { empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  allPeers.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'friend-row' + (p === friendView ? ' active' : '');
+    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(p) + '</span>';
+    row.addEventListener('click', () => openFriendChat(p));
+    list.appendChild(row);
+  });
+}
+
+async function openFriendChat(host) {
+  friendView = host;
+  msgs.innerHTML = '';
+  tray.innerHTML = '';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('friend-back').style.display = '';
+  document.getElementById('friend-title').textContent = ' \u2014 @' + host + ' \u00b7 clone conversation (read-only)';
+  renderFriendList();
+  await refreshFriendChat();
+}
+
+async function refreshFriendChat() {
+  if (!friendView) return;
+  try {
+    const r = await fetch('/comm-log?host=' + encodeURIComponent(friendView));
+    if (!r.ok) return;
+    const d = await r.json();
+    renderFriendChat(d.messages || []);
+  } catch (e) {}
+}
+
+function renderFriendChat(rows) {
+  msgs.innerHTML = '';
+  if (!rows.length) {
+    addDiv('friend-empty', '<i>No clone-to-clone conversation with this host yet.</i>');
+    return;
+  }
+  rows.forEach(row => {
+    const srcHost = String(row.src || '').split(':')[0];
+    if (row.kind === 'chat') {
+      const cls = srcHost === friendView ? 'msg friend-msg peer' : 'msg friend-msg own';
+      addDiv(cls, '<div class="friend-msg-src">' + escapeHtml(srcHost) + '</div>' + marked.parse(row.text || ''));
+    } else if (row.kind === 'task') {
+      addDiv('msg friend-event task', '&#x1F4E5 Task delegated to ' + escapeHtml(srcHost) + ': ' + escapeHtml(row.text || ''));
+    } else if (row.kind === 'transfer') {
+      addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+    } else if (row.kind === 'result') {
+      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(srcHost) + ': ' + escapeHtml(String(row.text || '').slice(0, 200)));
+    }
+  });
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+document.getElementById('friend-back').addEventListener('click', leaveFriendView);
+setInterval(loadPeers, 5000);
+loadPeers();

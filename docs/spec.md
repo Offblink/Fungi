@@ -106,3 +106,21 @@ ask 是普通消息，不需要独立协调设施：
 - pytest；真实 LLM 只做冒烟（ZAI_API_KEY 配方）。
 - ruff 全套（lint + format），`scripts/check.ps1` 门禁与 YESIR 相同。
 - 一任务一 commit（英文祈使句）；push 需用户发话。
+
+## 10. 增补（2026-09-03 定稿）：好友列表、会话旁观、文件传输
+
+- **消息类型**：新增 `transfer`（文件传输元数据：id/name/size/reason/from）。
+- **通讯会话落盘**：hub 投递成功后镜像 chat/task/result/transfer envelope 到
+  `data/comm/<hostA>__<hostB>.jsonl`（按 host 名排序，双向同文件，单写者 = relay）。
+  `Clone.history` 仍只作 LLM 上下文。
+- **chat 回复兜底**：chat 回合若 LLM 未调用 send_peer 且最终文本非空，回合结束钩子自动补发
+  （防止 LLM 忘调工具导致回复静默丢失，2026-09-03 真机实测发现）；显式调用过则不重复。
+- **好友列表**：`GET /api/peers`（hub）→ 本机 clone 代理 `/peers` → WebUI 侧栏在线成员；
+  点击进入只读会话视图（`GET /comm-log?host=` 渲染双方通讯 clone 对话流），无输入框
+  （核心洞见 2 不破）。
+- **文件传输（C2，落对端本地盘）**：字节面 store-and-forward——`POST /api/transfer`
+  服务端从 store 复制暂存（上限 `max_file_mb`，config.json，默认 200），envelope 只传元数据；
+  控制面复用 consent——接收方 comm clone 向属主本机 clone 发 ask（始终允许规则适用），
+  同意后经 `GET /api/transfer` 下载落盘 `<inbox_dir>/<来源host>/<文件名>`（config.json
+  `inbox_dir`，默认 `<repo>/inbox`，重名加序号，basename 消毒）。落盘路径经 result envelope
+  回执发送方。transfers 注册表在内存，server 重启丢失未拉取的暂存文件（v1 容忍，与 §3 一致）。

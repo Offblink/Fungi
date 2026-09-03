@@ -1,13 +1,21 @@
-"""Hub HTTP API: join/leave/heartbeat/send/poll + fs + sessions (token auth)."""
+"""Hub HTTP API: join/leave/heartbeat/send/poll + fs + sessions + transfers.
+
+Token auth on every endpoint. Transfers are store-and-forward: file bytes are
+copied server-side out of the data/ store (never through an envelope), the
+receiver pulls them via GET /api/transfer. The comm log mirrors clone-to-clone
+traffic for the WebUI read-only conversation view.
+"""
 
 import json
+import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from ..protocol import Envelope, ProtocolError, deserialize, parse_addr
+from ..protocol import Envelope, ProtocolError, deserialize, new_id, parse_addr
 from .asks import Asks
+from .commlog import CommLog
 from .relay import Relay
 from .roster import Roster
 from .store import GuardError, Store
@@ -57,16 +65,66 @@ def fs_via_hub(
         return {"error": str(exc)}
 
 
+def safe_name(name: str) -> str:
+    """Basename-only file name for anything stored under a hub directory."""
+    return Path(str(name or "file").replace("\\", "/")).name or "file"
+
+
+class Transfers:
+    """In-memory registry of staged file transfers (metadata only on the wire)."""
+
+    def __init__(self, root: Path, max_file_mb: int = 200):
+        self.root = Path(root)
+        self.max_bytes = max(1, max_file_mb) * 1024 * 1024
+        self._records: dict[str, dict] = {}
+        self._guard = threading.Lock()
+
+    def stage(self, source: Path, name: str, src_host: str, dst_host: str) -> dict:
+        """Copy a store file into the transfers dir; returns its record."""
+        size = source.stat().st_size
+        if size > self.max_bytes:
+            raise ValueError(f"file too large: {size} bytes (limit {self.max_bytes})")
+        tid = new_id()
+        self.root.mkdir(parents=True, exist_ok=True)
+        dest = self.root / f"{tid}__{safe_name(name)}"
+        shutil.copyfile(source, dest)
+        rec = {"id": tid, "name": safe_name(name), "size": size, "src": src_host, "dst": dst_host}
+        with self._guard:
+            self._records[tid] = rec
+        return rec
+
+    def fetchable(self, transfer_id: str, host: str) -> tuple[dict, Path] | None:
+        """Record + file path, only for the designated receiver host."""
+        with self._guard:
+            rec = self._records.get(str(transfer_id))
+        if rec is None or rec["dst"] != host:
+            return None
+        path = self.root / f"{rec['id']}__{rec['name']}"
+        if not path.is_file():
+            return None
+        return rec, path
+
+
 class Hub:
     """Room server: roster + relay + asks + store behind one HTTP API."""
 
-    def __init__(self, name: str, token: str, data_root: Path, heartbeat_timeout: float = 30.0):
+    def __init__(
+        self,
+        name: str,
+        token: str,
+        data_root: Path,
+        heartbeat_timeout: float = 30.0,
+        max_file_mb: int = 200,
+    ):
         self.name = name
         self.token = token
+        data_root = Path(data_root)
         self.roster = Roster(heartbeat_timeout)
         self.relay = Relay(name)
         self.asks = Asks()
-        self.store = Store(Path(data_root), self.asks)
+        self.store = Store(data_root, self.asks)
+        self.commlog = CommLog(data_root / "comm")
+        self.transfers = Transfers(data_root / "transfers", max_file_mb)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._reaper: threading.Thread | None = None
@@ -123,7 +181,27 @@ class Hub:
         elif env.type == "answer" and env.reply_to:
             self.asks.resolve(env.reply_to, value=env.body.get("value"))
         status = self.relay.deliver(env)
+        if status != "bounced":
+            self.commlog.record(env)  # mirror clone-to-clone traffic for the WebUI
         return {"ok": status != "bounced", "status": status}
+
+    def create_transfer(self, host: str, path: str, to_host: str, name: str) -> dict:
+        """Stage a store file for delivery to another host (server-side copy)."""
+        if not self.roster.known(host) or not self.roster.known(to_host):
+            return {"error": "unknown host"}
+        if to_host == host:
+            return {"error": "cannot transfer to yourself"}
+        try:
+            target = self.store.resolve(host, path, consent_id=None, mutating=False)
+        except GuardError as exc:
+            return {"error": str(exc)}
+        if not target.is_file():
+            return {"error": f"not a file: {path}"}
+        try:
+            rec = self.transfers.stage(target, name or target.name, host, to_host)
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+        return {"ok": True, **rec}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -176,6 +254,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._save(body)
             elif path == "/api/session/delete":
                 self._session_delete(body)
+            elif path == "/api/transfer":
+                self._transfer(body)
             else:
                 self._reply({"error": "not found"}, 404)
         except (ValueError, json.JSONDecodeError) as exc:
@@ -194,6 +274,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply({"sessions": self.hub.store.sessions.list_sessions()})
         elif url.path == "/api/session":
             self._session_load(params)
+        elif url.path == "/api/peers":
+            self._peers(params)
+        elif url.path == "/api/comm-log":
+            self._comm_log(params)
+        elif url.path == "/api/transfer":
+            self._transfer_download(params)
         else:
             self._reply({"error": "not found"}, 404)
 
@@ -224,6 +310,21 @@ class _Handler(BaseHTTPRequestHandler):
                 "pending_asks": self.hub.asks.pending_for(name),
             }
         )
+
+    def _peers(self, params: dict) -> None:
+        host = (params.get("host") or [""])[0]
+        if not self.hub.roster.known(host):
+            self._reply({"error": "unknown host"}, 404)
+            return
+        self._reply({"ok": True, "peers": self.hub.roster.peers(host)})
+
+    def _comm_log(self, params: dict) -> None:
+        host = (params.get("host") or [""])[0]
+        other = (params.get("with") or [""])[0]
+        if not self.hub.roster.known(host) or not other:
+            self._reply({"error": "bad request"}, 400)
+            return
+        self._reply({"ok": True, "messages": self.hub.commlog.read(host, other)})
 
     def _send(self, body: dict) -> None:
         try:
@@ -288,3 +389,32 @@ class _Handler(BaseHTTPRequestHandler):
     def _session_delete(self, body: dict) -> None:
         self.hub.store.sessions.delete(str(body.get("id") or ""))
         self._reply({"ok": True})
+
+    # ── transfers ──
+
+    def _transfer(self, body: dict) -> None:
+        host = str(body.get("host") or "")
+        to_host = str(body.get("to") or "")
+        out = self.hub.create_transfer(
+            host, str(body.get("path") or ""), to_host, str(body.get("name") or "")
+        )
+        self._reply(out, 400 if "error" in out else 200)
+
+    def _transfer_download(self, params: dict) -> None:
+        host = (params.get("host") or [""])[0]
+        tid = (params.get("id") or [""])[0]
+        found = self.hub.transfers.fetchable(tid, host)
+        if found is None:
+            self._reply({"error": "not found"}, 404)
+            return
+        rec, path = found
+        try:
+            with path.open("rb") as fh:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(rec["size"]))
+                self.send_header("Content-Disposition", f'attachment; filename="{rec["name"]}"')
+                self.end_headers()
+                shutil.copyfileobj(fh, self.wfile)
+        except OSError:
+            pass

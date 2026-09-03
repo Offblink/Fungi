@@ -45,6 +45,7 @@ def test_comm_clone_tool_surface():
     clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
     assert set(clone.tools) == {
         "send_peer",
+        "send_file",
         "ask_consent",
         "ask_user",
         "read_file",

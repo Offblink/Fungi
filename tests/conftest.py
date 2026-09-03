@@ -3,6 +3,7 @@
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -60,6 +61,19 @@ class Client:
     def fs(self, op: str, path: str, **kw) -> dict:
         body = {"token": self.token, "host": self.host, "path": path, **kw}
         return self.post(f"/api/fs/{op}", body)[1]
+
+    def transfer(self, path: str, name: str, to_host: str) -> dict:
+        body = {"token": self.token, "host": self.host, "path": path, "name": name, "to": to_host}
+        return self.post("/api/transfer", body)[1]
+
+    def download_transfer(self, transfer_id: str, dest) -> None:
+        url = f"{self.base}/api/transfer?id={transfer_id}&host={self.host}&token={self.token}"
+        with urllib.request.urlopen(url, timeout=60) as resp, Path(dest).open("wb") as fh:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)
 
     def poll_env(
         self, host: str, after: int = 0, timeout: float = 0.0

@@ -1,24 +1,39 @@
-"""Comm clone toolset: peer messaging, consent-gated fs, user asks.
+"""Comm clone toolset: peer messaging, consent-gated fs, file transfer, asks.
 
 The fs tools are thin wrappers over the transport's fs entry — the path guard
 lives on the hub (server-side, authoritative). Non-public writes ride a
-consent_id captured by a prior ask_consent.
+consent_id captured by a prior ask_consent. File transfers stage bytes on the
+hub (store-and-forward); only metadata rides the envelope, and the receiving
+host's user consents before anything touches their local disk.
 """
 
+from pathlib import Path
+
 from ..agent import BoundTool
+from ..config import PROJECT_ROOT
+from ..hub.app import safe_name
 from ..pending import PendingAsks
 from ..protocol import Envelope, parse_addr
 from ..tools.ask import _format_answer, _normalize_questions
 
 
 class CommTools:
-    def __init__(self, addr: str, transport, pending: PendingAsks, ask_timeout_s: float = 600.0):
+    def __init__(
+        self,
+        addr: str,
+        transport,
+        pending: PendingAsks,
+        ask_timeout_s: float = 600.0,
+        inbox_dir: Path | None = None,
+    ):
         self.addr = addr
         self.host, self.role, self.peer = parse_addr(addr)
         self.transport = transport
         self.pending = pending
         self.ask_timeout_s = ask_timeout_s
+        self.inbox_dir = Path(inbox_dir) if inbox_dir else PROJECT_ROOT / "inbox"
         self.consent_id: str | None = None  # last granted consent (envelope id)
+        self.peer_sends = 0  # send_peer calls in the current turn (chat fallback)
 
     # ── helpers ──
 
@@ -56,7 +71,86 @@ class CommTools:
             src=self.addr, dst=f"{self.peer}:comm-{self.host}", type="chat", body={"text": text}
         )
         out = self.transport.send(env)
+        self.peer_sends += 1
         return "SENT" if out.get("ok", True) else f"ERROR: {out.get('status', 'send failed')}"
+
+    def send_file(self, args: dict) -> str:
+        """Transfer a server-stored file to the peer host's local inbox.
+
+        Bytes are staged on the hub (copied out of the store server-side); the
+        receiver's user consents before the file lands on their disk.
+        """
+        host = str(args.get("host") or "").strip()
+        path = str(args.get("path") or "").strip()
+        name = str(args.get("name") or "").strip() or safe_name(path)
+        reason = str(args.get("reason") or "").strip()
+        if not host or not path:
+            return "ERROR: Required arguments: host, path"
+        if host == self.host:
+            return "ERROR: host must be your peer, not yourself"
+        staged = self.transport.transfer(path, name, host)
+        if staged.get("error"):
+            return f"ERROR: {staged['error']}"
+        env = Envelope(
+            src=self.addr,
+            dst=f"{host}:comm-{self.host}",
+            type="transfer",
+            body={
+                "id": staged["id"],
+                "name": staged["name"],
+                "size": staged["size"],
+                "reason": reason,
+                "from": self.addr,
+            },
+        )
+        self.pending.register(env.id)
+        self.transport.send(env)
+        try:
+            answered, value = self.pending.wait(env.id, timeout_s=self.ask_timeout_s)
+        finally:
+            self.pending.discard(env.id)
+        if not answered:
+            return "ERROR: 用户未回答"
+        if not isinstance(value, dict):
+            return "ERROR: malformed transfer result"
+        if value.get("ok"):
+            return f"DELIVERED: saved on {host} as {value.get('saved', '(unknown path)')}"
+        return f"REJECTED: {value.get('error', 'declined')}"
+
+    def receive_transfer(self, env: Envelope) -> dict:
+        """Handle an incoming transfer envelope: consent, download, land locally."""
+        body = env.body
+        name = safe_name(str(body.get("name") or "file"))
+        size = body.get("size")
+        reason = str(body.get("reason") or "")
+        src_host, _role, _peer = parse_addr(str(body.get("from") or env.src))
+        text, _ask_id = self._blocking_ask(
+            f"{self.host}:local",
+            {
+                "from": env.src,
+                "action": "receive file",
+                "path": name,
+                "reason": reason,
+                "question": (
+                    f"{src_host} wants to send you a file: {name} "
+                    f"({size} bytes). Accept?\nReason: {reason}"
+                ),
+            },
+        )
+        if text == "DENIED":
+            return {"ok": False, "error": "declined by the receiving user"}
+        if text.startswith("ERROR"):
+            return {"ok": False, "error": text}
+        dest_dir = self.inbox_dir / src_host
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / name
+        stem, suffix = dest.stem, dest.suffix
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"{stem}-{n}{suffix}"
+            n += 1
+        self.transport.download_transfer(str(body.get("id")), dest)
+        return {"ok": True, "saved": str(dest)}
 
     def ask_consent(self, args: dict) -> str:
         host = str(args.get("host") or "").strip()
@@ -131,6 +225,7 @@ class CommTools:
     def bound(self) -> dict[str, BoundTool]:
         return {
             "send_peer": BoundTool(schema=_SCHEMA_SEND_PEER, fn=self.send_peer),
+            "send_file": BoundTool(schema=_SCHEMA_SEND_FILE, fn=self.send_file),
             "ask_consent": BoundTool(schema=_SCHEMA_ASK_CONSENT, fn=self.ask_consent),
             "ask_user": BoundTool(schema=_SCHEMA_ASK_USER, fn=self.ask_user),
             "read_file": BoundTool(schema=_SCHEMA_READ, fn=self.read_file),
@@ -167,6 +262,20 @@ _SCHEMA_SEND_PEER = _obj_schema(
         "text": _str_schema("text", "message body"),
     },
     ["text"],
+)
+_SCHEMA_SEND_FILE = _obj_schema(
+    {
+        "__name": "send_file",
+        "__desc": (
+            "Transfer a server-stored file to the peer host's local inbox. "
+            "The receiving user must accept before it lands on their disk."
+        ),
+        "host": _str_schema("host", "destination host name"),
+        "path": _str_schema("path", "source path relative to data/, e.g. public/x.pdf"),
+        "name": _str_schema("name", "file name to save as (default: source name)", required=False),
+        "reason": _str_schema("reason", "why the peer needs this file", required=False),
+    },
+    ["host", "path"],
 )
 _SCHEMA_ASK_CONSENT = _obj_schema(
     {

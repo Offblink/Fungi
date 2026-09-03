@@ -1,0 +1,293 @@
+"""Friends / comm log / chat fallback / file transfer contract tests."""
+
+import json
+import threading
+import time
+import urllib.error
+import urllib.request
+
+import pytest
+
+from fungi.clone.base import RemoteTransport
+from fungi.clone.comm import build_comm_clone
+from fungi.config import Config
+from fungi.events import NullSink
+from fungi.llm import LLMResult
+from fungi.protocol import Envelope
+
+CFG = Config(api_key="k", endpoint="e", model="m")
+
+
+def tool_call(name: str, args: dict, call_id: str = "t1") -> dict:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args)},
+    }
+
+
+class ScriptedLLM:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def __call__(self, _messages, _tool_defs):
+        return self.results.pop(0)
+
+
+def _joined_room(room):
+    hub, clients = room
+    for name in ("alpha", "beta"):
+        clients[name].post("/api/join", {"name": name, "token": "room-token"})
+    return hub, clients
+
+
+# ── comm log ──
+
+
+def test_comm_log_records_and_merges_directions(room):
+    _hub, clients = _joined_room(room)
+    a = Envelope(
+        src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "hi beta"}
+    )
+    b = Envelope(
+        src="beta:comm-alpha", dst="alpha:comm-beta", type="chat", body={"text": "hi alpha"}
+    )
+    clients["alpha"].send(a)
+    clients["beta"].send(b)
+    hub = room[0]
+    rows = hub.commlog.read("alpha", "beta")
+    assert [r["text"] for r in rows] == ["hi beta", "hi alpha"]
+    assert rows[0]["src"] == "alpha:comm-beta"
+    assert rows[0]["kind"] == "chat"
+
+
+def test_peers_endpoint_excludes_self(room):
+    _hub, clients = _joined_room(room)
+    code, out = clients["alpha"].get("/api/peers?host=alpha&token=room-token")
+    assert code == 200
+    assert out["peers"] == ["beta"]
+
+
+# ── chat fallback (real-machine 2026-09-03 finding: reply text was dropped) ──
+
+
+def test_chat_reply_without_send_peer_is_delivered(room):
+    _hub, clients = _joined_room(room)
+    fake = ScriptedLLM([LLMResult(content="files: public/a.txt, public/b.txt")])
+    clone = build_comm_clone(
+        "beta", "alpha", RemoteTransport(clients["beta"]), CFG, NullSink(), llm=fake
+    )
+    chat = Envelope(
+        src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "what files?"}
+    )
+    clients["alpha"].send(chat)
+    messages, _cursor = clients["beta"].poll_env("beta")
+    clone.run_turn(messages[0])
+    replies, _cursor = clients["alpha"].poll_env("alpha")
+    chats = [e for e in replies if e.type == "chat" and "files:" in str(e.body.get("text"))]
+    assert chats, "fallback did not deliver the reply that never called send_peer"
+
+
+def test_explicit_send_peer_not_duplicated_by_fallback(room):
+    _hub, clients = _joined_room(room)
+    fake = ScriptedLLM(
+        [
+            LLMResult(content="", tool_calls=[tool_call("send_peer", {"text": "explicit"})]),
+            LLMResult(content="explicit"),
+        ]
+    )
+    clone = build_comm_clone(
+        "beta", "alpha", RemoteTransport(clients["beta"]), CFG, NullSink(), llm=fake
+    )
+    chat = Envelope(
+        src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "ping"}
+    )
+    clients["alpha"].send(chat)
+    messages, _cursor = clients["beta"].poll_env("beta")
+    clone.run_turn(messages[0])
+    replies, _cursor = clients["alpha"].poll_env("alpha")
+    chats = [e for e in replies if e.type == "chat"]
+    assert [c.body["text"] for c in chats] == ["explicit"]
+
+
+# ── transfer staging + authorization (hub API) ──
+
+
+def test_transfer_stage_download_and_host_guard(room):
+    hub, clients = _joined_room(room)
+    clients["alpha"].fs("write", "public/report.txt", content="payload-123")
+    code, out = clients["alpha"].post(
+        "/api/transfer",
+        {
+            "token": "room-token",
+            "host": "alpha",
+            "path": "public/report.txt",
+            "name": "report.txt",
+            "to": "beta",
+        },
+    )
+    assert code == 200 and out["ok"]
+    assert out["size"] == len("payload-123")
+
+    base = f"http://127.0.0.1:{hub.port}"
+    url_ok = f"{base}/api/transfer?id={out['id']}&host=beta&token=room-token"
+    with urllib.request.urlopen(url_ok, timeout=10) as resp:
+        assert resp.read() == b"payload-123"
+
+    url_bad = f"{base}/api/transfer?id={out['id']}&host=alpha&token=room-token"
+    with pytest.raises(urllib.error.HTTPError):
+        urllib.request.urlopen(url_bad, timeout=10).read()
+
+
+def test_transfer_rejects_unknown_and_self(room):
+    _hub, clients = _joined_room(room)
+    clients["alpha"].fs("write", "public/x.txt", content="x")
+    code, out = clients["alpha"].post(
+        "/api/transfer",
+        {
+            "token": "room-token",
+            "host": "alpha",
+            "path": "public/x.txt",
+            "name": "x.txt",
+            "to": "ghost",
+        },
+    )
+    assert code == 400 and "unknown host" in out["error"]
+    code, out = clients["alpha"].post(
+        "/api/transfer",
+        {
+            "token": "room-token",
+            "host": "alpha",
+            "path": "public/x.txt",
+            "name": "x.txt",
+            "to": "alpha",
+        },
+    )
+    assert code == 400
+
+
+def test_transfer_path_guard_blocks_foreign_home(room):
+    _hub, clients = _joined_room(room)
+    _code, _out = clients["beta"].post(
+        "/api/transfer",
+        {
+            "token": "room-token",
+            "host": "beta",
+            "path": "homes/alpha/secret.md",
+            "name": "secret.md",
+            "to": "alpha",
+        },
+    )
+    assert _code == 400  # store guard: non-owner read needs consent
+
+
+# ── receiving side: consent -> download -> inbox ──
+
+
+def _stage(hub_clients, host="alpha", path="public/report.txt", name="report.txt", to="beta"):
+    _hub, clients = hub_clients
+    clients[host].fs("write", path, content="payload-123")
+    code, out = clients[host].post(
+        "/api/transfer",
+        {"token": "room-token", "host": host, "path": path, "name": name, "to": to},
+    )
+    assert code == 200, out
+    return out
+
+
+def _answer_ask(clone, clients, value):
+    """Wait for the consent ask in beta's buffer, answer it, dispatch the answer."""
+    ask = None
+    deadline = time.monotonic() + 5.0
+    while ask is None and time.monotonic() < deadline:
+        msgs, _cursor = clients["beta"].poll_env("beta")
+        for m in msgs:
+            if m.type == "ask":
+                ask = m
+        if ask is None:
+            time.sleep(0.05)
+    assert ask is not None, "consent ask never reached the receiving host"
+    clients["beta"].send(
+        Envelope(
+            src="beta:local",
+            dst="beta:comm-alpha",
+            type="answer",
+            body={"value": value},
+            reply_to=ask.id,
+        )
+    )
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        msgs, _cursor = clients["beta"].poll_env("beta")
+        for m in msgs:
+            if m.type == "answer" and m.reply_to == ask.id:
+                clone.dispatch(m)
+                return
+        time.sleep(0.05)
+
+
+def test_receive_transfer_accepted_lands_in_inbox(room, tmp_path):
+    _hub, clients = _joined_room(room)
+    staged = _stage((room[0], clients))
+    clone = build_comm_clone(
+        "beta",
+        "alpha",
+        RemoteTransport(clients["beta"]),
+        CFG,
+        NullSink(),
+        ask_timeout_s=5,
+        inbox_dir=tmp_path / "inbox",
+    )
+    env = Envelope(
+        src="alpha:comm-beta",
+        dst="beta:comm-alpha",
+        type="transfer",
+        body={
+            "id": staged["id"],
+            "name": staged["name"],
+            "size": staged["size"],
+            "reason": "you asked for it",
+            "from": "alpha:comm-beta",
+        },
+    )
+    result = {}
+    t = threading.Thread(target=lambda: result.update(clone.on_transfer(env)))
+    t.start()
+    _answer_ask(clone, clients, "yes")
+    t.join(timeout=10)
+    assert result.get("ok") is True, result
+    assert (tmp_path / "inbox" / "alpha" / "report.txt").read_text() == "payload-123"
+
+
+def test_receive_transfer_declined(room, tmp_path):
+    _hub, clients = _joined_room(room)
+    staged = _stage((room[0], clients))
+    clone = build_comm_clone(
+        "beta",
+        "alpha",
+        RemoteTransport(clients["beta"]),
+        CFG,
+        NullSink(),
+        ask_timeout_s=5,
+        inbox_dir=tmp_path / "inbox",
+    )
+    env = Envelope(
+        src="alpha:comm-beta",
+        dst="beta:comm-alpha",
+        type="transfer",
+        body={
+            "id": staged["id"],
+            "name": staged["name"],
+            "size": staged["size"],
+            "reason": "",
+            "from": "alpha:comm-beta",
+        },
+    )
+    result = {}
+    t = threading.Thread(target=lambda: result.update(clone.on_transfer(env)))
+    t.start()
+    _answer_ask(clone, clients, "no")
+    t.join(timeout=10)
+    assert result.get("ok") is False
+    assert "declined" in result.get("error", "")
+    assert not (tmp_path / "inbox" / "alpha").exists()

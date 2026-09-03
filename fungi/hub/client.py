@@ -1,8 +1,9 @@
-"""HTTP client for the hub API: room ops + fs + sessions, one class per host process."""
+"""HTTP client for the hub API: room ops + fs + sessions + transfers."""
 
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from ..protocol import Envelope, ProtocolError, deserialize
 
@@ -106,3 +107,28 @@ class HubClient:
 
     def delete_session(self, session_id: str) -> dict:
         return self._request("POST", "/api/session/delete", {"id": session_id})
+
+    # ── peers / comm log ──
+
+    def peers(self) -> list[str]:
+        return self._request("GET", f"/api/peers?host={self.host}").get("peers", [])
+
+    def comm_log(self, other: str) -> list[dict]:
+        out = self._request("GET", f"/api/comm-log?host={self.host}&with={other}")
+        return out.get("messages", [])
+
+    # ── file transfers (bytes live on the hub; only metadata is exchanged) ──
+
+    def create_transfer(self, path: str, name: str, to_host: str) -> dict:
+        return self._request("POST", "/api/transfer", {"path": path, "name": name, "to": to_host})
+
+    def download_transfer(self, transfer_id: str, dest) -> None:
+        """Stream a staged transfer to a local file path."""
+        url = f"{self.base}/api/transfer?id={transfer_id}&host={self.host}&token={self.token}"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=120) as resp, Path(dest).open("wb") as fh:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                fh.write(chunk)

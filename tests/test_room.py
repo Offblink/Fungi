@@ -6,13 +6,14 @@ import time
 import pytest
 
 from fungi.cards import AskCards
+from fungi.config import Config
 from fungi.consent_rules import ConsentRules
 from fungi.events import NullSink
 from fungi.hub.app import Hub
 from fungi.protocol import Envelope
 from fungi.room import RoomClient, RoomRuntime, RoomServer
 
-CFG = object()  # clones only touch cfg when a turn runs; no turns here
+CFG = Config(api_key="k", endpoint="e", model="m")  # assembly reads max_file_mb/inbox_dir
 LLM = object()
 
 
