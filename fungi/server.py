@@ -244,8 +244,11 @@ class YesSirHandler(BaseHTTPRequestHandler):
         route = url.path
         if route == "/":
             self._send_static("index.html")
-        elif route in ("/app.js", "/style.css"):
+        elif route in ("/app.js", "/style.css", "/motion.js"):
             self._send_static(route.lstrip("/"))
+        elif (route.startswith("/vendor/") and "/" not in route[8:]
+              and ".." not in route):  # flat vendor dir; no traversal
+            self._send_static(route[1:])  # web/vendor/<file> — keep the dir prefix
         elif route == "/model":
             self._send_json({"model": load_config().model})
         elif route == "/config-status":

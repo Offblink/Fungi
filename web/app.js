@@ -4,6 +4,7 @@ const msgs = document.getElementById('messages'), input = document.getElementByI
   btn = document.getElementById('send'), status = document.getElementById('status'),
   tray = document.getElementById('agent-tray');
 let processing = false, currentSessionId = null, allSessions = [], sessionDirty = false;
+let _liveCount = 0; // live-node count at last streaming render (motion: animate only fresh nodes)
 let rawMessages = [];
 
 /* ---------- helpers ---------- */
@@ -142,7 +143,7 @@ async function switchSession(id) {
 }
 
 function renderMessages(s) {
-  msgs.querySelectorAll('.live-node').forEach(n => n.remove());
+  _liveCount = 0; // full re-render: transcript replay is CSS-static, live nodes re-baseline
   renderTranscript(rawMessages, s.asks || []);
   if (turn && turn.sessionId === currentSessionId) renderTurnLive();
   placeAskCards(); // friend-view inline cards move back to the banner here
@@ -419,6 +420,7 @@ async function send() {
   sessionDirty = true;
   turn.userText = text;
   input.value = ''; btn.disabled = true; status.textContent = 'Thinking...';
+  _liveCount = 0; window.fungiMotion?.waveOn?.(status);
   renderTurnLive();
   await pumpStream('/chat', { message: text, sessionId: sid });
   if (currentSessionId === sid) input.focus();
@@ -435,6 +437,7 @@ async function retryTurn() {
   sessionDirty = true;
   btn.disabled = true;
   status.textContent = 'Retrying...';
+  _liveCount = 0; window.fungiMotion?.waveOn?.(status);
   renderTurnLive();
   await pumpStream('/retry', { sessionId: sid });
   if (currentSessionId === sid) input.focus();
@@ -473,6 +476,7 @@ async function pumpStream(url, body) {
     turn = null;
   }
   processing = false; btn.disabled = false;
+  window.fungiMotion?.waveOff?.();
 }
 
 /* Turn events update the model first, then touch the DOM only when the
@@ -620,6 +624,18 @@ function renderTurnLive() {
     }
   });
   msgs.scrollTop = msgs.scrollHeight;
+  // Motion: animate only nodes that appeared since the previous streaming
+  // re-render — every text chunk rebuilds .live-node, re-animating all of
+  // them would flicker (docs/plan-ux.md contract).
+  var _live = msgs.querySelectorAll('.live-node');
+  if (window.fungiMotion && !window.fungiMotion.reduced) {
+    for (var _li = _liveCount; _li < _live.length; _li++) {
+      var _n = _live[_li];
+      window.fungiMotion.msgIn(_n, _n.classList.contains('user') ? 'user'
+        : _n.classList.contains('assistant') ? 'assistant' : 'other');
+    }
+  }
+  _liveCount = _live.length;
 }
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -1032,8 +1048,13 @@ function applyTheme(t) {
   try { localStorage.setItem('fungi-theme', t); } catch (e) {}
 }
 try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
-document.getElementById('theme-switch').addEventListener('click', () => {
+document.getElementById('theme-switch').addEventListener('click', function () {
+  var next = themeRoot.dataset.theme === 'dark' ? 'light' : 'dark';
+  if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.themeTo) {
+    window.fungiMotion.themeTo(next, this, function () { applyTheme(next); });
+    return;
+  }
   themeRoot.classList.add('theme-anim'); // cross-fade colors, then back to instant
-  applyTheme(themeRoot.dataset.theme === 'dark' ? 'light' : 'dark');
+  applyTheme(next);
   setTimeout(() => themeRoot.classList.remove('theme-anim'), 500);
 });

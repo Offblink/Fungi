@@ -233,3 +233,22 @@ html.theme-anim, html.theme-anim *, html.theme-anim *::before, html.theme-anim *
   transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease,
     fill 0.4s ease, stroke 0.4s ease, box-shadow 0.4s ease !important;
 }
+
+/* ---- motion layer (GSAP via web/motion.js — optional; pure-CSS fallback) ---- */
+html.motion-on .msg{animation:none}
+html.motion-on .agent-bubble{animation:none}
+.motion-wave{display:inline-flex;align-items:flex-end;gap:3px;height:15px;margin-right:8px;flex-shrink:0}
+.motion-wave i{width:3px;height:5px;border-radius:2px;background:var(--accent);animation:waveBar 0.9s var(--ease-smooth) infinite}
+.motion-wave i:nth-child(2){animation-delay:0.15s}
+.motion-wave i:nth-child(3){animation-delay:0.3s}
+@keyframes waveBar{0%,100%{height:4px}50%{height:15px}}
+#send{position:relative;overflow:hidden}
+.motion-ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,0.45);width:12px;height:12px;pointer-events:none}
+.motion-spore{position:fixed;width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent-glow);pointer-events:none;z-index:400;opacity:0.9}
+.motion-theme-wash{position:fixed;inset:0;z-index:300;pointer-events:none}
+.motion-theme-wash.light{background:radial-gradient(130% 130% at 50% 0%,#fdf2f8 0%,#f0f2f8 55%,#e8ebf5 100%)}
+.motion-theme-wash.dark{background:radial-gradient(130% 130% at 50% 0%,#1a3a37 0%,#12141c 60%)}
+.ask-card{position:relative}
+.motion-stamp{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-8deg);padding:4px 14px;border:2px solid;border-radius:8px;font-weight:700;font-size:0.95rem;letter-spacing:0.1em;pointer-events:none;background:color-mix(in srgb,var(--surface) 65%,transparent)}
+.motion-stamp.ok{color:#16a34a;border-color:#16a34a}
+.motion-stamp.no{color:var(--error-text);border-color:var(--error-text)}
