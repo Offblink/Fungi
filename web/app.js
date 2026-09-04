@@ -984,49 +984,20 @@ async function loadPeers() {
 function renderFriendList() {
   const list = document.getElementById('friend-list');
   const empty = document.getElementById('friends-empty');
-  // Keyed like renderSessionList (see note there) so Flip can animate real
-  // add/remove/reorder. Idempotence guard: /peers polls every 5s and the keyed
-  // path used to re-append every row on every call, so Flip kept animating a
-  // phantom reorder (rows drifted to the bottom and overlapped mid-flight).
-  // An unchanged roster now touches nothing.
-  const rows = Array.from(list.querySelectorAll('.friend-row'));
-  const unchanged = rows.length === allPeers.length && rows.every((row, i) => {
-    const p = allPeers[i];
-    return row.dataset.host === peerName(p)
-      && row.querySelector('.friend-name').textContent === peerDisplay(p)
-      && row.classList.contains('active') === (peerName(p) === friendView);
+  // Plain rebuild (no keyed Flip): /peers polls every 5s and the roster is
+  // tiny, so a simple re-render reads calmer than list animation.
+  list.querySelectorAll('.friend-row').forEach(r => r.remove());
+  if (!allPeers.length) { empty.style.display = ''; return; }
+  empty.style.display = 'none';
+  allPeers.forEach(p => {
+    const name = peerName(p);
+    const row = document.createElement('div');
+    row.className = 'friend-row' + (name === friendView ? ' active' : '');
+    row.title = name;
+    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
+    row.addEventListener('click', () => openFriendChat(name));
+    list.appendChild(row);
   });
-  if (unchanged) return;
-  empty.style.display = allPeers.length ? 'none' : '';
-  const mutate = () => {
-    const existing = {};
-    rows.forEach(r => { existing[r.dataset.host] = r; });
-    let prev = null;
-    allPeers.forEach(p => {
-      const name = peerName(p);
-      let row = existing[name];
-      if (row) {
-        delete existing[name];
-        row.classList.toggle('active', name === friendView);
-        row.querySelector('.friend-name').textContent = peerDisplay(p);
-      } else {
-        row = document.createElement('div');
-        row.dataset.host = name;
-        row.className = 'friend-row' + (name === friendView ? ' active' : '');
-        row.title = name;
-        row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
-        row.addEventListener('click', () => openFriendChat(name));
-      }
-      // Move only when out of position: re-appending in-place rows is what
-      // made every poll look like a reorder.
-      const at = prev ? prev.nextElementSibling : list.firstElementChild;
-      if (row !== at) list.insertBefore(row, at);
-      prev = row;
-    });
-    Object.values(existing).forEach(r => r.remove());
-  };
-  if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.listFlip) window.fungiMotion.listFlip(list, mutate);
-  else mutate();
 }
 async function openFriendChat(host) {
   friendView = host;
