@@ -53,7 +53,7 @@ def agent_names(agent) -> set[str]:
 def test_comm_clone_surface_is_guarded_only():
     clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
     names = agent_names(clone.build_agent())
-    assert {"send_peer", "ask_consent", "confirm", "spawn", *clone.tools} <= names
+    assert {"send_peer", "confirm", "inquire", "spawn", *clone.tools} <= names
     # no unguarded native tool may leak onto a comm clone (spec 6.1)
     assert names.isdisjoint(tools.BASE_TOOL_NAMES)
 
@@ -64,7 +64,7 @@ def test_local_clone_surface_has_native_tools_and_spawn():
     )
     names = agent_names(clone.build_agent())
     assert names >= tools.BASE_TOOL_NAMES  # YESIR native full set (spec 6.2)
-    assert {"delegate", "peers", "confirm", "spawn"} <= names
+    assert {"delegate", "peers", "inquire", "spawn"} <= names
 
 
 def test_spawn_children_inherit_clone_file_surface():

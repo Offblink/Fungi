@@ -2,7 +2,7 @@
 
 The fs tools are thin wrappers over the transport's fs entry — the path guard
 lives on the hub (server-side, authoritative). Non-public writes ride a
-consent_id captured by a prior ask_consent. File transfers stage bytes on the
+consent_id captured by a prior confirm. File transfers stage bytes on the
 hub (store-and-forward); only metadata rides the envelope, and the receiving
 host's user consents before anything touches their local disk.
 """
@@ -152,7 +152,7 @@ class CommTools:
         self.transport.download_transfer(str(body.get("id")), dest)
         return {"ok": True, "saved": str(dest)}
 
-    def ask_consent(self, args: dict) -> str:
+    def confirm(self, args: dict) -> str:
         host = str(args.get("host") or "").strip()
         action = str(args.get("action") or "").strip()
         path = str(args.get("path") or "").strip()
@@ -173,7 +173,7 @@ class CommTools:
             self.consent_id = ask_id
         return text
 
-    def confirm(self, args: dict) -> str:
+    def inquire(self, args: dict) -> str:
         questions = _normalize_questions(args)
         if not questions:
             return "ERROR: Missing required argument: question"
@@ -226,8 +226,8 @@ class CommTools:
         return {
             "send_peer": BoundTool(schema=_SCHEMA_SEND_PEER, fn=self.send_peer),
             "send_file": BoundTool(schema=_SCHEMA_SEND_FILE, fn=self.send_file),
-            "ask_consent": BoundTool(schema=_SCHEMA_ASK_CONSENT, fn=self.ask_consent),
             "confirm": BoundTool(schema=_SCHEMA_CONFIRM, fn=self.confirm),
+            "inquire": BoundTool(schema=_SCHEMA_INQUIRE, fn=self.inquire),
             "read_file": BoundTool(schema=_SCHEMA_READ, fn=self.read_file),
             "write_file": BoundTool(schema=_SCHEMA_WRITE, fn=self.write_file),
             "edit_file": BoundTool(schema=_SCHEMA_EDIT, fn=self.edit_file),
@@ -277,9 +277,9 @@ _SCHEMA_SEND_FILE = _obj_schema(
     },
     ["host", "path"],
 )
-_SCHEMA_ASK_CONSENT = _obj_schema(
+_SCHEMA_CONFIRM = _obj_schema(
     {
-        "__name": "ask_consent",
+        "__name": "confirm",
         "__desc": "Ask the owning host's user for consent before touching non-public files. Blocks until answered.",
         "host": _str_schema("host", "host that owns the target directory"),
         "action": _str_schema("action", "what to do: read/write/edit"),
@@ -288,9 +288,9 @@ _SCHEMA_ASK_CONSENT = _obj_schema(
     },
     ["host", "action", "path"],
 )
-_SCHEMA_CONFIRM = _obj_schema(
+_SCHEMA_INQUIRE = _obj_schema(
     {
-        "__name": "confirm",
+        "__name": "inquire",
         "__desc": "Ask your own host's user a question via system notification + WebUI card. Blocks until answered.",
         "question": _str_schema("question", "the question", required=False),
         "options": {"type": "array", "description": "optional answer options"},

@@ -1,4 +1,4 @@
-"""confirm tool (L1 only): the Inquire mechanism.
+"""inquire tool (L1 only): the Inquire mechanism.
 
 Emits an `ask` event on the turn sink, then blocks the calling agent thread
 until the UI answers via POST /answer (resolve_ask) or the timeout expires.
@@ -21,7 +21,7 @@ HEARTBEAT_S = 15
 ASK_SCHEMA = {
     "type": "function",
     "function": {
-        "name": "confirm",
+        "name": "inquire",
         "description": (
             "Ask the user one or several questions and wait for their answers. Only the"
             " orchestrator can ask; use it when a decision genuinely needs the user (approach"
@@ -81,7 +81,7 @@ ASK_SCHEMA = {
     },
 }
 
-# Ask registry shared by every confirm tool instance; /answer resolves in-process.
+# Ask registry shared by every inquire tool instance; /answer resolves in-process.
 _pending = PendingAsks()
 
 
@@ -147,7 +147,7 @@ def make_ask_tool(
     should_abort: Callable[[], bool] | None = None,
     notify: Callable[[str], None] | None = None,
 ) -> BoundTool:
-    """Build the confirm BoundTool bound to one turn's sink.
+    """Build the inquire BoundTool bound to one turn's sink.
 
     `on_answer(record)` is called once per completed ask with
     {id, questions, answers, status: answered|timeout|aborted} for

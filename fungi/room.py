@@ -57,7 +57,7 @@ def _summary(body: dict) -> str:
 
 
 def _is_consent(body: dict) -> bool:
-    """Consent-shaped ask: produced by ask_consent (action + path present)."""
+    """Consent-shaped ask: produced by confirm (action + path present)."""
     return bool(body.get("action")) and bool(body.get("path"))
 
 
@@ -230,7 +230,7 @@ class RoomBase:
     # ── incoming asks: auto-allow -> cards + notification ──
 
     def _on_ask(self, env: Envelope) -> None:
-        # The logical requester is body["from"] (ask_consent/transfer both set
+        # The logical requester is body["from"] (confirm/transfer both set
         # it). For transfer receipts the envelope src is the receiving host's
         # OWN comm clone — keying the mode on env.src would key the friend's
         # slider to the wrong host.
@@ -549,12 +549,12 @@ class RoomRuntime(WebUIRuntime):
             child_extra_tools=clone.child_extra_tools,
             skill_save=clone.skill_save,
         )
-        # confirm rides the turn sink so its card streams in the NDJSON flow;
+        # inquire rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).
         # on_answer persists completed asks on the turn agent so sessions
         # replay answered cards after reload — room mode lost this wiring,
         # leaving every session's asks bucket permanently empty.
-        tools["confirm"] = make_ask_tool(
+        tools["inquire"] = make_ask_tool(
             sink,
             on_answer=trilayer.asks.append,
             should_abort=should_abort,
@@ -569,7 +569,7 @@ class RoomRuntime(WebUIRuntime):
         )
 
     def _notify_in_turn_ask(self, summary: str) -> None:
-        """confirm raises its card inside the live turn stream. When nobody
+        """inquire raises its card inside the live turn stream. When nobody
         has the WebUI open, that card is invisible and the turn silently
         blocks for up to 15 minutes — fire a system notification instead.
         Recent HTTP activity means a browser is polling and the card is on

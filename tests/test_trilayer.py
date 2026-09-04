@@ -93,7 +93,7 @@ def test_l3_toolset_is_restricted():
     # verify the whitelist directly from the tools registry instead.
     assert "spawn" not in L3_TOOL_NAMES
     assert "web_search" not in L3_TOOL_NAMES
-    assert "confirm" not in L3_TOOL_NAMES
+    assert "inquire" not in L3_TOOL_NAMES
     assert {"read", "write", "edit", "glob", "grep", "bash"} == set(L3_TOOL_NAMES)
 
 

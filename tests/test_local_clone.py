@@ -76,7 +76,7 @@ def test_local_clone_tool_surface():
     clone = build_local_clone(
         "alpha", transport=None, cfg=CFG, sink=NullSink(), peers_fn=lambda: ["beta"]
     )
-    assert set(clone.tools) == {"confirm", "delegate", "peers", "send_file"}
+    assert set(clone.tools) == {"inquire", "delegate", "peers", "send_file"}
     assert "local Orchestrator" in clone.system_prompt
     assert "host alpha" in clone.system_prompt
     assert "send_file" in clone.system_prompt

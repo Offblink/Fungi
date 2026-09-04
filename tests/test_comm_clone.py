@@ -46,8 +46,8 @@ def test_comm_clone_tool_surface():
     assert set(clone.tools) == {
         "send_peer",
         "send_file",
-        "ask_consent",
         "confirm",
+        "inquire",
         "read_file",
         "write_file",
         "edit_file",
@@ -146,7 +146,7 @@ def test_consent_flow_wakes_blocked_write(room):
                 content="",
                 tool_calls=[
                     tool_call(
-                        "ask_consent",
+                        "confirm",
                         {
                             "host": "alpha",
                             "action": "write",
@@ -219,7 +219,7 @@ def test_consent_flow_wakes_blocked_write(room):
         assert any(r.type == "result" for r in results), "turn never completed"
         assert any("written" in r.body.get("payload", "") for r in results)
         # the consent ask reached the LLM, and the guarded write ran after "yes"
-        assert "ask_consent" in fake.requested[0]
+        assert "confirm" in fake.requested[0]
         assert "write_file" in fake.requested[1]
     finally:
         clone.stop()
@@ -229,7 +229,7 @@ def test_consent_flow_wakes_blocked_write(room):
     # the consented write actually landed, and the ask is ANSWERED in the hub registry
     notes = hub.store.root / "homes" / "alpha" / "notes.md"
     assert notes.read_text(encoding="utf-8") == "shared"
-    comm_tools = clone.tools["ask_consent"].fn.__self__
+    comm_tools = clone.tools["confirm"].fn.__self__
     record = hub.asks.get(comm_tools.consent_id)
     assert record is not None and record["status"] == "answered"
 

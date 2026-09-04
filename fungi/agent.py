@@ -50,7 +50,7 @@ shell commands, search code, and access the web. Core rules:
 
 @dataclass
 class BoundTool:
-    """An agent-bound tool beyond the base registry (spawn, confirm, ...)."""
+    """An agent-bound tool beyond the base registry (spawn, inquire, ...)."""
 
     schema: dict
     fn: Callable[..., str]

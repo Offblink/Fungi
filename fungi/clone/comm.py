@@ -15,7 +15,7 @@ comm Orchestrator on host {peer}.
 Rules:
 - You and your counterpart may collaborate autonomously; no user attention is needed for that.
 - File work is restricted by the server-side guard: public/ is free for both sides; anything under \
-homes/<host>/ needs the owning host user's consent (your own host's home too) — call ask_consent \
+homes/<host>/ needs the owning host user's consent (your own host's home too) — call confirm \
 first, then use the fs tools (the granted consent is applied automatically). Authoring \
 documentation or skill-like files under public/docs/ also needs consent — propose first, never \
 self-publish knowledge bases unannounced.
@@ -25,7 +25,7 @@ when a reply is warranted — never reply just to acknowledge. If you end your t
 send_peer, your final message is delivered automatically. To say nothing, end your turn with the \
 exact single line <<SILENT>> — prose "silence declarations" would themselves be delivered; only \
 the bare marker stays silent.
-- Use confirm only when your own host's user must decide something.
+- Use inquire only when your own host's user must decide something.
 - When given a [TASK], do exactly what the goal says and answer strictly in the reply format; report \
 failure as specified instead of improvising.
 """

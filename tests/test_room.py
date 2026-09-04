@@ -114,7 +114,7 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
 
 
 def test_room_turn_persists_answered_asks(server_room):
-    """Room-mode turns must record completed confirm calls on the agent:
+    """Room-mode turns must record completed inquire calls on the agent:
     the WebUI turn runner saves that bucket, and sessions replay answered
     cards from it. Room mode lost the on_answer wiring — asks stayed [] on
     every session file."""
@@ -130,7 +130,7 @@ def test_room_turn_persists_answered_asks(server_room):
     out: dict = {}
     th = threading.Thread(
         target=lambda: out.update(
-            reply=agent.extra_tools["confirm"].fn({"question": "proceed?"})
+            reply=agent.extra_tools["inquire"].fn({"question": "proceed?"})
         ),
         daemon=True,
     )
@@ -165,7 +165,7 @@ def test_confirm_notifies_only_when_webui_idle(server_room):
 
     events: list[tuple] = []
     agent = runtime.build_agent(FnSink(lambda t, c: events.append((t, c))), lambda: False)
-    tool = agent.extra_tools["confirm"]
+    tool = agent.extra_tools["inquire"]
 
     def ask_id(n: int) -> object:
         ids = [c["id"] for t, c in events if t == "ask"]
@@ -356,7 +356,7 @@ def test_slider_does_not_auto_allow_generic_confirm(server_room):
     )
     time.sleep(0.3)
     assert not any(m.type == "answer" for m in _all_msgs(requester_inbox))
-    assert room.cards.pending(), "generic confirm must still raise a card"
+    assert room.cards.pending(), "generic inquire must still raise a card"
 
 
 # ── client role ──

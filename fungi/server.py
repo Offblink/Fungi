@@ -138,7 +138,7 @@ class WebUIRuntime:
         return TriLayer(load_config(), sink, should_abort=should_abort).build_orchestrator(sink)
 
     def route_answer(self, ask_id: str, value: str | list[str]) -> bool:
-        """Resolve an /answer submission. Default: in-process confirm only."""
+        """Resolve an /answer submission. Default: in-process inquire only."""
         return resolve_ask(ask_id, value)
 
     def pending_asks(self) -> list[dict]:

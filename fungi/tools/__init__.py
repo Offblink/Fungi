@@ -1,7 +1,7 @@
 """Tool registry: OpenAI function-calling schemas, dispatch, and per-layer whitelists.
 
 Layer rules (see docs/spec.md 2.3):
-- L1/L2: all base tools; `spawn` and `confirm` are attached by fungi.trilayer / fungi.tools.ask.
+- L1/L2: all base tools; `spawn` and `inquire` are attached by fungi.trilayer / fungi.tools.ask.
 - L3:   read/write/edit/glob/grep/bash only (basic worker, no web, no dispatch).
 """
 

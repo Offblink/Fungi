@@ -9,7 +9,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 - **星型拓扑，server relay**：一台主机 `--server` 起房（承载 HTTP hub + 存储），其余 `--join` 直连；clone 间流量全部经 server 投递（at-least-once，消息 id 去重）。
 - **两类 clone**：
   - 本机 clone（local）：每 host 恰一个，专职与用户交互，持原生全套工具 + `delegate(host, goal, reply_format)` 跨主机委派。
-  - 通讯 clone（comm）：每远端 host 一个，与对位通讯 clone 自由 chat/task 往来，**不自动回信**——LLM 想回才显式调 `send_peer`；工具面只有守卫版文件工具 + `send_peer` / `ask_consent` / `confirm`，原生 bash/read/write 不下放。
+  - 通讯 clone（comm）：每远端 host 一个，与对位通讯 clone 自由 chat/task 往来，**不自动回信**——LLM 想回才显式调 `send_peer`；工具面只有守卫版文件工具 + `send_peer` / `confirm` / `inquire`，原生 bash/read/write 不下放。
 - **同意流即消息**：无 Redis 等协调设施。ask 是普通 envelope，投到属主 host 的本机 clone → PyQt6 系统通知 → WebUI 卡片（允许 / 禁止 / 自定义输入 / 始终允许）→ answer envelope 唤醒阻塞中的请求方。断线重连后心跳重放未决通知。
 - **文件空间**（存于 server `data/`）：
 

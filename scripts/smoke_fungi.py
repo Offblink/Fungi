@@ -4,7 +4,7 @@ Fake (default):
   1. delegate hello : alpha /chat -> delegate(beta) -> beta comm writes
      public/hello.txt -> result -> alpha turn completes.
   2. delegate consent: alpha /chat -> delegate(gamma) -> gamma comm calls
-     ask_consent -> card on alpha -> driver answers yes -> gamma writes
+     confirm -> card on alpha -> driver answers yes -> gamma writes
      homes/alpha/notes.md -> result.
 
 Real (--real, needs ZAI_API_KEY in config.json): step 1 with natural-language
@@ -127,7 +127,7 @@ class RuleLLM:
                     content="",
                     tool_calls=[
                         tc(
-                            "ask_consent",
+                            "confirm",
                             {
                                 "host": "alpha",
                                 "action": "write",
@@ -330,7 +330,7 @@ def drive(args: argparse.Namespace) -> int:
         print(f"{MARKER} step1 OK", flush=True)
 
         if not args.real:
-            # step 2: delegate -> gamma comm -> ask_consent -> card -> yes -> homes write
+            # step 2: delegate -> gamma comm -> confirm -> card -> yes -> homes write
             print(f"{MARKER} step2: delegate consent", flush=True)
             result: list = []
 

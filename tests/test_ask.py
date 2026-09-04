@@ -1,4 +1,4 @@
-"""confirm (Inquire) tests: FakeLLM + threaded resolver, no network."""
+"""inquire (Inquire) tests: FakeLLM + threaded resolver, no network."""
 
 import json
 import threading
@@ -64,7 +64,7 @@ def test_confirm_returns_answer():
             LLMResult(
                 tool_calls=[
                     tool_call(
-                        "confirm",
+                        "inquire",
                         {
                             "question": "继续吗?",
                             "options": [{"label": "是"}, {"label": "否"}],
@@ -107,7 +107,7 @@ def test_multi_question_numbered_answer():
             LLMResult(
                 tool_calls=[
                     tool_call(
-                        "confirm",
+                        "inquire",
                         {
                             "questions": [
                                 {"question": "项目名?", "options": [{"label": "YESIR"}]},
@@ -162,7 +162,7 @@ def test_timeout_recorded_with_timeout_status(monkeypatch):
     sink = FnSink(lambda t, c: events.append((t, c)))
     fake = ScriptedLLM(
         [
-            LLMResult(tool_calls=[tool_call("confirm", {"question": "在吗?"}, call_id="t9")]),
+            LLMResult(tool_calls=[tool_call("inquire", {"question": "在吗?"}, call_id="t9")]),
             LLMResult(content="算了"),
         ]
     )
@@ -216,7 +216,7 @@ def test_options_normalization():
 
 def test_ask_schema_shape():
     fn = ASK_SCHEMA["function"]
-    assert fn["name"] == "confirm"
+    assert fn["name"] == "inquire"
     assert fn["parameters"]["required"] == ["question"]
     assert set(fn["parameters"]["properties"]) == {
         "question",
@@ -250,8 +250,8 @@ def test_ask_wakes_on_abort():
     assert not ask_mod._pending
 
 
-def test_only_orchestrator_has_confirm():
-    """L1 tool table contains confirm; L2/L3 children never see it."""
+def test_only_orchestrator_has_inquire():
+    """L1 tool table contains inquire; L2/L3 children never see it."""
     events: list = []
     sink = FnSink(lambda t, c: events.append((t, c)))
     fake = ScriptedLLM(
@@ -271,8 +271,8 @@ def test_only_orchestrator_has_confirm():
     )
     run_orchestrator(fake, sink)
 
-    assert "confirm" in fake.requested[0]
+    assert "inquire" in fake.requested[0]
     assert "spawn" in fake.requested[0]
-    # L2 child tool table: base tools + spawn, no confirm
-    assert "confirm" not in fake.requested[1]
+    # L2 child tool table: base tools + spawn, no inquire
+    assert "inquire" not in fake.requested[1]
     assert "spawn" in fake.requested[1]
