@@ -1,0 +1,45 @@
+name: Release
+
+# Tag a release: git tag vX.Y.Z && git push origin vX.Y.Z
+# (push: sleep 3 -> git -c http.proxy=http://127.0.0.1:7897 push origin vX.Y.Z)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pytest
+        run: python -m pip install pytest
+
+      # Same gate as CI (pytest only — see ci.yml for the ruff drift note).
+      - name: Run tests
+        run: python -m pytest tests -q
+
+      # Tracked files only: config.json (real API key) is gitignored, so it
+      # never enters the archive.
+      - name: Build source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="fungi-${GITHUB_REF_NAME}-source.zip"
+          git archive --format=zip --prefix="fungi-${GITHUB_REF_NAME#v}/" -o "$name" HEAD
+          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ARCHIVE }}
+          generate_release_notes: true
