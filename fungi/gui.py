@@ -21,12 +21,13 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from PyQt5.QtCore import QSettings, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QSettings, QSharedMemory, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QMenu,
+    QMessageBox,
     QShortcut,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -806,12 +807,25 @@ class FungiGui(FluentWindow):
         super().closeEvent(event)
 
 
+def _singleton_taken(key: str = "FungiGuiSingleton") -> bool:
+    """True when another process already holds the GUI singleton slot."""
+
+    shared = QSharedMemory(key)
+    return shared.attach() or not shared.create(1)
+
+
 def run_gui() -> int:
     # QT_SCALE_FACTOR grows fonts, widgets and the window together (must be set
     # before QApplication exists); AA_EnableHighDpiScaling lets Qt5 honor it.
     os.environ.setdefault("QT_SCALE_FACTOR", str(GUI_SCALE))
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
+    # Single instance: a second launcher tells the user and exits. Without
+    # this, two GUI windows (each able to host a room) could coexist
+    # (2026-09-04 real-machine finding; tray-room mode had the same guard).
+    if _singleton_taken():
+        QMessageBox.warning(None, "Fungi", "Fungi GUI 已在运行。")
+        return 0
     win = FungiGui()
     win.show()
     return app.exec_()

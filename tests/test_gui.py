@@ -8,6 +8,7 @@ pytest.importorskip("qfluentwidgets", reason="PyQt6-Fluent-Widgets (qfluentwidge
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import QSharedMemory
 from PyQt5.QtWidgets import QApplication
 
 from fungi import gui
@@ -169,6 +170,7 @@ def test_join_page_discovers_and_joins_in_process(window, monkeypatch):
     monkeypatch.setattr(gui, "discover_room", fake_discover)
     monkeypatch.setattr(gui, "start_client_room", fake_client)
     page = window.join_page
+    page.ip_edit.clear()  # a real join on this box may have restored last_ip from QSettings
     page.token_edit.setText("tok")  # IP left empty: auto-discovery fills it
     page.nick_edit.setText("🌸花酱")
     page.name_edit.setText("pc-alpha")
@@ -323,3 +325,13 @@ def test_quit_from_tray_stops_rooms(window):
 def test_valid_host_name_contract():
     assert valid_host_name("pc-alpha")
     assert not valid_host_name("不合法/名字")
+
+
+def test_gui_singleton_guard():
+    key = "FungiGuiSingletonTest"
+
+    shared = QSharedMemory(key)
+    assert shared.create(1)
+    assert gui._singleton_taken(key)
+    shared.detach()
+    assert not gui._singleton_taken(key)
