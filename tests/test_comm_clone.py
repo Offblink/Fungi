@@ -5,7 +5,7 @@ import threading
 import time
 
 from fungi.clone.base import RemoteTransport
-from fungi.clone.comm import build_comm_clone
+from fungi.clone.comm import SILENT_REPLY, build_comm_clone
 from fungi.config import Config
 from fungi.events import NullSink
 from fungi.llm import LLMResult
@@ -116,6 +116,26 @@ def test_send_peer_tool_sends_chat(room):
     replies, _cursor = clients["alpha"].poll_env("alpha")
     chats = [e for e in replies if e.type == "chat" and e.src == "beta:comm-alpha"]
     assert chats and chats[0].body == {"text": "hi"}
+
+
+def test_silent_marker_turn_delivers_nothing(room):
+    """A turn ending with the bare SILENT_REPLY marker is true silence: the
+    fallback auto-delivery must not ship prose 'silence declarations' back to
+    the peer (the five-round mutual-silence loop of 2026-09-04)."""
+    _hub, clients = _joined_room(room)
+    fake = ScriptedLLM([LLMResult(content=SILENT_REPLY)])
+    clone = build_comm_clone(
+        "beta", "alpha", RemoteTransport(clients["beta"]), CFG, NullSink(), llm=fake
+    )
+    chat = Envelope(
+        src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "ping"}
+    )
+    clients["alpha"].send(chat)
+    messages, _cursor = clients["beta"].poll_env("beta")
+    clone.run_turn(messages[0])
+    replies, _cursor = clients["alpha"].poll_env("alpha")
+    chats = [e for e in replies if e.type == "chat" and e.src == "beta:comm-alpha"]
+    assert not chats
 
 
 def test_consent_flow_wakes_blocked_write(room):

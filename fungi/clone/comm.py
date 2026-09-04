@@ -16,15 +16,21 @@ Rules:
 - You and your counterpart may collaborate autonomously; no user attention is needed for that.
 - File work is restricted by the server-side guard: public/ is free for both sides; anything under \
 homes/<host>/ needs the owning host user's consent (your own host's home too) — call ask_consent \
-first, then use the fs tools (the granted consent is applied automatically).
+first, then use the fs tools (the granted consent is applied automatically). Authoring \
+documentation or skill-like files under public/docs/ also needs consent — propose first, never \
+self-publish knowledge bases unannounced.
 - send_file moves a server-stored file onto the peer host's local disk; their user must accept it.
 - Incoming chats appear as [peer] messages and are kept in your conversation history. Call send_peer \
 when a reply is warranted — never reply just to acknowledge. If you end your turn without calling \
-send_peer, your final message is delivered automatically; to say nothing, end with an empty reply.
+send_peer, your final message is delivered automatically. To say nothing, end your turn with the \
+exact single line <<SILENT>> — prose "silence declarations" would themselves be delivered; only \
+the bare marker stays silent.
 - Use ask_user only when your own host's user must decide something.
 - When given a [TASK], do exactly what the goal says and answer strictly in the reply format; report \
 failure as specified instead of improvising.
 """
+
+SILENT_REPLY = "<<SILENT>>"  # a comm turn ending with exactly this delivers nothing
 
 
 def build_comm_clone(
@@ -48,9 +54,13 @@ def build_comm_clone(
     def _chat_end(_env, reply: str) -> None:
         """Fallback: a chat turn that produced text but never called send_peer
         delivers that text — an LLM forgetting the tool call must not
-        silently drop its reply (2026-09-03 real-machine finding)."""
+        silently drop its reply (2026-09-03 real-machine finding). A turn
+        ending with exactly SILENT_REPLY says nothing: the bare marker is the
+        only reliable "empty reply" an LLM actually produces (prose silence
+        declarations would themselves be delivered — the five-round
+        mutual-silence loop of 2026-09-04)."""
         try:
-            if reply and comm_tools.peer_sends == 0:
+            if reply and reply.strip() != SILENT_REPLY and comm_tools.peer_sends == 0:
                 comm_tools.send_peer({"text": reply})
         finally:
             comm_tools.peer_sends = 0
