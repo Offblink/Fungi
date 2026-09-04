@@ -52,6 +52,7 @@ from .protocol import valid_host_name
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
 PORT_SCAN_LIMIT = 32
+SWEEP_TIMEOUT = 0.35  # TCP connect sweep: LAN refusals are instant, only dead IPs wait
 PROBE_TIMEOUT = 1.5
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
@@ -109,7 +110,7 @@ def find_free_port(start: int = GUI_PORT, limit: int = PORT_SCAN_LIMIT) -> int:
     raise OSError(f"no free port in [{start}, {start + limit})")
 
 
-def _port_open(ip: str, port: int, timeout: float = PROBE_TIMEOUT) -> bool:
+def _port_open(ip: str, port: int, timeout: float = SWEEP_TIMEOUT) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         return sock.connect_ex((ip, port)) == 0
