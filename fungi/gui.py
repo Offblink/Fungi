@@ -1,43 +1,57 @@
 """Fungi GUI launcher: three pages — 发起房间 / 加入房间 / 模型配置.
 
-Entry: ``python start.py`` (or ``python -m fungi --gui``). Wire identity stays
-the machine host name; the nickname is the display layer (--display). The hub
-binds the fixed anchor port 8899 (Face convention) so a joiner only types the
-host's IP + token. Each launch spawns the room process (tray + WebUI) in its
-own console window.
+Entry: ``python start.py`` (or ``python -m fungi --gui``). The GUI hosts the
+room IN-PROCESS (hub/clones/poller run on daemon threads; closing the window
+stops the room) — no extra console script. Wire identity stays the machine
+host name; the nickname is the display layer (--display semantics).
 
-The whole UI scales proportionally (fonts and window together) via
-QT_SCALE_FACTOR — set FUNGI_GUI_SCALE to override (default 1.0; bump it up if the UI feels small).
+Ports follow the Face convention: the server scans upward from the 8899 anchor
+for the first free port; a joiner types only IP + token and the GUI scans the
+same range for a hub that accepts the token (wrong-token hubs are skipped).
+Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
 import os
 import secrets
 import socket
-import subprocess
 import sys
+import threading
+import urllib.error
+import urllib.request
 
-# The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
-# not installed and its import name would clobber this one), so the GUI rides
-# PyQt5; the fluent components are the same library Face uses (same look).
-from PyQt5.QtCore import QSettings, Qt
+from PyQt5.QtCore import QSettings, Qt, pyqtSignal
 from PyQt5.QtGui import QGuiApplication, QKeySequence
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QShortcut, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QMainWindow,
+    QShortcut,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     EditableComboBox,
     FluentIcon,
-    FluentWindow,
     InfoBar,
     LineEdit,
+    Pivot,
     PrimaryPushButton,
+    PushButton,
     SubtitleLabel,
     ToolButton,
 )
 
-from .config import DEFAULT_ENDPOINT, load_config, save_config
+# The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
+# not installed and its import name would clobber this one), so the GUI rides
+# PyQt5; the fluent components are the same library Face uses (same look).
+from .config import DEFAULT_ENDPOINT, PROJECT_ROOT, load_config, save_config
 from .protocol import BAD_NAME_MSG, valid_host_name
 
-GUI_PORT = 8899  # fixed anchor port: join pages only ever ask for an IP
+GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
+PORT_SCAN_LIMIT = 32
+PROBE_TIMEOUT = 1.5
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
 GUI_SCALE = float(os.environ.get("FUNGI_GUI_SCALE", "1.0"))  # fonts + window, uniform
@@ -57,15 +71,78 @@ def default_host_name() -> str:
     return socket.gethostname().split(".")[0]
 
 
-def port_in_use(port: int) -> bool:
+def _port_bindable(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        return sock.connect_ex(("127.0.0.1", port)) == 0
+        try:
+            sock.bind(("0.0.0.0", port))
+            return True
+        except OSError:
+            return False
 
 
-def spawn_room(args: list[str]) -> None:
-    """Run the room process in its own console window (independent of the GUI)."""
-    flags = subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0
-    subprocess.Popen([sys.executable, "-m", "fungi", *args], creationflags=flags)
+def find_free_port(start: int = GUI_PORT, limit: int = PORT_SCAN_LIMIT) -> int:
+    """Face-style upward scan: first bindable port from `start`, else OSError."""
+    for port in range(start, start + limit):
+        if _port_bindable(port):
+            return port
+    raise OSError(f"no free port in [{start}, {start + limit})")
+
+
+def _port_open(ip: str, port: int, timeout: float = PROBE_TIMEOUT) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        return sock.connect_ex((ip, port)) == 0
+
+
+def probe_room_port(ip: str, token: str, start: int = GUI_PORT, limit: int = PORT_SCAN_LIMIT):
+    """Scan upward for a Fungi hub that accepts `token`; returns its port or None.
+
+    Distinguish via /api/peers: 404 = token accepted (our room), 403 = a hub
+    with a different token (skip), refused/timeout = nothing there (skip).
+    """
+    for port in range(start, start + limit):
+        if not _port_open(ip, port):
+            continue
+        url = f"http://{ip}:{port}/api/peers?token={urllib.request.quote(token)}&host=probe"
+        try:
+            with urllib.request.urlopen(url, timeout=PROBE_TIMEOUT) as resp:
+                if resp.status == 200:  # valid token and "probe" listed: our room
+                    return port
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:  # token OK, host "probe" just unknown: our room
+                return port
+            continue  # 403: different room / wrong token
+        except (urllib.error.URLError, OSError, TimeoutError):
+            continue
+    return None
+
+
+def start_server_room(host: str, display: str, token: str, port: int):
+    """Host the room inside this GUI process: hub + clones run on threads."""
+    from .events import ConsoleSink  # noqa: PLC0415 (Qt-free, cheap)
+    from .room import RoomServer  # noqa: PLC0415
+
+    room = RoomServer(
+        host,
+        load_config(),
+        ConsoleSink(),
+        token,
+        PROJECT_ROOT / "data",
+        display=display,
+        port=port,
+    )
+    room.start()
+    return room
+
+
+def start_client_room(host: str, display: str, url: str, token: str):
+    """Join a room inside this GUI process (poller + clones on threads)."""
+    from .events import ConsoleSink  # noqa: PLC0415
+    from .room import RoomClient  # noqa: PLC0415
+
+    room = RoomClient(host, load_config(), ConsoleSink(), url, token, display=display)
+    room.start()
+    return room
 
 
 def _copy(text: str, parent, what: str) -> None:
@@ -82,21 +159,23 @@ def _row(label: str, widget: QWidget, parent=None) -> QWidget:
     labelw = BodyLabel(label)
     labelw.setFixedWidth(90)
     box.addWidget(labelw)
-    box.addWidget(widget, 1)
+    box.addWidget(widget)
     if parent is not None:
         box.addWidget(parent)
+    box.addStretch(1)
     holder = QWidget()
     holder.setLayout(box)
     return holder
 
 
 class HostPage(QWidget):
-    """发起房间：launch the hub, then show IP / token / join command with copies."""
+    """发起房间：GUI 进程内直启 hub，随后显示 IP / Token / WebUI 入口。"""
 
-    def __init__(self, window: FluentWindow):
+    def __init__(self, window):
         super().__init__()
         self.window_ref = window
         self.setObjectName("hostPage")
+        self.room = None
         self._token = ""
 
         root = QVBoxLayout(self)
@@ -107,9 +186,15 @@ class HostPage(QWidget):
         root.addWidget(title)
 
         self.name_edit = LineEdit()
+        self.name_edit.setFixedWidth(360)
         self.name_edit.setText(default_host_name())
         self.name_edit.setPlaceholderText("本机主机名（房间内的 wire 身份）")
         root.addWidget(_row("主机名", self.name_edit))
+
+        self.nick_edit = LineEdit()
+        self.nick_edit.setFixedWidth(360)
+        self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
+        root.addWidget(_row("昵称", self.nick_edit))
 
         self.start_btn = PrimaryPushButton(FluentIcon.SHARE, "发起房间")
         self.start_btn.clicked.connect(self._start)
@@ -117,29 +202,29 @@ class HostPage(QWidget):
 
         # -- status card (populated after launch) --
         self.ip_edit = LineEdit()
+        self.ip_edit.setFixedWidth(360)
         self.ip_edit.setReadOnly(True)
         self.ip_btn = _copy_button()
         self.ip_btn.clicked.connect(lambda: _copy(self.ip_edit.text(), window, "房间 IP"))
         self.token_edit = LineEdit()
+        self.token_edit.setFixedWidth(360)
         self.token_edit.setReadOnly(True)
         self.token_btn = _copy_button()
         self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
-        self.cmd_edit = LineEdit()
-        self.cmd_edit.setReadOnly(True)
-        self.cmd_btn = _copy_button()
-        self.cmd_btn.clicked.connect(lambda: _copy(self.cmd_edit.text(), window, "CLI 加入命令"))
+        self.webui_btn = PushButton(FluentIcon.GLOBE, "打开 WebUI")
+        self.webui_btn.clicked.connect(self._open_webui)
         self.ip_row = _row("房间 IP", self.ip_edit, self.ip_btn)
         self.token_row = _row("Token", self.token_edit, self.token_btn)
-        self.cmd_row = _row("CLI 命令", self.cmd_edit, self.cmd_btn)
+        self.webui_row = _row("WebUI", self.webui_btn)
         root.addWidget(self.ip_row)
         root.addWidget(self.token_row)
-        root.addWidget(self.cmd_row)
+        root.addWidget(self.webui_row)
 
         root.addStretch(1)
 
         self.status = BodyLabel(
             "尚未发起。\n"
-            "· 房间绑定固定端口 8899，加入方只需填写 IP 和 Token\n"
+            "· 端口从 8899 起自动向上寻找，加入方只需填写 IP 和 Token\n"
             "· 请确认加入方与本机在同一局域网（同一路由器）"
         )
         self.status.setWordWrap(True)
@@ -152,50 +237,54 @@ class HostPage(QWidget):
         self._set_started(False)
 
     def _set_started(self, started: bool) -> None:
-        for row in (self.ip_row, self.token_row, self.cmd_row):
+        for row in (self.ip_row, self.token_row, self.webui_row):
             row.setVisible(started)
+        self.start_btn.setEnabled(not started)
+
+    def _open_webui(self) -> None:
+        if self.room is not None:
+            self.room.open_webui()
 
     def _start(self) -> None:
+        if self.room is not None:
+            return
         host = self.name_edit.text().strip()
+        display = self.nick_edit.text().strip()
         if not valid_host_name(host):
             InfoBar.error("主机名不合法", BAD_NAME_MSG, duration=4000, parent=self.window_ref)
             return
-        if port_in_use(GUI_PORT):
-            InfoBar.error(
-                "端口被占用",
-                f"端口 {GUI_PORT} 已有服务（可能是另一个 Fungi 房间），请先释放它。",
-                duration=5000,
-                parent=self.window_ref,
-            )
+        try:
+            port = find_free_port()
+        except OSError as exc:
+            InfoBar.error("无可用端口", str(exc), duration=5000, parent=self.window_ref)
             return
         self._token = secrets.token_urlsafe(12)
-        spawn_room(["--server", "--name", host, "--token", self._token, "--port", str(GUI_PORT)])
-        ip = lan_ip()
-        join_cmd = (
-            f"python -m fungi --join http://{ip}:{GUI_PORT} --token {self._token} --name CLIENT"
-        )
-        self.ip_edit.setText(ip)
+        self.room = start_server_room(host, display, self._token, port)
+        self.ip_edit.setText(lan_ip())
         self.token_edit.setText(self._token)
-        self.cmd_edit.setText(join_cmd)
         self._set_started(True)
         self.status.setText(
-            "房间已发起（独立控制台窗口运行，托盘常驻）。\n"
-            "· 把上方 Token 发给好友，好友用「加入房间」页填 IP + Token + 昵称\n"
+            "房间已在本窗口内运行（关闭窗口即停止房间）。\n"
+            f"· 端口 {port}（自动向上寻找）· 把 Token 发给好友即可加入\n"
             "· Ctrl+C 复制房间 IP"
         )
         InfoBar.success(
-            "房间已发起", f"{host} · {ip}:{GUI_PORT}", duration=3000, parent=self.window_ref
+            "房间已发起", f"{host} · {lan_ip()}:{port}", duration=3000, parent=self.window_ref
         )
 
 
 class JoinPage(QWidget):
-    """加入房间：IP + Token + 昵称（无需端口，固定 8899）。"""
+    """加入房间：IP + Token + 昵称（端口从 8899 起自动向上探测）。"""
 
-    def __init__(self, window: FluentWindow):
+    join_done = pyqtSignal(object)  # port (int) or None; emitted from scan thread
+
+    def __init__(self, window):
         super().__init__()
         self.window_ref = window
         self.setObjectName("joinPage")
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
+        self.room = None
+        self.join_done.connect(self._finish_join)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(48, 32, 48, 32)
@@ -210,16 +299,19 @@ class JoinPage(QWidget):
         root.addWidget(_row("房主 IP", self.ip_combo))
 
         self.token_edit = LineEdit()
+        self.token_edit.setFixedWidth(360)
         self.token_edit.setPlaceholderText("房主发给你的 Token")
         self.token_edit.setFixedWidth(360)
         root.addWidget(_row("Token", self.token_edit))
 
         self.nick_edit = LineEdit()
+        self.nick_edit.setFixedWidth(360)
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，仅用于展示）")
         self.nick_edit.setFixedWidth(360)
         root.addWidget(_row("昵称", self.nick_edit))
 
         self.name_edit = LineEdit()
+        self.name_edit.setFixedWidth(360)
         self.name_edit.setText(default_host_name())
         self.name_edit.setPlaceholderText("本机主机名（wire 身份，一般不用改）")
         root.addWidget(_row("主机名", self.name_edit))
@@ -230,7 +322,7 @@ class JoinPage(QWidget):
 
         root.addStretch(1)
 
-        self.status = BodyLabel("加入后本机进入托盘常驻模式，WebUI 从托盘打开。")
+        self.status = BodyLabel("加入后房间在本窗口内运行，关闭窗口即离开。")
         root.addWidget(self.status)
 
         self._restore()
@@ -240,13 +332,15 @@ class JoinPage(QWidget):
         last_token = self.settings.value("last_token", "")
         last_nick = self.settings.value("last_nick", "")
         if last_ip:
-            self.ip_combo.setCurrentText(str(last_ip))
+            self.ip_combo.setText(str(last_ip))
         if last_token:
             self.token_edit.setText(str(last_token))
         if last_nick:
             self.nick_edit.setText(str(last_nick))
 
     def _join(self) -> None:
+        if self.room is not None:
+            return
         ip = self.ip_combo.currentText().strip()
         token = self.token_edit.text().strip()
         nick = self.nick_edit.text().strip()
@@ -264,25 +358,53 @@ class JoinPage(QWidget):
         if not valid_host_name(host):
             InfoBar.error("主机名不合法", BAD_NAME_MSG, duration=4000, parent=self.window_ref)
             return
-        args = ["--join", f"http://{ip}:{GUI_PORT}", "--token", token, "--name", host]
-        if nick:
-            args += ["--display", nick]
-        spawn_room(args)
+        self.join_btn.setEnabled(False)
+        self.status.setText(f"正在扫描 {ip} 的房间端口（8899 起）…")
+
+        def scan():
+            try:
+                port = probe_room_port(ip, token)
+            except Exception:  # network hiccup: report as "not found"
+                port = None
+            self.join_done.emit(port)
+
+        threading.Thread(target=scan, name="port-probe", daemon=True).start()
+        self._pending = (ip, token, nick, host)
+
+    def _finish_join(self, port) -> None:
+        self.join_btn.setEnabled(True)
+        ip, token, nick, host = self._pending
+        if port is None:
+            self.status.setText(
+                f"在 {ip} 的 8899–{GUI_PORT + PORT_SCAN_LIMIT - 1} 未找到接受该 Token 的房间。\n"
+                "请确认房主已发起、Token 正确、且在同一局域网。"
+            )
+            InfoBar.error(
+                "未找到房间", "扫描范围内没有匹配的房间", duration=4000, parent=self.window_ref
+            )
+            return
+        try:
+            self.room = start_client_room(host, nick, f"http://{ip}:{port}", token)
+        except Exception as exc:  # hub refused the join (left / restarted)
+            self.status.setText(f"加入失败：{exc}")
+            InfoBar.error("加入失败", str(exc), duration=5000, parent=self.window_ref)
+            return
         self.settings.setValue("last_ip", ip)
         self.settings.setValue("last_token", token)
         self.settings.setValue("last_nick", nick)
         self.status.setText(
-            f"正在加入 {ip}:{GUI_PORT}（昵称 {nick or host}）。详见新开的控制台窗口。"
+            f"已加入 {ip}:{port}（昵称 {nick or host}）。\n"
+            "房间在本窗口内运行，关闭窗口即离开；WebUI 请让房主打开或从托盘查看。"
         )
         InfoBar.success(
-            "已发起加入", f"{host} → {ip}:{GUI_PORT}", duration=3000, parent=self.window_ref
+            "已加入房间", f"{host} → {ip}:{port}", duration=3000, parent=self.window_ref
         )
 
 
 class ConfigPage(QWidget):
     """模型配置：迁移自 WebUI 的配置弹窗（api_key / endpoint / model）。"""
 
-    def __init__(self, window: FluentWindow):
+    def __init__(self, window):
         super().__init__()
         self.window_ref = window
         self.setObjectName("configPage")
@@ -295,14 +417,17 @@ class ConfigPage(QWidget):
         root.addWidget(title)
 
         self.key_edit = LineEdit()
+        self.key_edit.setFixedWidth(360)
         self.key_edit.setPlaceholderText("API Key（留空 = 保持不变）")
         root.addWidget(_row("API Key", self.key_edit))
 
         self.endpoint_edit = LineEdit()
+        self.endpoint_edit.setFixedWidth(360)
         self.endpoint_edit.setPlaceholderText(f"接口地址（默认 {DEFAULT_ENDPOINT}）")
         root.addWidget(_row("接口地址", self.endpoint_edit))
 
         self.model_edit = LineEdit()
+        self.model_edit.setFixedWidth(360)
         self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
         root.addWidget(_row("模型", self.model_edit))
 
@@ -339,17 +464,43 @@ class ConfigPage(QWidget):
         )
 
 
-class FungiGui(FluentWindow):
+class FungiGui(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle("Fungi")
+        self.resize(860, 500)  # logical; physical = x GUI_SCALE
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        self.pivot = Pivot(central)
+        self.stack = QStackedWidget(central)
         self.host_page = HostPage(self)
         self.join_page = JoinPage(self)
         self.cfg_page = ConfigPage(self)
-        self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
-        self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
-        self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
-        self.setWindowTitle("Fungi")
-        self.resize(860, 500)  # logical; physical = x GUI_SCALE (~1032x600)
+        for page, key, text in (
+            (self.host_page, "host", "发起房间"),
+            (self.join_page, "join", "加入房间"),
+            (self.cfg_page, "config", "模型配置"),
+        ):
+            self.stack.addWidget(page)
+            self.pivot.addItem(
+                routeKey=key, text=text, onClick=lambda p=page: self.stack.setCurrentWidget(p)
+            )
+        self.pivot.setCurrentItem("host")
+        title_row = QHBoxLayout()
+        title_row.addWidget(SubtitleLabel("Fungi"), 0, Qt.AlignLeft)
+        title_row.addWidget(self.pivot, 0, Qt.AlignHCenter)
+        title_row.addStretch(1)
+        root.addLayout(title_row)
+        root.addWidget(self.stack, 1)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        for page in (self.host_page, self.join_page):
+            room = getattr(page, "room", None)
+            if room is not None:
+                room.stop()
+                page.room = None
+        super().closeEvent(event)
 
 
 def run_gui() -> int:
