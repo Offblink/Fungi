@@ -12,6 +12,7 @@ Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
 import os
+import re
 import secrets
 import socket
 import sys
@@ -39,7 +40,7 @@ from qfluentwidgets import (
 # not installed and its import name would clobber this one), so the GUI rides
 # PyQt5; the fluent components are the same library Face uses (same look).
 from .config import DEFAULT_ENDPOINT, PROJECT_ROOT, load_config, save_config
-from .protocol import BAD_NAME_MSG, valid_host_name
+from .protocol import valid_host_name
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
 PORT_SCAN_LIMIT = 32
@@ -61,6 +62,26 @@ def lan_ip() -> str:
 
 def default_host_name() -> str:
     return socket.gethostname().split(".")[0]
+
+
+def _wire_candidate(text: str) -> str | None:
+    """ASCII-safe wire name derived from arbitrary input, or None.
+
+    The wire name rides envelope addresses, URLs, and file names, so it must
+    stay ASCII (an emoji name breaks http.client's ASCII URL selector); the
+    nickname carries everything the user actually wants to be called."""
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", text).strip("-_")[:32]
+    return cleaned if valid_host_name(cleaned) else None
+
+
+def _resolve_wire_name(host: str, nick: str) -> tuple[str, str]:
+    """Self-heal an invalid wire name instead of rejecting it: sanitize what is
+    sanitizable, else fall back to the machine name (or "pc"). The original
+    input becomes the nickname when that field is empty. Returns (wire, nick)."""
+    if valid_host_name(host):
+        return host, nick
+    wire = _wire_candidate(host) or _wire_candidate(default_host_name()) or "pc"
+    return wire, (nick or host)
 
 
 def _port_bindable(port: int) -> bool:
@@ -288,9 +309,17 @@ class HostPage(QWidget):
             return
         host = self.name_edit.text().strip()
         display = self.nick_edit.text().strip()
-        if not valid_host_name(host):
-            InfoBar.error("主机名不合法", BAD_NAME_MSG, duration=4000, parent=self.window_ref)
-            return
+        wire, display = _resolve_wire_name(host, display)
+        if wire != host:
+            self.name_edit.setText(wire)
+            self.nick_edit.setText(display)
+            InfoBar.info(
+                "已自动调整",
+                f"wire 身份用「{wire}」（进地址和文件名，仅限 ASCII）；「{host}」留作昵称展示",
+                duration=5000,
+                parent=self.window_ref,
+            )
+            host = wire
         try:
             port = find_free_port()
         except OSError as exc:
@@ -399,9 +428,17 @@ class JoinPage(QWidget):
                 "缺少 Token", "请向房主索要房间 Token", duration=3000, parent=self.window_ref
             )
             return
-        if not valid_host_name(host):
-            InfoBar.error("主机名不合法", BAD_NAME_MSG, duration=4000, parent=self.window_ref)
-            return
+        wire, nick = _resolve_wire_name(host, nick)
+        if wire != host:
+            self.name_edit.setText(wire)
+            self.nick_edit.setText(nick)
+            InfoBar.info(
+                "已自动调整",
+                f"wire 身份用「{wire}」（进地址和文件名，仅限 ASCII）；「{host}」留作昵称展示",
+                duration=5000,
+                parent=self.window_ref,
+            )
+            host = wire
         self.join_btn.setEnabled(False)
         self.status.setText(f"正在扫描 {ip} 的房间端口（8899 起）…")
 

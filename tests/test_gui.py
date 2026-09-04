@@ -76,12 +76,40 @@ def test_host_page_starts_server_in_process(window, monkeypatch):
     page.room = None  # FungiGui.closeEvent must not stop a fake
 
 
-def test_host_page_rejects_bad_host_name(window, monkeypatch):
+def test_host_page_self_heals_pure_cjk_name(window, monkeypatch):
     page = window.host_page
-    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not start"))
-    page.name_edit.setText("不合法/名字")
+    started = []
+
+    def fake_start(host, display, token, port):
+        started.append((host, display))
+        return FakeRoom()
+
+    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    page.name_edit.setText("小新")  # pure CJK: nothing sanitizable
+    page.nick_edit.setText("")
     page._start()
-    assert page.ip_edit.text() == ""  # status card never populated
+    wire = page.name_edit.text()
+    assert gui.valid_host_name(wire) and wire != "小新"
+    assert page.nick_edit.text() == "小新"  # the pretty input became the nickname
+    assert started == [(wire, "小新")]
+    page.room = None
+
+
+def test_host_page_sanitizes_mixed_name(window, monkeypatch):
+    page = window.host_page
+    started = []
+
+    def fake_start(host, display, token, port):
+        started.append((host, display))
+        return FakeRoom()
+
+    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    page.name_edit.setText("pc 阿新!")
+    page.nick_edit.setText("🌸花酱")  # already set: must not be overwritten
+    page._start()
+    assert started == [("pc", "🌸花酱")]  # sanitized wire, nickname untouched
+    assert page.name_edit.text() == "pc"
+    page.room = None
 
 
 def test_host_page_refreshes_ip(window, monkeypatch):
