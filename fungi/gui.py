@@ -346,6 +346,23 @@ class HostPage(QWidget):
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
         root.addWidget(_row("昵称", self.nick_edit))
 
+        # token is an input, not a status readout: customize it before
+        # launching, or edit it live while the room runs (hot-swap)
+        self.token_edit = LineEdit()
+        self.token_edit.setFixedWidth(360)
+        self.token_edit.setPlaceholderText("留空则发起房间时自动生成")
+        self.token_edit.setToolTip(
+            "可自定义（字母/数字/-/_，1-64 位）。\n"
+            "发起前修改：开房即用该 Token；运行中修改：即时热更新，"
+            "已加入的好友需用新 Token 重新加入"
+        )
+        self.token_edit.editingFinished.connect(self._apply_token)
+        self.token_edit.setText(secrets.token_urlsafe(12))
+        self.token_btn = _copy_button()
+        self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
+        self.token_row = _row("Token", self.token_edit, self.token_btn)
+        root.addWidget(self.token_row)
+
         btn_row = QHBoxLayout()
         self.start_btn = PrimaryPushButton(FluentIcon.SHARE, "发起房间")
         self.start_btn.clicked.connect(self._start)
@@ -366,18 +383,6 @@ class HostPage(QWidget):
             "刷新 IP（网络切换 / DHCP 续租后使用；房间绑定所有网卡，端口不变）"
         )
         self.ip_refresh_btn.clicked.connect(self._refresh_ip)
-        self.token_edit = LineEdit()
-        self.token_edit.setFixedWidth(360)
-        self.token_edit.setPlaceholderText("留空则发起房间时自动生成")
-        self.token_edit.setToolTip(
-            "可自定义（字母/数字/-/_，1-64 位）。\n"
-            "发起前修改：开房即用该 Token；运行中修改：即时热更新，"
-            "已加入的好友需用新 Token 重新加入"
-        )
-        self.token_edit.editingFinished.connect(self._apply_token)
-        self.token_edit.setText(secrets.token_urlsafe(12))
-        self.token_btn = _copy_button()
-        self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
         self.webui_btn = PushButton(FluentIcon.GLOBE, "打开 WebUI")
         self.webui_btn.clicked.connect(self._open_webui)
         ip_buttons = QWidget()
@@ -387,10 +392,8 @@ class HostPage(QWidget):
         ip_box.addWidget(self.ip_refresh_btn)
         ip_box.addWidget(self.ip_btn)
         self.ip_row = _row("房间 IP", self.ip_edit, ip_buttons)
-        self.token_row = _row("Token", self.token_edit, self.token_btn)
         self.webui_row = _row("WebUI", self.webui_btn)
         root.addWidget(self.ip_row)
-        root.addWidget(self.token_row)
         root.addWidget(self.webui_row)
 
         root.addStretch(1)
@@ -408,7 +411,6 @@ class HostPage(QWidget):
     def _set_started(self, started: bool) -> None:
         for row in (self.ip_row, self.webui_row):
             row.setVisible(started)
-        # token row stays visible: the token is editable before AND after launch
         self.start_btn.setEnabled(not started)
         self.leave_btn.setVisible(started)
 
