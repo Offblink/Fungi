@@ -252,3 +252,9 @@ html.motion-on .agent-bubble{animation:none}
 .motion-stamp{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-8deg);padding:4px 14px;border:2px solid;border-radius:8px;font-weight:700;font-size:0.95rem;letter-spacing:0.1em;pointer-events:none;background:color-mix(in srgb,var(--surface) 65%,transparent)}
 .motion-stamp.ok{color:#16a34a;border-color:#16a34a}
 .motion-stamp.no{color:var(--error-text);border-color:var(--error-text)}
+
+/* ---- empty states: drifting spore orbs (pure CSS, reduced-motion safe) ---- */
+#session-list-empty,#friends-empty{position:relative;overflow:hidden}
+#session-list-empty::before,#friends-empty::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(4px 4px at 20% 30%,color-mix(in srgb,var(--accent) 45%,transparent) 60%,transparent 61%),radial-gradient(3px 3px at 65% 60%,color-mix(in srgb,var(--accent) 30%,transparent) 60%,transparent 61%),radial-gradient(5px 5px at 82% 22%,color-mix(in srgb,var(--accent) 22%,transparent) 60%,transparent 61%),radial-gradient(3px 3px at 40% 78%,color-mix(in srgb,var(--accent) 25%,transparent) 60%,transparent 61%);animation:orbDrift 7s ease-in-out infinite alternate}
+@keyframes orbDrift{from{transform:translateY(0)}to{transform:translateY(-7px)}}
+@media (prefers-reduced-motion: reduce){#session-list-empty::before,#friends-empty::before{animation:none}}

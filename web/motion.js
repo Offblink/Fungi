@@ -142,6 +142,22 @@
     }
   }
 
+  /* Number counter for badges (friends count etc.). */
+  function counter(el, to) {
+    if (!el) return;
+    var from = parseInt(el.textContent, 10) || 0;
+    if (from === to) { el.textContent = to; return; }
+    var obj = { v: from };
+    gsap.to(obj, { v: to, duration: 0.5, ease: 'power1.out',
+      onUpdate: function () { el.textContent = Math.round(obj.v); } });
+  }
+
+  /* Agent bubble idle drift: gentle orbital bob. */
+  function float(el) {
+    if (!el) return;
+    gsap.to(el, { y: 4, duration: 1.6, ease: 'sine.inOut', yoyo: true, repeat: -1 });
+  }
+
   /* Thinking wave: elastic bars prepended into the status line. */
   var waveEl = null;
   function waveOn(statusEl) {
@@ -197,6 +213,7 @@
     ring: ring,
     waveOn: waveOn,
     waveOff: waveOff,
-    counter: counter
+    counter: counter,
+    float: float
   };
 })();

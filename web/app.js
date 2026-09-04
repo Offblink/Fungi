@@ -223,30 +223,51 @@ function renderSessionList() {
   const empty = document.getElementById('session-list-empty');
   const filter = (document.getElementById('session-filter')?.value || '').trim().toLowerCase();
   const filtered = filter ? allSessions.filter(s => (s.title || '').toLowerCase().includes(filter)) : allSessions;
-  list.querySelectorAll('.session-row').forEach(r => r.remove());
-  if (filtered.length === 0) { empty.style.display = ''; empty.textContent = filter ? 'No matches.' : 'No sessions yet.'; return; }
-  empty.style.display = 'none';
-  filtered.forEach(s => {
-    const row = document.createElement('div');
-    row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
-    row.innerHTML = '<span class="session-row-title">' + escapeHtml(s.title || 'Untitled') + '</span>'
-      + '<span class="session-row-meta">' + fmtDate(s.created) + '</span>'
-      + '<span class="session-row-actions"><button class="session-row-act" title="Rename">&#9998;</button>'
-      + '<button class="session-row-act del" title="Delete">&#10005;</button></span>';
-    row.querySelector('.session-row-act.del').addEventListener('click', e => {
-      e.stopPropagation();
-      showConfirm({
-        title: 'Delete session',
-        message: '"' + (s.title || 'Untitled') + '" will be permanently removed. This cannot be undone.',
-        confirmText: 'Delete',
-        danger: true,
-        onConfirm: () => deleteSession(s.id)
-      });
+  // Keyed row reconciliation: Flip needs persistent nodes to animate a
+  // reorder/move — rebuilding rows every render would make every list change
+  // look like remove+add.
+  const mutate = () => {
+    const existing = {};
+    list.querySelectorAll('.session-row').forEach(r => { existing[r.dataset.sid] = r; });
+    filtered.forEach(s => {
+      let row = existing[s.id];
+      if (row) {
+        delete existing[s.id];
+        const titleEl = row.querySelector('.session-row-title');
+        if (titleEl && !row.querySelector('.rename-input') && titleEl.textContent !== (s.title || 'Untitled'))
+          titleEl.textContent = s.title || 'Untitled';
+        row.querySelector('.session-row-meta').textContent = fmtDate(s.created);
+        row.classList.toggle('active', s.id === currentSessionId);
+        list.appendChild(row); // moves the row into filtered order
+      } else {
+        row = document.createElement('div');
+        row.dataset.sid = s.id;
+        row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
+        row.innerHTML = '<span class="session-row-title">' + escapeHtml(s.title || 'Untitled') + '</span>'
+          + '<span class="session-row-meta">' + fmtDate(s.created) + '</span>'
+          + '<span class="session-row-actions"><button class="session-row-act" title="Rename">&#9998;</button>'
+          + '<button class="session-row-act del" title="Delete">&#10005;</button></span>';
+        row.querySelector('.session-row-act.del').addEventListener('click', e => {
+          e.stopPropagation();
+          showConfirm({
+            title: 'Delete session',
+            message: '"' + (s.title || 'Untitled') + '" will be permanently removed. This cannot be undone.',
+            confirmText: 'Delete',
+            danger: true,
+            onConfirm: () => deleteSession(s.id)
+          });
+        });
+        row.querySelector('.session-row-act:not(.del)').addEventListener('click', e => { e.stopPropagation(); startRename(row, s); });
+        row.addEventListener('click', () => switchSession(s.id));
+        list.appendChild(row);
+      }
     });
-    row.querySelector('.session-row-act:not(.del)').addEventListener('click', e => { e.stopPropagation(); startRename(row, s); });
-    row.addEventListener('click', () => switchSession(s.id));
-    list.appendChild(row);
-  });
+    Object.values(existing).forEach(r => r.remove());
+    if (filtered.length === 0) { empty.style.display = ''; empty.textContent = filter ? 'No matches.' : 'No sessions yet.'; }
+    else empty.style.display = 'none';
+  };
+  if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.listFlip) window.fungiMotion.listFlip(list, mutate);
+  else mutate();
 }
 function fmtDate(d) {
   if (!d) return '';
@@ -287,7 +308,6 @@ async function finishRename(row, s, inp) {
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
 document.getElementById('sidebar-toggle').addEventListener('click', toggleSidebar);
 document.getElementById('hamburger-sidebar').addEventListener('click', toggleSidebar);
-document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); toggleSidebar(); } });
 document.getElementById('session-filter').addEventListener('input', renderSessionList);
 document.getElementById('btn-new-session').addEventListener('click', () => newSession());
 
@@ -306,6 +326,7 @@ function agentBubble(id) {
   b.innerHTML = 'L' + a.layer + '<span class="agent-status-dot"></span>';
   b.addEventListener('click', () => openAgentModal(id));
   tray.appendChild(b);
+  window.fungiMotion?.float?.(b);
   return b;
 }
 function setAgentStatus(id, st) {
@@ -320,6 +341,7 @@ function setAgentStatus(id, st) {
       // bubbles are transient: only visible while the subagent runs
       setTimeout(() => { b.remove(); }, 1500);
     }
+    window.fungiMotion?.ring?.(b, st === 'running');
   }
   if (a.eventsEl) {
     const label = { done: '\u2714 finished', failed: '\u2718 failed' }[st];
@@ -958,23 +980,38 @@ async function loadPeers() {
   } catch (e) {}
 }
 
+
 function renderFriendList() {
   const list = document.getElementById('friend-list');
   const empty = document.getElementById('friends-empty');
-  list.querySelectorAll('.friend-row').forEach(r => r.remove());
-  if (!allPeers.length) { empty.style.display = ''; return; }
-  empty.style.display = 'none';
-  allPeers.forEach(p => {
-    const name = peerName(p);
-    const row = document.createElement('div');
-    row.className = 'friend-row' + (name === friendView ? ' active' : '');
-    row.title = name;
-    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
-    row.addEventListener('click', () => openFriendChat(name));
-    list.appendChild(row);
-  });
+  // Keyed like renderSessionList (see note there) so Flip can animate.
+  const mutate = () => {
+    const existing = {};
+    list.querySelectorAll('.friend-row').forEach(r => { existing[r.dataset.host] = r; });
+    allPeers.forEach(p => {
+      const name = peerName(p);
+      let row = existing[name];
+      if (row) {
+        delete existing[name];
+        row.classList.toggle('active', name === friendView);
+        row.querySelector('.friend-name').textContent = peerDisplay(p);
+        list.appendChild(row);
+      } else {
+        row = document.createElement('div');
+        row.dataset.host = name;
+        row.className = 'friend-row' + (name === friendView ? ' active' : '');
+        row.title = name;
+        row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
+        row.addEventListener('click', () => openFriendChat(name));
+        list.appendChild(row);
+      }
+    });
+    Object.values(existing).forEach(r => r.remove());
+    empty.style.display = allPeers.length ? 'none' : '';
+  };
+  if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.listFlip) window.fungiMotion.listFlip(list, mutate);
+  else mutate();
 }
-
 async function openFriendChat(host) {
   friendView = host;
   lastFriendPayload = null;
