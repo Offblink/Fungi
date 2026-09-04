@@ -88,19 +88,45 @@ class Transfers:
         self._records: dict[str, dict] = {}
         self._guard = threading.Lock()
 
+    def stage_from(self, name: str, src_host: str, dst_host: str, read) -> dict:
+        """Stage streamed bytes (read(n) -> b"" ends input) into the transfers dir."""
+
+        tid = new_id()
+        self.root.mkdir(parents=True, exist_ok=True)
+        dest = self.root / f"{tid}__{safe_name(name)}"
+        size = 0
+        try:
+            with dest.open("wb") as out:
+                while True:
+                    chunk = read(256 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > self.max_bytes:
+                        raise ValueError(f"file too large: over {self.max_bytes} bytes")
+                    out.write(chunk)
+        except BaseException:
+            dest.unlink(missing_ok=True)
+            raise
+        rec = {"id": tid, "name": safe_name(name), "size": size, "src": src_host, "dst": dst_host}
+        with self._guard:
+            self._records[tid] = rec
+        return rec
+
     def stage(self, source: Path, name: str, src_host: str, dst_host: str) -> dict:
         """Copy a store file into the transfers dir; returns its record."""
         size = source.stat().st_size
         if size > self.max_bytes:
             raise ValueError(f"file too large: {size} bytes (limit {self.max_bytes})")
-        tid = new_id()
-        self.root.mkdir(parents=True, exist_ok=True)
-        dest = self.root / f"{tid}__{safe_name(name)}"
-        shutil.copyfile(source, dest)
-        rec = {"id": tid, "name": safe_name(name), "size": size, "src": src_host, "dst": dst_host}
+        with source.open("rb") as fh:
+            return self.stage_from(name, src_host, dst_host, fh.read)
+
+    def discard(self, transfer_id: str) -> None:
+        """Drop a staged transfer (registry + bytes); for aborted uploads."""
         with self._guard:
-            self._records[tid] = rec
-        return rec
+            rec = self._records.pop(str(transfer_id), None)
+        if rec is not None:
+            (self.root / f"{rec['id']}__{rec['name']}").unlink(missing_ok=True)
 
     def fetchable(self, transfer_id: str, host: str) -> tuple[dict, Path] | None:
         """Record + file path, only for the designated receiver host."""
@@ -222,6 +248,20 @@ class Hub:
             return {"error": str(exc)}
         return {"ok": True, **rec}
 
+    def upload_transfer(self, host: str, to_host: str, name: str, read) -> dict:
+        """Stage bytes streamed from a host's local disk (raw upload path).
+
+        Unlike create_transfer (store-side copy), the bytes come straight off
+        the sender's machine — this is how the user-facing clone sends a real
+        local file. Raises ValueError on the size cap.
+        """
+        if not self.roster.known(host) or not self.roster.known(to_host):
+            return {"error": "unknown host"}
+        if to_host == host:
+            return {"error": "cannot transfer to yourself"}
+        rec = self.transfers.stage_from(name or "file", host, to_host, read)
+        return {"ok": True, **rec}
+
 
 class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -254,11 +294,15 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         try:
+            url = urlparse(self.path)
+            if url.path == "/api/transfer/upload":
+                self._transfer_upload(url)
+                return
             body = self._body()
             if body.get("token") != self.hub.token:
                 self._reply({"error": "bad token"}, 403)
                 return
-            path = urlparse(self.path).path
+            path = url.path
             if path == "/api/join":
                 self._join(body)
             elif path == "/api/leave":
@@ -420,6 +464,40 @@ class _Handler(BaseHTTPRequestHandler):
         out = self.hub.create_transfer(
             host, str(body.get("path") or ""), to_host, str(body.get("name") or "")
         )
+        self._reply(out, 400 if "error" in out else 200)
+
+    def _transfer_upload(self, url) -> None:
+        """Raw-bytes upload: /api/transfer/upload?token&host&to&name (streamed)."""
+        params = parse_qs(url.query)
+        token = (params.get("token") or [""])[0]
+        if token != self.hub.token:
+            self._reply({"error": "bad token"}, 403)
+            return
+        host = (params.get("host") or [""])[0]
+        to_host = (params.get("to") or [""])[0]
+        name = (params.get("name") or [""])[0] or "file"
+        remaining = int(self.headers.get("Content-Length") or 0)
+        if remaining <= 0:
+            self._reply({"error": "empty upload"}, 400)
+            return
+
+        def read(n: int) -> bytes:
+            nonlocal remaining
+            if remaining <= 0:
+                return b""
+            chunk = self.rfile.read(min(n, remaining))
+            remaining -= len(chunk)
+            return chunk
+
+        try:
+            out = self.hub.upload_transfer(host, to_host, name, read)
+        except ValueError as exc:
+            self._reply({"error": str(exc)}, 413)
+            return
+        if out.get("ok") and remaining != 0:
+            self.hub.transfers.discard(str(out.get("id")))
+            self._reply({"error": "truncated upload"}, 400)
+            return
         self._reply(out, 400 if "error" in out else 200)
 
     def _transfer_download(self, params: dict) -> None:

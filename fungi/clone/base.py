@@ -54,6 +54,19 @@ class LocalTransport:
             return {"error": "no hub attached"}
         return self.hub.create_transfer(self.host, path, to_host, name)
 
+    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
+        """Stage a real local file (server-role: the file is on this disk)."""
+        if self.hub is None:
+            return {"error": "no hub attached"}
+        src = Path(path)
+        if not src.is_file():
+            return {"error": f"no such file: {path}"}
+        try:
+            with src.open("rb") as fh:
+                return self.hub.upload_transfer(self.host, to_host, name, fh.read)
+        except OSError as exc:
+            return {"error": f"cannot read {path}: {exc}"}
+
     def download_transfer(self, transfer_id: str, dest: Path) -> None:
         if self.hub is None:
             raise RuntimeError("no hub attached")
@@ -89,6 +102,9 @@ class RemoteTransport:
 
     def transfer(self, path: str, name: str, to_host: str) -> dict:
         return self.client.create_transfer(path, name, to_host)
+
+    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
+        return self.client.upload_transfer(path, name, to_host)
 
     def download_transfer(self, transfer_id: str, dest: Path) -> None:
         self.client.download_transfer(transfer_id, dest)

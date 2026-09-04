@@ -1,7 +1,9 @@
 """HTTP client for the hub API: room ops + fs + sessions + transfers."""
 
+import http.client
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -134,3 +136,34 @@ class HubClient:
                 if not chunk:
                     break
                 fh.write(chunk)
+
+    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
+        """Stream a local file's raw bytes to the hub staging area."""
+        src = Path(path)
+        u = urllib.parse.urlparse(self.base)
+        q = urllib.parse.urlencode(
+            {"token": self.token, "host": self.host, "to": to_host, "name": name}
+        )
+        conn = http.client.HTTPConnection(u.hostname, u.port, timeout=600)
+        try:
+            with src.open("rb") as fh:
+                conn.putrequest("POST", f"/api/transfer/upload?{q}")
+                conn.putheader("Content-Type", "application/octet-stream")
+                conn.putheader("Content-Length", str(src.stat().st_size))
+                conn.endheaders()
+                while True:
+                    chunk = fh.read(256 * 1024)
+                    if not chunk:
+                        break
+                    conn.send(chunk)
+            resp = conn.getresponse()
+            body = resp.read()
+        finally:
+            conn.close()
+        try:
+            out = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return {"error": f"upload failed: HTTP {resp.status}"}
+        if resp.status != 200 and "error" not in out:
+            out = {"error": f"upload failed: HTTP {resp.status}"}
+        return out

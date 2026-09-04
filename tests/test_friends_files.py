@@ -10,9 +10,11 @@ import pytest
 
 from fungi.clone.base import RemoteTransport
 from fungi.clone.comm import build_comm_clone
+from fungi.clone.delegate import DelegateTools
 from fungi.config import Config
 from fungi.events import NullSink
 from fungi.llm import LLMResult
+from fungi.pending import PendingAsks
 from fungi.protocol import Envelope
 
 CFG = Config(api_key="k", endpoint="e", model="m")
@@ -291,3 +293,75 @@ def test_receive_transfer_declined(room, tmp_path):
     assert result.get("ok") is False
     assert "declined" in result.get("error", "")
     assert not (tmp_path / "inbox" / "alpha").exists()
+
+
+# ── local clone send_file (2026-09-04: the user-facing clone had no send path) ──
+
+
+def test_local_send_file_delivers_via_receiver_consent(room, tmp_path):
+    _hub, clients = _joined_room(room)
+    src = tmp_path / "photo.png"
+    src.write_bytes(b"PNG-bytes")
+    tools = DelegateTools(
+        "alpha:local",
+        RemoteTransport(clients["alpha"]),
+        PendingAsks(),
+        lambda: ["beta"],
+        timeout_s=10.0,
+    )
+    comm = build_comm_clone(
+        "beta",
+        "alpha",
+        RemoteTransport(clients["beta"]),
+        CFG,
+        NullSink(),
+        ask_timeout_s=10,
+        inbox_dir=tmp_path / "inbox",
+    )
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(
+            out=tools.send_file({"host": "beta", "path": str(src), "reason": "here you go"})
+        )
+    )
+    worker.start()
+    transfer = None
+    deadline = time.monotonic() + 5
+    while transfer is None and time.monotonic() < deadline:
+        msgs, _cursor = clients["beta"].poll_env("beta")
+        for m in msgs:
+            if m.type == "transfer":
+                transfer = m
+        if transfer is None:
+            time.sleep(0.05)
+    assert transfer is not None, "transfer envelope never reached beta"
+    receiver = threading.Thread(target=lambda: comm.run_turn(transfer))
+    receiver.start()
+    _answer_ask(comm, clients, "yes")
+    receiver.join(timeout=10)
+    # the local clone's poll loop would dispatch this; do it manually here
+    resolved = False
+    deadline = time.monotonic() + 5
+    while not resolved and time.monotonic() < deadline:
+        msgs, _cursor = clients["alpha"].poll_env("alpha")
+        for m in msgs:
+            if m.type == "result" and m.reply_to:
+                tools.pending.resolve(m.reply_to, m.body)
+                resolved = True
+        if not resolved:
+            time.sleep(0.05)
+    worker.join(timeout=10)
+    assert "DELIVERED" in result.get("out", ""), result
+    assert (tmp_path / "inbox" / "alpha" / "photo.png").read_bytes() == b"PNG-bytes"
+
+
+def test_local_send_file_rejects_unknown_peer():
+    tools = DelegateTools(
+        "alpha:local",
+        RemoteTransport(None),  # guard rejects before any transport use
+        PendingAsks(),
+        lambda: [],
+        timeout_s=5,
+    )
+    out = tools.send_file({"host": "ghost", "path": "x.txt"})
+    assert "unknown or offline peer" in out

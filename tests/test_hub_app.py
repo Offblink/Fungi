@@ -5,6 +5,8 @@ import socket
 import threading
 import urllib.request
 
+from conftest import Client
+
 from fungi.hub.app import Hub
 from fungi.protocol import Envelope
 
@@ -215,3 +217,42 @@ def test_reaper_removes_silent_hosts(room):
     assert done.is_set()
     code, _out = clients["beta"].poll_raw("beta")
     assert code == 404
+
+
+def test_transfer_upload_roundtrip_and_guard(room, tmp_path):
+    _hub, clients = room
+    clients["alpha"].post("/api/join", {"name": "alpha", "token": "room-token"})
+    clients["beta"].post("/api/join", {"name": "beta", "token": "room-token"})
+    src = tmp_path / "report.bin"
+    src.write_bytes(b"local-bytes-123")
+
+    out = clients["alpha"].upload_transfer(str(src), "report.bin", "beta")
+    assert out.get("ok") is True, out
+    assert out["size"] == len("local-bytes-123")
+
+    base = f"http://127.0.0.1:{room[0].port}"
+    with urllib.request.urlopen(
+        f"{base}/api/transfer?id={out['id']}&host=beta&token=room-token", timeout=10
+    ) as resp:
+        assert resp.read() == b"local-bytes-123"
+
+    # unknown receiver and self-send are rejected
+    out = clients["alpha"].upload_transfer(str(src), "report.bin", "ghost")
+    assert "unknown host" in out.get("error", "")
+    out = clients["alpha"].upload_transfer(str(src), "report.bin", "alpha")
+    assert "error" in out
+
+
+def test_transfer_upload_enforces_size_cap(tmp_path):
+    hub = Hub("srv", "room-token", tmp_path, max_file_mb=0)  # cap = 1 MiB
+    hub.start()
+    try:
+        client = Client(f"http://127.0.0.1:{hub.port}", "room-token", "alpha")
+        client.post("/api/join", {"name": "alpha", "token": "room-token"})
+        client.post("/api/join", {"name": "beta", "token": "room-token"})
+        big = tmp_path / "big.bin"
+        big.write_bytes(b"x" * (1024 * 1024 + 1))
+        out = client.upload_transfer(str(big), "big.bin", "beta")
+        assert "too large" in out.get("error", "")
+    finally:
+        hub.stop()

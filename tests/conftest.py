@@ -2,6 +2,7 @@
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -62,9 +63,22 @@ class Client:
         body = {"token": self.token, "host": self.host, "path": path, **kw}
         return self.post(f"/api/fs/{op}", body)[1]
 
-    def transfer(self, path: str, name: str, to_host: str) -> dict:
-        body = {"token": self.token, "host": self.host, "path": path, "name": name, "to": to_host}
-        return self.post("/api/transfer", body)[1]
+    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
+        """Raw-bytes upload, HubClient.upload_transfer compatible."""
+        q = urllib.parse.urlencode(
+            {"token": self.token, "host": self.host, "to": to_host, "name": name}
+        )
+        req = urllib.request.Request(
+            self.base + f"/api/transfer/upload?{q}",
+            data=Path(path).read_bytes(),
+            headers={"Content-Type": "application/octet-stream"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return json.loads(exc.read())
 
     def download_transfer(self, transfer_id: str, dest) -> None:
         url = f"{self.base}/api/transfer?id={transfer_id}&host={self.host}&token={self.token}"
