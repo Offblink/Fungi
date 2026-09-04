@@ -1,6 +1,6 @@
 """Tests for the /retry message sanitizer (Alt+R continue-from-context)."""
 
-from fungi.server import sanitize_for_retry
+from fungi.server import repair_tool_gaps, sanitize_for_retry
 
 
 def test_strips_trailing_llm_error_marker() -> None:
@@ -82,3 +82,50 @@ def test_strips_bare_abort_marker() -> None:
         {"role": "assistant", "content": "(Aborted)"},
     ]
     assert len(sanitize_for_retry(msgs)) == 1
+
+
+# ---- repair_tool_gaps: dangling tool_calls must not brick the session ----
+
+
+def test_repair_synthesizes_missing_tool_result() -> None:
+    """Died between tool_calls and their results: unanswered calls get an
+    explicit failure result (the API would otherwise 400 forever)."""
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t1", "function": {"name": "read"}},
+            {"id": "t2", "function": {"name": "bash"}},
+        ]},
+        {"role": "tool", "tool_call_id": "t1", "content": "ok"},
+    ]
+    out = repair_tool_gaps(msgs)
+    assert out[-1]["role"] == "tool"
+    assert out[-1]["tool_call_id"] == "t2"
+    assert "interrupted" in out[-1]["content"]
+
+
+def test_repair_closes_gap_before_next_user_message() -> None:
+    """New user message after a broken turn: the dangling call is answered
+    first so the history stays API-valid."""
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "checking", "tool_calls": [
+            {"id": "t1", "function": {"name": "ask_user"}},
+        ]},
+        {"role": "user", "content": "hello?"},
+    ]
+    out = repair_tool_gaps(msgs)
+    assert [m["role"] for m in out] == ["user", "assistant", "tool", "user"]
+    assert out[2]["tool_call_id"] == "t1"
+
+
+def test_repair_leaves_clean_history_alone() -> None:
+    msgs = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "t1", "function": {"name": "read"}},
+        ]},
+        {"role": "tool", "tool_call_id": "t1", "content": "ok"},
+        {"role": "assistant", "content": "done"},
+    ]
+    assert repair_tool_gaps(msgs) == msgs

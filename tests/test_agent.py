@@ -114,11 +114,64 @@ def test_extra_tool_exception_becomes_error_result():
 
 
 def test_invalid_tool_args_json():
+    """Parse failure surfaces a self-correcting error with the raw args —
+    NOT a misleading "Required arguments" message from dispatch with {}."""
     results = [LLMResult(tool_calls=[tool_call("read", "{not json")]), LLMResult(content="ok")]
     agent, _fake, _events = make_agent(results)
     messages = [{"role": "user", "content": "go"}]
     agent.run(messages)
-    assert messages[3]["content"].startswith("ERROR: Missing required argument: path")
+    assert "not valid JSON" in messages[3]["content"]
+    assert "{not json" in messages[3]["content"]
+
+
+def test_trailing_comma_args_are_repaired(tmp_path):
+    """glm-style trailing comma in tool args: repaired, tool actually runs."""
+    target = tmp_path / "f.txt"
+    target.write_text("data", encoding="utf-8")
+    results = [
+        LLMResult(tool_calls=[tool_call("read", '{"path": "%s",}' % str(target).replace("\\", "\\\\"))]),
+        LLMResult(content="done"),
+    ]
+    agent, _fake, _events = make_agent(results)
+    messages = [{"role": "user", "content": "read it"}]
+    agent.run(messages)
+    assert "data" in messages[3]["content"]
+    assert messages[4]["content"] == "done"
+
+
+def test_transient_llm_error_is_retried():
+    """A dropped stream must not kill the turn: retry succeeds."""
+    attempts = []
+
+    def flaky(_messages, _tool_defs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise LLMError("Stream interrupted: [Errno 10054]")
+        return LLMResult(content="recovered")
+
+    events = []
+    sink = FnSink(lambda t, c: events.append((t, c)))
+    agent = Agent(Config(api_key="k", endpoint="e", model="m"), sink, llm=flaky)
+    messages = [{"role": "user", "content": "go"}]
+    agent.run(messages)
+    assert len(attempts) == 2
+    assert messages[-1]["content"] == "recovered"
+    assert not [t for t, _c in events if t == "error"]
+
+
+def test_non_transient_llm_error_is_not_retried():
+    attempts = []
+
+    def failing(_messages, _tool_defs):
+        attempts.append(1)
+        raise LLMError("HTTP 400: bad request")
+
+    sink = FnSink(lambda t, c: None)
+    agent = Agent(Config(api_key="k", endpoint="e", model="m"), sink, llm=failing)
+    messages = [{"role": "user", "content": "go"}]
+    agent.run(messages)
+    assert len(attempts) == 1
+    assert messages[-1]["content"].startswith("(LLM error: HTTP 400")
 
 
 def test_llm_error_reported_not_raised():

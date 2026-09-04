@@ -185,13 +185,15 @@ class TriLayer:
 
     def build_orchestrator(self, sink: Sink) -> Agent:
         """The L1 agent, ready to run user turns."""
-        return Agent(
+        agent = Agent(
             self.cfg,
             sink,
             system_prompt=SYSTEM_PROMPT + L1_ADDENDUM + skills.section(),
             extra_tools={
                 "spawn": self.bound_spawn(1),
-                "ask_user": make_ask_tool(sink, on_answer=self.asks.append),
+                "ask_user": make_ask_tool(
+                    sink, on_answer=self.asks.append, should_abort=self._should_abort
+                ),
                 **mcp_extra_tools(self.cfg.mcp_servers),
                 **skills.bound(),
             },
@@ -200,6 +202,11 @@ class TriLayer:
             model=self.cfg.model_for(1),
             should_abort=self._should_abort,
         )
+        # Persisted by the WebUI turn runner (server.py / room.py): spawn
+        # records + completed ask_user records for session replay.
+        agent.subagents = self.subagents
+        agent.asks = self.asks
+        return agent
 
     def build_clone_agent(
         self,
@@ -212,7 +219,7 @@ class TriLayer:
     ) -> Agent:
         """A clone turn agent: clone's prompt/tools + spawn; children inherit
         the clone's file surface (see __init__ child_* params)."""
-        return Agent(
+        agent = Agent(
             self.cfg,
             sink,
             system_prompt=system_prompt + skills.section(),
@@ -227,6 +234,9 @@ class TriLayer:
             model=model or self.cfg.model_for(1),
             should_abort=self._should_abort,
         )
+        agent.subagents = self.subagents
+        agent.asks = self.asks
+        return agent
 
     def _spawn(self, args: dict, parent_layer: int, call_id: str | None = None) -> str:
         goal = str(args.get("goal") or "").strip()

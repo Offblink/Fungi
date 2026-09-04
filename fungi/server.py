@@ -54,6 +54,48 @@ def sanitize_for_retry(messages: list[dict]) -> list[dict]:
     return out
 
 
+def repair_tool_gaps(messages: list[dict]) -> list[dict]:
+    """Ensure every assistant tool_call is followed by a tool result.
+
+    A turn that died between appending tool_calls and their results used to
+    poison the saved session: the next completion request fails with HTTP 400
+    (tool_calls must be answered), and the conversation is bricked from there
+    on. Synthesize an explicit failure result for any unanswered call.
+    """
+    out: list[dict] = []
+    unanswered: dict[str, str] = {}  # tool_call_id -> tool name
+    for m in messages:
+        role = m.get("role")
+        if role == "assistant" and m.get("tool_calls"):
+            out.append(m)
+            for tc in m["tool_calls"]:
+                unanswered[str(tc.get("id"))] = str(
+                    (tc.get("function") or {}).get("name") or "tool"
+                )
+            continue
+        if role == "tool":
+            unanswered.pop(str(m.get("tool_call_id")), None)
+            out.append(m)
+            continue
+        if unanswered and role in ("user", "assistant"):
+            # History gap: answer the dangling calls before moving on.
+            for call_id, name in unanswered.items():
+                out.append({
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": f"ERROR: turn was interrupted before {name} could run.",
+                })
+            unanswered = {}
+        out.append(m)
+    for call_id, name in unanswered.items():
+        out.append({
+            "role": "tool",
+            "tool_call_id": call_id,
+            "content": f"ERROR: turn was interrupted before {name} could run.",
+        })
+    return out
+
+
 class WebUIRuntime:
     """Turn/sessions/answer wiring for the WebUI. Default = single-host mode."""
 
@@ -97,9 +139,9 @@ class WebUIRuntime:
         """Other hosts currently in the room (room mode)."""
         return []
 
-    def comm_log(self, host: str) -> list[dict]:  # noqa: ARG002 (room mode overrides)
-        """Read-only clone-to-clone conversation with `host` (room mode)."""
-        return []
+    def comm_log(self, host: str) -> dict:  # noqa: ARG002 (room mode overrides)
+        """Friend view payload (room mode returns the real transcript)."""
+        return {"messages": [], "subagents": [], "asks": [], "events": []}
 
     def consent_mode(self, host: str) -> str:  # noqa: ARG002 (room mode overrides)
         """Per-friend consent mode: "allow" or "ask" (room mode)."""
@@ -337,6 +379,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 messages = [{"role": "system", "content": self.runtime.new_session_prompt()}]
             if user_msg is not None:
                 messages.append({"role": "user", "content": user_msg})
+        messages = repair_tool_gaps(messages)
 
         abort_event = threading.Event()
         with _TURNS_LOCK:

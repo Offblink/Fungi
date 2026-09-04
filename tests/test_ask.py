@@ -226,6 +226,30 @@ def test_ask_schema_shape():
     }
 
 
+def test_ask_wakes_on_abort():
+    """A stopped turn wakes the blocked ask tool instead of holding the
+    session lock for the full ASK_TIMEOUT_S."""
+    events: list = []
+    sink = FnSink(lambda t, c: events.append((t, c)))
+    stop = threading.Event()
+    tool = make_ask_tool(sink, should_abort=stop.is_set)
+    out: list[str] = []
+
+    def blocker() -> None:
+        out.append(tool.fn({"question": "ok?"}))
+
+    thread = threading.Thread(target=blocker, daemon=True)
+    thread.start()
+    card = first_ask(events)
+    time.sleep(0.05)  # let the tool enter its wait loop
+    stop.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert out[0].startswith("ERROR")
+    assert "停止" in out[0] or "aborted" in out[0].lower()
+    assert not ask_mod._pending
+
+
 def test_only_orchestrator_has_ask_user():
     """L1 tool table contains ask_user; L2/L3 children never see it."""
     events: list = []

@@ -1,7 +1,9 @@
 """Agent turn loop: stream a completion, dispatch tool calls, repeat (max rounds)."""
 
 import json
+import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -12,6 +14,13 @@ from fungi.llm import LLMAbortedError, LLMError, LLMResult, stream_chat
 
 MAX_TOOL_ROUNDS = 100
 TRUNCATE_TOOL_RESULT = 16000
+
+TRANSIENT_LLM_MARKERS = (
+    "Stream interrupted",
+    "Connection failed",
+    "Stream ended without a finish signal",
+)
+TRANSIENT_HTTP_RE = re.compile(r"^HTTP (429|5\d\d)")
 
 SYSTEM_PROMPT = """\
 You are a coding assistant. You have tools to read, write, edit files, run
@@ -50,20 +59,66 @@ class BoundTool:
 
 def wrap_reasoning_events(sink: Sink) -> tuple[EmitFn, dict]:
     """Delta callback that brackets the first/last reasoning delta with
-    reasoning_start / reasoning_end events (the web UI builds its thinking
-    fold on reasoning_start and drops bare reasoning deltas)."""
+    reasoning_start / reasoning_end so the UI can render a live block."""
     state = {"started": False, "ended": False}
 
     def on_delta(kind: str, text: str) -> None:
-        if kind == "reasoning" and not state["started"]:
-            state["started"] = True
-            sink.emit("reasoning_start", None)
-        if state["started"] and not state["ended"] and kind != "reasoning":
+        if kind == "reasoning":
+            if not state["started"]:
+                state["started"] = True
+                sink.emit("reasoning_start", None)
+            sink.emit("reasoning", text)
+        elif state["started"] and not state["ended"]:
             state["ended"] = True
             sink.emit("reasoning_end", None)
-        sink.emit(kind, text)
+            if text:
+                sink.emit("text", text)
+        else:
+            sink.emit("text", text)
 
     return on_delta, state
+
+
+def _is_transient_llm_error(message: str) -> bool:
+    """Transport-level failures worth another attempt (bad requests are not:
+    retrying a 400 only burns tokens)."""
+    return any(m in message for m in TRANSIENT_LLM_MARKERS) or bool(
+        TRANSIENT_HTTP_RE.match(message)
+    )
+
+
+def parse_tool_args(raw: str) -> tuple[dict, str | None]:
+    """Parse a tool_call's JSON arguments; on failure try a light repair.
+
+    Returns (args, error). error is None on success; otherwise it explains
+    WHY the JSON was invalid — the caller surfaces that to the model instead
+    of silently dispatching with {} (which produced misleading
+    "Required arguments: host, goal" errors for valid-looking calls).
+    """
+    text = (raw or "").strip() or "{}"
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        repaired = _repair_tool_json(text)
+        if repaired is not None:
+            return repaired, None
+        return {}, f"{exc.msg} (line {exc.lineno}, column {exc.colno})"
+    if isinstance(parsed, dict):
+        return parsed, None
+    return {}, f"arguments must be a JSON object, got {type(parsed).__name__}"
+
+
+def _repair_tool_json(text: str) -> dict | None:
+    """Minimal repair pass: trailing commas before } / ]. Anything else
+    (unescaped quotes, bare newlines in strings) stays a parse error."""
+    repaired = re.sub(r",\s*(?=[}\]])", "", text)
+    if repaired == text:
+        return None
+    try:
+        parsed = json.loads(repaired)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 class Agent:
@@ -139,12 +194,18 @@ class Agent:
     def _run_tool_call(self, tc: dict, messages: list[dict]) -> None:
         name = tc["function"]["name"]
         raw_args = tc["function"]["arguments"]
-        try:
-            args = json.loads(raw_args or "{}")
-        except json.JSONDecodeError:
-            args = {}
+        args, parse_error = parse_tool_args(raw_args)
         self.sink.emit("tool", {"name": name, "args": raw_args, "id": tc["id"]})
-        output = self._dispatch(name, args, call_id=tc["id"])
+        if parse_error is not None:
+            # Never dispatch with silently-emptied args: the tool's
+            # "Required arguments" message would hide the real failure.
+            output = (
+                f"ERROR: the {name} tool call's arguments were not valid JSON "
+                f"({parse_error}). Raw arguments received: {str(raw_args or '')[:600]}. "
+                "Re-issue the tool call with valid JSON."
+            )
+        else:
+            output = self._dispatch(name, args, call_id=tc["id"])
         self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
         messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output})
 
@@ -169,7 +230,7 @@ class Agent:
                 return result
             llm = self._llm if self._llm is not None else self._default_llm
             try:
-                result = llm(messages, self.tool_defs)
+                result = self._complete_with_retry(llm, messages)
             except LLMAbortedError as exc:
                 self.sink.emit("error", "Aborted by user")
                 if exc.partial.content:
@@ -202,6 +263,20 @@ class Agent:
         messages.append({"role": "assistant", "content": hit})
         return result
 
+    def _complete_with_retry(self, llm, messages: list[dict]) -> LLMResult:
+        """One completion; transient transport failures get up to two more
+        attempts (a dropped stream must not kill the whole turn)."""
+        for attempt in range(3):
+            try:
+                return llm(messages, self.tool_defs)
+            except LLMAbortedError:
+                raise
+            except LLMError as exc:
+                if attempt == 2 or not _is_transient_llm_error(str(exc)) or self._aborted():
+                    raise
+                time.sleep(1.0 * (attempt + 1))
+        raise LLMError("unreachable")  # pragma: no cover
+
     def _run_tool_calls(self, tool_calls: list[dict], messages: list[dict]) -> None:
         """Dispatch tool calls; run them concurrently when all are whitelisted as parallel."""
         parallel = len(tool_calls) > 1 and all(
@@ -212,14 +287,17 @@ class Agent:
                 self._run_tool_call(tc, messages)
             return
 
-        parsed = [(tc, self._parse_args(tc)) for tc in tool_calls]
-        for tc, _args in parsed:
+        parsed = []
+        for tc in tool_calls:
+            args, parse_error = parse_tool_args(tc["function"]["arguments"])
+            parsed.append([tc, args, parse_error])
+        for entry in parsed:
             self.sink.emit(
                 "tool",
                 {
-                    "name": tc["function"]["name"],
-                    "args": tc["function"]["arguments"],
-                    "id": tc["id"],
+                    "name": entry[0]["function"]["name"],
+                    "args": entry[0]["function"]["arguments"],
+                    "id": entry[0]["id"],
                 },
             )
         outputs: list[str] = [""] * len(parsed)
@@ -227,25 +305,25 @@ class Agent:
         def worker(index: int, tc: dict, args: dict) -> None:
             outputs[index] = self._dispatch(tc["function"]["name"], args, call_id=tc["id"])
 
-        threads = [
-            threading.Thread(target=worker, args=(i, tc, args), daemon=True)
-            for i, (tc, args) in enumerate(parsed)
-        ]
+        threads = []
+        for i, (tc, args, parse_error) in enumerate(parsed):
+            if parse_error is not None:
+                name = tc["function"]["name"]
+                outputs[i] = (
+                    f"ERROR: the {name} tool call's arguments were not valid JSON "
+                    f"({parse_error}). Raw arguments received: "
+                    f"{str(tc['function']['arguments'] or '')[:600]}. "
+                    "Re-issue the tool call with valid JSON."
+                )
+            else:
+                threads.append(threading.Thread(target=worker, args=(i, tc, args), daemon=True))
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join()
-        for (tc, _args), output in zip(parsed, outputs, strict=True):
+        for (tc, _args, _err), output in zip(parsed, outputs, strict=True):
             self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output})
-
-    @staticmethod
-    def _parse_args(tc: dict) -> dict:
-        try:
-            return json.loads(tc["function"]["arguments"] or "{}")
-        except json.JSONDecodeError:
-            return {}
-
 
 def _truncate(text: str, limit: int = TRUNCATE_TOOL_RESULT) -> str:
     if len(text) <= limit:

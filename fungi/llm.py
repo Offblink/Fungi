@@ -135,10 +135,14 @@ def stream_chat(
             "Output token cap hit (finish_reason=length): the model's reasoning consumed "
             'the budget before producing a reply. Set "max_tokens" in config.json to raise it.'
         )
-    if finish_reason is None and not saw_done:
-        raise LLMError(
-            "Stream ended without a finish signal: the connection closed before the model "
-            "finished generating (partial output only)."
-        )
     result.tool_calls = [tool_acc[i] for i in sorted(tool_acc)]
+    if finish_reason is None and not saw_done:
+        # Connection closed before the finish signal. A text-only partial is
+        # still worth keeping (killing the turn loses it for nothing); a
+        # partial tool call is NOT usable — its arguments are truncated.
+        if result.tool_calls or not result.content:
+            raise LLMError(
+                "Stream ended without a finish signal: the connection closed before the model "
+                "finished generating (partial output only)."
+            )
     return result
