@@ -230,6 +230,27 @@ def _row(label: str, widget: QWidget, parent=None) -> QWidget:
 _ACCENT = "#e07a5f"
 
 
+HELP_TEXT = """\
+Fungi 快速上手
+
+1. 一台机器点「发起房间」：得到房间 IP 和 Token，发给要加入的同伴。
+2. 同伴点「加入房间」：填 IP + Token（同一局域网可留空 IP 自动发现）。
+3. 双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。
+4. clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件
+   （对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。
+5. 关闭窗口不停房间：转入托盘后台；托盘菜单可回主界面、开 WebUI、退出。
+6. 模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。
+
+更多细节见仓库 README 与 docs/spec.md。"""
+
+
+def _show_help(parent) -> None:
+    box = QMessageBox(parent)
+    box.setWindowTitle("Fungi 使用帮助")
+    box.setText(HELP_TEXT)
+    box.exec()
+
+
 def _mushroom_icon(size: int = 64) -> QIcon:
     """运行时绘制蘑菇图标（tray.py 是 PyQt6 版；GUI 全程 PyQt5，混绑会崩）。"""
     pixmap = QPixmap(size, size)
@@ -316,6 +337,9 @@ class HostPage(QWidget):
         self.leave_btn.clicked.connect(self._leave)
         btn_row.addWidget(self.start_btn, 1)
         btn_row.addWidget(self.leave_btn, 1)
+        self.help_btn = PushButton(FluentIcon.INFO, "帮助")
+        self.help_btn.clicked.connect(lambda: _show_help(self))
+        btn_row.addWidget(self.help_btn)
         root.addLayout(btn_row)
 
         # -- status card (populated after launch) --
@@ -507,6 +531,9 @@ class JoinPage(QWidget):
         self.leave_btn.clicked.connect(self._leave)
         btn_row.addWidget(self.join_btn, 1)
         btn_row.addWidget(self.leave_btn, 1)
+        self.help_btn = PushButton(FluentIcon.INFO, "帮助")
+        self.help_btn.clicked.connect(lambda: _show_help(self))
+        btn_row.addWidget(self.help_btn)
         root.addLayout(btn_row)
         self.leave_btn.setVisible(False)
 
