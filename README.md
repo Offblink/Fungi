@@ -112,8 +112,6 @@ FUNGI_SELFTEST=1 python -m fungi --server --token x --data %TEMP%\fungi-selftest
 ## v1 已知边界
 
 - LAN 内明文 HTTP，不做传输加密；房间 token 做鉴权。
-- server 重启丢失未拉取消息与未决 ask（内存 inbox，v1 容忍）。
-- 通讯 clone 的聊天历史在内存（上限 40 条），进程重启丢失；用户↔本机 clone 会话已持久化。
 - ask 超时默认 600s，目前写死在代码，尚未暴露到 config.json。
 
 ## 文档

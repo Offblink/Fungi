@@ -36,7 +36,6 @@ JSON envelope，HTTP 承载：
 
 - type：`chat`（对话）、`task`（goal/reply_format/context 委派）、`result`（task 回执）、`ask`（同意/提问请求）、`answer`（对 ask 的回答，reply_to=ask_id）、`err`。
 - 可靠性：server 为每 clone 维护内存 inbox，收端长轮询拉取后 ack；投递按消息 id 去重，语义 at-least-once。
-- server 重启丢未拉取消息与未决 ask，v1 容忍，文档明示。
 
 ## 4. Server（hub）职责
 
