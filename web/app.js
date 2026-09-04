@@ -79,7 +79,7 @@ async function loadSessions() {
   try {
     const r = await fetch('/sessions');
     if (!r.ok) throw new Error(r.status);
-    allSessions = await r.json();
+    allSessions = (await r.json()).sessions || [];
     renderSessionList();
   } catch (e) { console.error('loadSessions:', e); }
 }
