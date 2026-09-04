@@ -4,7 +4,9 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import zipfile
 
 import pytest
 
@@ -353,6 +355,65 @@ def test_local_send_file_delivers_via_receiver_consent(room, tmp_path):
     worker.join(timeout=10)
     assert "DELIVERED" in result.get("out", ""), result
     assert (tmp_path / "inbox" / "alpha" / "photo.png").read_bytes() == b"PNG-bytes"
+
+
+def test_local_send_file_zips_folders(room, tmp_path):
+    _hub, clients = _joined_room(room)
+    folder = tmp_path / "拾荒集"
+    (folder / "raw").mkdir(parents=True)
+    (folder / "a.txt").write_text("alpha", encoding="utf-8")
+    (folder / "raw" / "b.txt").write_text("beta", encoding="utf-8")
+    tools = DelegateTools(
+        "alpha:local",
+        RemoteTransport(clients["alpha"]),
+        PendingAsks(),
+        lambda: ["beta"],
+        timeout_s=10.0,
+    )
+    comm = build_comm_clone(
+        "beta",
+        "alpha",
+        RemoteTransport(clients["beta"]),
+        CFG,
+        NullSink(),
+        ask_timeout_s=10,
+        inbox_dir=tmp_path / "inbox",
+    )
+    result = {}
+    worker = threading.Thread(
+        target=lambda: result.update(out=tools.send_file({"host": "beta", "path": str(folder)}))
+    )
+    worker.start()
+    transfer = None
+    deadline = time.monotonic() + 5
+    while transfer is None and time.monotonic() < deadline:
+        msgs, _cursor = clients["beta"].poll_env("beta")
+        for m in msgs:
+            if m.type == "transfer":
+                transfer = m
+        if transfer is None:
+            time.sleep(0.05)
+    assert transfer is not None, "transfer envelope never reached beta"
+    assert transfer.body["name"] == "拾荒集.zip"
+    receiver = threading.Thread(target=lambda: comm.run_turn(transfer))
+    receiver.start()
+    _answer_ask(comm, clients, "yes")
+    receiver.join(timeout=10)
+    resolved = False
+    deadline = time.monotonic() + 5
+    while not resolved and time.monotonic() < deadline:
+        msgs, _cursor = clients["alpha"].poll_env("alpha")
+        for m in msgs:
+            if m.type == "result" and m.reply_to:
+                tools.pending.resolve(m.reply_to, m.body)
+                resolved = True
+        if not resolved:
+            time.sleep(0.05)
+    worker.join(timeout=10)
+    assert "DELIVERED" in result.get("out", ""), result
+    landed = tmp_path / "inbox" / "alpha" / "拾荒集.zip"
+    with zipfile.ZipFile(landed) as zf:
+        assert sorted(zf.namelist()) == ["拾荒集/a.txt", "拾荒集/raw/b.txt"]
 
 
 def test_local_send_file_rejects_unknown_peer():

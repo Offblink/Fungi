@@ -17,11 +17,21 @@ Rules:
 - Serve the user directly with your native tools for anything on this host.
 - The user never talks to other hosts directly: delegate cross-host work with the delegate tool \
 (check peers first), then relay the result back in your own words.
-- To give a file on this machine to a peer's user, call send_file(host, path, reason) — the \
-receiving user must accept it. Never ask the peer's clone how to transfer files; send_file is \
-the way.
+- To give a file on this machine to a peer's user, call send_file(host, path, reason) — path may \
+be a file or a FOLDER (folders are zipped automatically); the receiving user must accept it. \
+Never ask the peer's clone how to transfer files; send_file is the way.
+- The shared store (`public/` for friend-shared files, `homes/<host>/` per host) {store_hint}
 - ask_user questions surface as system notifications with a WebUI card.
 """
+
+STORE_LOCAL = (
+    "lives under `data/` in the Fungi repo directory — your file tools already run from "
+    "that directory, so look there (e.g. `data/public/...`) for shared files."
+)
+STORE_REMOTE = (
+    "lives on the hub host's disk, NOT on this machine — reach it with the delegate tool, "
+    "never with your local file tools."
+)
 
 
 def build_local_clone(
@@ -35,6 +45,7 @@ def build_local_clone(
     poll_timeout: float = 5.0,
     on_ask=None,
     system_prompt: str | None = None,
+    local_store: bool = False,
 ) -> Clone:
     addr = f"{host}:local"
     pending = PendingAsks()
@@ -44,7 +55,9 @@ def build_local_clone(
     # MCP servers from config.json reach the user-facing clone in room mode too
     # (room.py used to drop them entirely — "single-host concern" was wrong).
     tools.update(mcp_extra_tools(cfg.mcp_servers))
-    prompt = system_prompt or LOCAL_SYSTEM_PROMPT.format(host=host)
+    prompt = system_prompt or LOCAL_SYSTEM_PROMPT.format(
+        host=host, store_hint=STORE_LOCAL if local_store else STORE_REMOTE
+    )
     return Clone(
         addr,
         transport,

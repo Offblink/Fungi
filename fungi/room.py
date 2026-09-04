@@ -149,6 +149,9 @@ class RoomBase:
             llm=self.llm,
             peers_fn=self._peers,
             on_ask=self._on_ask,
+            # The shared store sits on the hub host's disk: visible locally
+            # (repo data/) for the server role, remote for a joiner.
+            local_store=self.role == "server",
         )
 
     def _peers(self) -> list[str]:
