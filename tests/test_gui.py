@@ -80,7 +80,7 @@ def test_host_page_self_heals_pure_cjk_name(window, monkeypatch):
     page = window.host_page
     started = []
 
-    def fake_start(host, display, token, port):
+    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
         started.append((host, display))
         return FakeRoom()
 
@@ -99,7 +99,7 @@ def test_host_page_sanitizes_mixed_name(window, monkeypatch):
     page = window.host_page
     started = []
 
-    def fake_start(host, display, token, port):
+    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
         started.append((host, display))
         return FakeRoom()
 
@@ -189,11 +189,11 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
     page = window.join_page
     rooms = []
 
-    def fake_client(host, display, url, token):
+    def fake_client(host, display, url, token):  # noqa: ARG001 (fakes ignore args)
         rooms.append(FakeRoom())
         return rooms[-1]
 
-    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)
+    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)  # noqa: ARG005
     monkeypatch.setattr(gui, "start_client_room", fake_client)
     page.ip_combo.setText("192.168.1.20")
     page.token_edit.setText("tok")
@@ -224,6 +224,26 @@ def test_join_page_reports_scan_miss(window, monkeypatch):
             break
     assert page.room is None
     assert "未找到" in page.status.text()
+
+
+def test_close_parks_room_to_tray(window):
+    page = window.host_page
+    room = FakeRoom()
+    page.room = room
+    window._tray = None
+    window.close()
+    assert not room.stopped  # close hides to tray; the room keeps running
+    assert not window.isVisible()
+    window._tray.hide()
+    page.room = None
+
+
+def test_quit_from_tray_stops_rooms(window):
+    page = window.host_page
+    room = FakeRoom()
+    page.room = room
+    window.quit_from_tray()
+    assert room.stopped and page.room is None
 
 
 def test_valid_host_name_contract():

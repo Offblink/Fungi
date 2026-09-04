@@ -20,9 +20,17 @@ import threading
 import urllib.error
 import urllib.request
 
-from PyQt5.QtCore import QSettings, Qt, pyqtSignal
-from PyQt5.QtGui import QGuiApplication, QKeySequence
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QShortcut, QVBoxLayout, QWidget
+from PyQt5.QtCore import QSettings, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QMenu,
+    QShortcut,
+    QSystemTrayIcon,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     EditableComboBox,
@@ -181,6 +189,60 @@ def _row(label: str, widget: QWidget, parent=None) -> QWidget:
     return holder
 
 
+_ACCENT = "#e07a5f"
+
+
+def _mushroom_icon(size: int = 64) -> QIcon:
+    """运行时绘制蘑菇图标（tray.py 是 PyQt6 版；GUI 全程 PyQt5，混绑会崩）。"""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor(_ACCENT))
+    painter.drawPie(
+        int(size * 0.10), int(size * 0.12), int(size * 0.80), int(size * 0.80), 0, 180 * 16
+    )
+    painter.drawRoundedRect(
+        int(size * 0.40),
+        int(size * 0.48),
+        int(size * 0.20),
+        int(size * 0.40),
+        int(size * 0.08),
+        int(size * 0.08),
+    )
+    painter.setBrush(QColor("#ffffff"))
+    for cx, cy, r in ((0.32, 0.30, 0.06), (0.52, 0.22, 0.05), (0.66, 0.34, 0.055)):
+        painter.drawEllipse(
+            int(size * (cx - r)), int(size * (cy - r)), int(size * r * 2), int(size * r * 2)
+        )
+    painter.end()
+    return QIcon(pixmap)
+
+
+class _Tray(QSystemTrayIcon):
+    """托盘：房间后台驻留期间提供 显示主界面 / 打开 WebUI / 退出。"""
+
+    def __init__(self, window: "FungiGui"):
+        super().__init__(_mushroom_icon())
+        self._window = window
+        self.setToolTip("Fungi")
+        self._menu = QMenu()  # keep referenced: setContextMenu does not own it
+        self._menu.addAction("显示主界面", window.show_and_raise)
+        self._menu.addAction("打开 WebUI", window.open_webui_from_tray)
+        self._menu.addSeparator()
+        self._menu.addAction("退出", window.quit_from_tray)
+        self.setContextMenu(self._menu)
+        self.activated.connect(self._on_activated)
+
+    def _on_activated(self, reason) -> None:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._window.show_and_raise()
+
+    def notify(self, title: str, body: str) -> None:
+        self.showMessage(title, body, QSystemTrayIcon.Information, 8000)
+
+
 class HostPage(QWidget):
     """发起房间：GUI 进程内直启 hub，随后显示 IP / Token / WebUI 入口。"""
 
@@ -225,7 +287,9 @@ class HostPage(QWidget):
         self.ip_btn = _copy_button()
         self.ip_btn.clicked.connect(lambda: _copy(self.ip_edit.text(), window, "房间 IP"))
         self.ip_refresh_btn = ToolButton(FluentIcon.SYNC)
-        self.ip_refresh_btn.setToolTip("刷新 IP（网络切换 / DHCP 续租后使用；房间绑定所有网卡，端口不变）")
+        self.ip_refresh_btn.setToolTip(
+            "刷新 IP（网络切换 / DHCP 续租后使用；房间绑定所有网卡，端口不变）"
+        )
         self.ip_refresh_btn.clicked.connect(self._refresh_ip)
         self.token_edit = LineEdit()
         self.token_edit.setFixedWidth(360)
@@ -279,7 +343,9 @@ class HostPage(QWidget):
                 parent=self.window_ref,
             )
         elif changed:
-            InfoBar.success("IP 已刷新", f"当前房间 IP：{ip}", duration=3000, parent=self.window_ref)
+            InfoBar.success(
+                "IP 已刷新", f"当前房间 IP：{ip}", duration=3000, parent=self.window_ref
+            )
         else:
             InfoBar.info("IP 未变化", ip, duration=2000, parent=self.window_ref)
 
@@ -295,6 +361,7 @@ class HostPage(QWidget):
         self.room.stop()
         self.room = None
         self._set_started(False)
+        self.window_ref.update_tray()
         self.ip_edit.clear()
         self.token_edit.clear()
         self.status.setText(self._idle_status)
@@ -330,10 +397,11 @@ class HostPage(QWidget):
         self.ip_edit.setText(lan_ip())
         self.token_edit.setText(self._token)
         self._set_started(True)
+        self.window_ref.update_tray()
         self.status.setText(
-            "房间已在本窗口内运行（关闭窗口即停止房间）。\n"
-            f"· 端口 {port}（自动向上寻找）· 把 Token 发给好友即可加入\n"
-            "· Ctrl+C 复制房间 IP"
+            "房间运行中：关闭窗口会转入托盘后台，房间不会停。\n"
+            f"· 端口 {port}（自动向上寻找）· 把 IP + Token 发给好友即可加入\n"
+            "· Ctrl+C 复制房间 IP · 退出房间请点「离开房间」"
         )
         InfoBar.success(
             "房间已发起", f"{host} · {lan_ip()}:{port}", duration=3000, parent=self.window_ref
@@ -401,7 +469,9 @@ class JoinPage(QWidget):
 
         root.addStretch(1)
 
-        self.status = BodyLabel("加入后房间在本窗口内运行，关闭窗口即离开。")
+        self.status = BodyLabel(
+            "加入成功后可点「打开 WebUI」聊天；关闭窗口会转入托盘后台，房间不停。"
+        )
         root.addWidget(self.status)
 
         self._restore()
@@ -470,6 +540,7 @@ class JoinPage(QWidget):
         self.leave_btn.setVisible(False)
         self.webui_row.setVisible(False)
         self.join_btn.setEnabled(True)
+        self.window_ref.update_tray()
         self.status.setText("已离开房间。")
         InfoBar.info("已离开", "已从房间退出", duration=2500, parent=self.window_ref)
 
@@ -493,12 +564,13 @@ class JoinPage(QWidget):
             return
         self.leave_btn.setVisible(True)
         self.webui_row.setVisible(True)
+        self.window_ref.update_tray()
         self.settings.setValue("last_ip", ip)
         self.settings.setValue("last_token", token)
         self.settings.setValue("last_nick", nick)
         self.status.setText(
             f"已加入 {ip}:{port}（昵称 {nick or host}）。\n"
-            "房间在本窗口内运行，关闭窗口即离开；点上方「打开 WebUI」进入你自己的聊天界面。"
+            "关闭窗口会转入托盘后台，房间不会停；「打开 WebUI」进你自己的聊天界面，退出房间点「离开房间」。"
         )
         InfoBar.success(
             "已加入房间", f"{host} → {ip}:{port}", duration=3000, parent=self.window_ref
@@ -579,13 +651,65 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
         self.setWindowTitle("Fungi")
         self.resize(900, 560)  # sidebar layout needs a little width for the nav
+        self._tray: _Tray | None = None
 
-    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+    # ── tray / background lifecycle ──
+
+    def rooms(self) -> list:
+        """Live rooms across pages (a page holds at most one)."""
+        return [
+            page.room
+            for page in (self.host_page, self.join_page)
+            if getattr(page, "room", None) is not None
+        ]
+
+    def update_tray(self) -> None:
+        """The tray icon lives exactly while a room runs (it IS the backend)."""
+        if self.rooms():
+            if self._tray is None:
+                self._tray = _Tray(self)
+            self._tray.show()
+        elif self._tray is not None:
+            self._tray.hide()
+
+    def show_and_raise(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def open_webui_from_tray(self) -> None:
+        rooms = self.rooms()
+        if rooms:
+            rooms[0].open_webui()
+
+    def quit_from_tray(self) -> None:
+        """Real exit: stop rooms (proper leave envelopes), then quit."""
         for page in (self.host_page, self.join_page):
             room = getattr(page, "room", None)
             if room is not None:
                 room.stop()
                 page.room = None
+        if self._tray is not None:
+            self._tray.hide()
+        # Deferred: calling quit() inside the current dispatch races the
+        # callback teardown (flaky silent exit / hard crash on Windows).
+        QTimer.singleShot(0, QApplication.quit)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self.rooms():
+            # Closing the window parks the room in the tray; only the tray
+            # menu's 退出 (or a page's 离开房间 button) actually stops it.
+            event.ignore()
+            self.hide()
+            if self._tray is None:
+                self.update_tray()
+            self._tray.notify(
+                "Fungi 已最小化到托盘",
+                "房间仍在后台运行；双击托盘回到主界面，菜单可打开 WebUI 或退出。",
+            )
+            return
+        if self._tray is not None:
+            self._tray.hide()
         super().closeEvent(event)
 
 
