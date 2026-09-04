@@ -187,6 +187,10 @@ class RoomBase:
         )
         with self._guard:
             self._clones[peer] = clone
+        # Starts the poll/worker threads. Without this the clone never drains
+        # its inbox: cross-host chat/delegate/send_file all died silently
+        # while tests passed (they call clone.start() themselves).
+        clone.start()
 
     def remove_comm_clone(self, peer: str) -> None:
         with self._guard:

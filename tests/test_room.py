@@ -411,3 +411,52 @@ def test_comm_task_turn_appends_after_chat_transcript(server_room):
     assert roles[0] == "system"
     assert d["messages"][3]["content"].startswith("[TASK from beta]")
     assert d["messages"][-1]["content"] == "done"
+
+
+def _pong_llm(_messages, _tool_defs):
+    from fungi.llm import LLMResult
+
+    return LLMResult(content="pong")
+
+
+def test_delegate_roundtrip_between_server_and_client(tmp_path):
+    """REAL cross-host delegate: alpha:local -> hub -> beta comm clone turn ->
+    result envelope back to alpha:local -> pending resolved. Guards against
+    the 'delegate with correct args hangs forever' class of failure."""
+    import threading
+
+    from fungi.llm import LLMResult  # noqa: F401
+
+    server = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "d1",
+        llm=_pong_llm, rules_path=tmp_path / "r1.json",
+    )
+    server.start()
+    try:
+        client = RoomClient(
+            "beta", CFG, NullSink(),
+            f"http://127.0.0.1:{server.hub.port}", "tok",
+            llm=_pong_llm, sessions_dir=tmp_path / "cs",
+            rules_path=tmp_path / "r2.json",
+        )
+        client.start()
+        try:
+            assert _wait(
+                lambda: "beta" in (server.local.delegate_tools.peers_fn() or []), timeout_s=10
+            ), "beta never appeared in alpha's roster"
+            out: list[str] = []
+
+            def run():
+                out.append(
+                    server.local.delegate_tools.delegate({"host": "beta", "goal": "ping test"})
+                )
+
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            thread.join(timeout=25)
+            assert not thread.is_alive(), "delegate never returned"
+            assert out and "pong" in out[0], out
+        finally:
+            client.stop()
+    finally:
+        server.stop()
