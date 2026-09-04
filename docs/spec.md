@@ -96,7 +96,8 @@ ask 是普通消息，不需要独立协调设施：
 
 ## 7. WebUI 与托盘
 
-- WebUI 默认关闭：进程启动即最小化到托盘（PyQt6，洞见同款：运行时画图标、菜单、单实例）；托盘菜单「打开 WebUI / 打开数据目录 / 退出」，双击托盘打开 WebUI。
+- WebUI 默认关闭：进程启动即最小化到托盘（PyQt5 + qfluentwidgets，2026-09-05 起统一；
+  运行时画图标、fluent 菜单、单实例）；托盘菜单「打开 WebUI / 打开数据目录 / 退出」，双击托盘打开 WebUI。
 - 有未决 ask 时在 WebUI 顶部横幅展示卡片（asks banner）；用户点托盘 → 打开 WebUI。
 - ask 卡片渲染于聊天流：允许 / 禁止 / 自定义输入框，对应 answer value `yes` / `no` / 自定义文本。
 - 会话存储在 server；WebUI 经本机 clone 代理读写（对用户透明）。
@@ -109,7 +110,7 @@ ask 是普通消息，不需要独立协调设施：
 
 ## 9. 工程约束
 
-- Python ≥ 3.13；标准库 + PyQt6（托盘/通知）。
+- Python ≥ 3.13；标准库 + PyQt5 + PyQt-Fluent-Widgets（GUI 与托盘同一套绑定与组件）。
 - pytest；真实 LLM 只做冒烟（ZAI_API_KEY 配方）。
 - ruff 全套（lint + format），`scripts/check.ps1` 门禁与 YESIR 相同。
 - 一任务一 commit（英文祈使句）；push 需用户发话。
@@ -155,3 +156,21 @@ ask 是普通消息，不需要独立协调设施：
   播种到目录，写明格式与质量标准（description 写触发条件、步骤给精确命令/路径、记录坑与验证法）。
 - **安全**：save 仅限用户面 agent（本机 clone、WebUI 编排者）；通讯 clone 及其 spawn 只读——
   自主跨 host 代理不得在本 host 持久化 prompt 影响（与 §5/§8 的 consent 思路一致）。
+
+## 12. 增补（2026-09-05）：托盘栈统一、房主 Token 自定义与热更新、CI/CD
+
+- **托盘栈修订（推翻 2026-09-03 的 PyQt6 定案）**：全局 qfluentwidgets 是 PyQt5 build，
+  GUI（gui.py）全程 PyQt5——托盘（`fungi/tray.py`）与 CLI 房间模式（`__main__.py`）、
+  selftest 一并迁到 PyQt5，**全仓库单一 Qt 绑定**。托盘菜单用 qfluentwidgets
+  `SystemTrayMenu`（与 GUI 同一套 fluent 组件；右键弹出，零新增依赖）。
+  GUI 托盘与 CLI 托盘行为不变：左键/双击开 WebUI，菜单项一致。
+- **房主 Token 自定义**：GUI「发起房间」页 Token 行是可编辑输入项（位于发起按钮上方，
+  预填自动生成值）。字符集 `[A-Za-z0-9_-]`、1-64 位——token 进 URL 与加入命令，空格/中文非法。
+  发起前修改：开房即用该值；留空则自动生成。
+- **Token 运行中热更新**：房间运行中改 Token 即时改写 `hub.token`；所有 API 鉴权逐请求读它，
+  无需重启房间。语义：旧 token 立即失效（403）——**已加入的好友需用新 Token 重新加入**；
+  UI 以 InfoBar 提示。CLI `--token` 语义不变（仅开房时定值）。
+- **CI/CD**：`.github/workflows/ci.yml`（push main / PR）与 `release.yml`（tag `v*`）均以
+  pytest 为门禁（windows-latest + py3.13，Qt 测试在 runner 上 importorskip 跳过）；
+  release 追加 `git archive` 源码 zip + GitHub Release（generate_release_notes）。
+  ruff 仍是本地门禁（`scripts/check.ps1`），暂不进 CI——版本漂移待统一后钉版。

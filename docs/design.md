@@ -10,7 +10,7 @@
 | 进程模型 | 每 host 一个进程，多线程多 clone | 共享 hub 连接与托盘，最简 |
 | clone 本体 | 角色化 L1 Orchestrator（复用 Agent） | L2/L3 spawn 机制照常工作 |
 | 传输 | JSON over HTTP（非 UDP） | Orchestrator 消息需要可靠有序，Face 的 UDP 仅适合媒体分片 |
-| 托盘 | PyQt6（洞见同款） | 用户定案；托盘+通知一体 |
+| 托盘 | PyQt5 + qfluentwidgets `SystemTrayMenu` | 2026-09-05 修订（原 PyQt6 定案废除）：全局 qfluentwidgets 是 PyQt5 build，GUI 与托盘统一到单一 Qt 绑定、同一套 fluent 组件，零新增依赖 |
 
 ## 包结构
 
@@ -33,7 +33,7 @@ fungi/
     delegate.py             # 本机 clone 的 delegate / peers 工具
   agent.py llm.py trilayer.py session.py events.py   # 移植自 YESIR（Sink 适配）
   tools/                    # 移植自 YESIR + 路径守卫包装
-  tray.py  notify.py        # PyQt6 托盘 / showMessage 通知
+  tray.py                   # PyQt5 托盘：运行时画图标 + fluent 菜单 + showMessage 通知
   web/                      # YESIR web 移植 + consent 卡片
 scripts/check.ps1  scripts/smoke_fungi.py
 tests/
