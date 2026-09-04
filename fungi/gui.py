@@ -138,8 +138,9 @@ class HostPage(QWidget):
         root.addStretch(1)
 
         self.status = BodyLabel(
-            "尚未发起。房间绑定固定端口 8899，加入方只需填写 IP 和 Token；"
-            "请确认加入方与本机在同一局域网（同一路由器）。"
+            "尚未发起。\n"
+            "· 房间绑定固定端口 8899，加入方只需填写 IP 和 Token\n"
+            "· 请确认加入方与本机在同一局域网（同一路由器）"
         )
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -178,8 +179,9 @@ class HostPage(QWidget):
         self.cmd_edit.setText(join_cmd)
         self._set_started(True)
         self.status.setText(
-            "房间已发起（独立控制台窗口运行，托盘常驻）。把下方 Token 发给好友；"
-            "好友用「加入房间」页填 IP + Token + 昵称即可。Ctrl+C 复制房间 IP。"
+            "房间已发起（独立控制台窗口运行，托盘常驻）。\n"
+            "· 把上方 Token 发给好友，好友用「加入房间」页填 IP + Token + 昵称\n"
+            "· Ctrl+C 复制房间 IP"
         )
         InfoBar.success(
             "房间已发起", f"{host} · {ip}:{GUI_PORT}", duration=3000, parent=self.window_ref
