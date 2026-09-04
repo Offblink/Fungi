@@ -32,6 +32,19 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
         └────────────────┘  └────────────────┘   越界文件操作 → consent
 ```
 
+## 数据目录口径
+
+两套存储根按角色划分，**不是重复**，请勿合并：
+
+| 目录 | 角色 | 内容 |
+|---|---|---|
+| `data/` | hub 共享存储（server 角色） | `public/`、`homes/`、`transfers/`、房间会话 `sessions/`、好友视图 `comm-sessions/` |
+| 仓库根 | 本机 UI 数据（单机/加入方） | WebUI 会话 `sessions/`、收件箱 `inbox/`、`comm-sessions/` |
+
+房间会话进 `data/` 是 server 角色的会话后端；本机会话放仓库根，因为 2026-09-04 真机
+验证发现共享一个 `sessions/` 会让每台主机的 WebUI 列出所有主机的聊天（见
+`ClientSessions` docstring）。两侧均被 `.gitignore` 覆盖，不入库。
+
 ## 快速开始
 
 要求 Python ≥ 3.13。运行时唯一第三方依赖是 PyQt6（托盘/通知）；LLM 与 HTTP 均走标准库。开发另需 ruff + pytest。
