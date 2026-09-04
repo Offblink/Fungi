@@ -42,18 +42,8 @@ from .trilayer import TriLayer
 
 MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
-ASK_NOTIFY_IDLE_S = 30.0  # WebUI idle this long => nobody is looking => toast
 MAX_TRANSCRIPT_MESSAGES = 400  # friend-view transcript cap (messages per peer)
 
-
-def _summary(body: dict) -> str:
-    """One-line human summary of an ask body (for the notification)."""
-    questions = body.get("questions")
-    if isinstance(questions, list) and questions:
-        return "; ".join(str(q.get("question", "")) for q in questions)
-    if body.get("question"):
-        return str(body["question"])
-    return json.dumps(body, ensure_ascii=False)
 
 
 def _is_consent(body: dict) -> bool:
@@ -113,7 +103,6 @@ class RoomBase:
         host: str,
         cfg: Config,
         sink: Sink,
-        notifier=None,
         llm=None,
         rules_path: Path | None = None,
         display: str = "",
@@ -122,7 +111,6 @@ class RoomBase:
         self.display = display
         self.cfg = cfg
         self.sink = sink
-        self.notifier = notifier
         self.llm = llm
         self.cards = AskCards()
         self.rules = ConsentRules(rules_path)
@@ -135,10 +123,6 @@ class RoomBase:
         self._webui_guard = threading.Lock()
         # Per-peer comm clone transcripts (friend view); set by subclasses.
         self._comm_store: SessionStore | None = None
-        # The live WebUI runtime (set in open_webui): consent-card
-        # notifications consult its last_seen so a card raised while a
-        # browser is polling stays silent on screen instead of toasting.
-        self._webui_runtime: WebUIRuntime | None = None
 
     # ── clones ──
 
@@ -164,15 +148,6 @@ class RoomBase:
 
     def _peers(self) -> list[str]:
         raise NotImplementedError
-
-    def display_of(self, host: str) -> str:
-        """Presentation nickname for `host` ("" -> UI falls back to the name)."""
-        if getattr(self, "hub", None) is not None:  # server role: direct roster
-            return self.hub.roster.display(host)
-        for entry in getattr(self, "_entries", None) or []:  # client role: cached
-            if entry.get("name") == host:
-                return str(entry.get("display") or "")
-        return ""
 
     def add_comm_clone(self, peer: str, transport) -> None:
         with self._guard:
@@ -244,12 +219,6 @@ class RoomBase:
             return
         if not self.cards.record(env):
             return  # replay/duplicate
-        if self.notifier is not None and self._webui_idle():
-            try:
-                src_host, _role, _peer = parse_addr(src)
-            except Exception:
-                src_host = src
-            self.notifier.ask(self.display_of(src_host) or src_host, _summary(env.body))
 
     def _send_answer(self, ask: Envelope, value) -> None:
         self.local.transport.send(
@@ -268,9 +237,7 @@ class RoomBase:
         """Start the WebUI lazily; returns its URL."""
         with self._webui_guard:
             if self._webui is None:
-                rt = self.webui_runtime()
-                self._webui_runtime = rt
-                self._webui = make_webui_server(None, rt)
+                self._webui = make_webui_server(None, self.webui_runtime())
                 threading.Thread(
                     target=self._webui.serve_forever, name="webui", daemon=True
                 ).start()
@@ -278,14 +245,6 @@ class RoomBase:
         if open_browser:
             threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
         return url
-
-    def _webui_idle(self) -> bool:
-        """True when nobody has the WebUI open (or its last request is stale):
-        the condition for firing a system notification about a pending card."""
-        rt = self._webui_runtime
-        if rt is None:
-            return True
-        return time.monotonic() - rt.last_seen >= ASK_NOTIFY_IDLE_S
 
     def webui_runtime(self) -> WebUIRuntime:
         return RoomRuntime(self, self._sessions_backend())
@@ -309,7 +268,6 @@ class RoomBase:
             self._webui.shutdown()
             self._webui.server_close()
             self._webui = None
-            self._webui_runtime = None
 
 
 class StoreSessions:
@@ -367,14 +325,13 @@ class RoomServer(RoomBase):
         sink,
         token,
         data_root: Path,
-        notifier=None,
         llm=None,
         rules_path=None,
         display="",
         port: int = 0,
     ):
         super().__init__(
-            host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
+            host, cfg, sink, llm=llm, rules_path=rules_path, display=display
         )
         self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb, port=port)
         self._monitor: threading.Thread | None = None
@@ -433,14 +390,13 @@ class RoomClient(RoomBase):
         sink,
         server_url: str,
         token: str,
-        notifier=None,
         llm=None,
         rules_path=None,
         display="",
         sessions_dir: Path | None = None,
     ):
         super().__init__(
-            host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
+            host, cfg, sink, llm=llm, rules_path=rules_path, display=display
         )
         self.client = HubClient(server_url, token, host, display)
         self.poller = HostPoller(self.client, host)
@@ -496,7 +452,7 @@ class RoomClient(RoomBase):
             self._replay_ask(rec)
 
     def _replay_ask(self, rec: dict) -> None:
-        """Heartbeat replay of unresolved asks: re-record + re-notify (dedup)."""
+        """Heartbeat replay of unresolved asks: re-record (dedup)."""
         src = rec.get("src")
         if not src:
             return
@@ -573,7 +529,6 @@ class RoomRuntime(WebUIRuntime):
             sink,
             on_answer=trilayer.asks.append,
             should_abort=should_abort,
-            notify=self._notify_in_turn_ask,
         )
         return trilayer.build_clone_agent(
             sink,
@@ -582,19 +537,6 @@ class RoomRuntime(WebUIRuntime):
             tool_names=clone.tool_names,
             model=clone.model,
         )
-
-    def _notify_in_turn_ask(self, summary: str) -> None:
-        """inquire raises its card inside the live turn stream. When nobody
-        has the WebUI open, that card is invisible and the turn silently
-        blocks for up to 15 minutes — fire a system notification instead.
-        Recent HTTP activity means a browser is polling and the card is on
-        screen; skip the toast to avoid nagging someone who is watching."""
-        notifier = self.room.notifier
-        if notifier is None:
-            return
-        if time.monotonic() - self.last_seen < ASK_NOTIFY_IDLE_S:
-            return
-        notifier.ask(self.room.display_of(self.room.host) or self.room.host, summary)
 
     # ── answers ──
     def route_answer(self, ask_id: str, value) -> bool:
@@ -716,9 +658,6 @@ def run_selftest(room: RoomServer, quit_fn, fail_fn) -> None:
             return
         if room.selftest_answered != "yes":
             fail_fn(f"unexpected answer value: {room.selftest_answered!r}")
-            return
-        if room.notifier is not None and not room.notifier.shown:
-            fail_fn("notification was never shown")
             return
         print("FUNGI SELFTEST OK", flush=True)
         quit_fn(0)

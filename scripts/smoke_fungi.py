@@ -172,7 +172,6 @@ def run_role(args: argparse.Namespace) -> int:
         room = RoomServer(args.name, cfg, NullSink(), args.token, Path(args.data), llm=llm)
     else:
         room = RoomClient(args.name, cfg, NullSink(), args.server, args.token, llm=llm)
-    room.notifier = None  # no Qt in smoke: cards without toasts
     room.start()
     url = room.open_webui(open_browser=False)
     hub_port = room.hub.port if args.role == "server" else 0

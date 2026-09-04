@@ -145,7 +145,6 @@ def make_ask_tool(
     sink: Sink,
     on_answer: Callable[[dict], None] | None = None,
     should_abort: Callable[[], bool] | None = None,
-    notify: Callable[[str], None] | None = None,
 ) -> BoundTool:
     """Build the inquire BoundTool bound to one turn's sink.
 
@@ -153,9 +152,6 @@ def make_ask_tool(
     {id, questions, answers, status: answered|timeout|aborted} for
     persistence. `should_abort` lets a stopped turn wake the blocked tool
     instead of holding the session for the full ASK_TIMEOUT_S (15 min).
-    `notify(summary)` fires once when the card is raised — callers use it
-    for a system notification when nobody has the WebUI open (the card
-    alone is invisible there, and the turn blocks up to 15 minutes).
     """
 
     def ask(args: dict) -> str:
@@ -165,8 +161,6 @@ def make_ask_tool(
         ask_id = uuid.uuid4().hex[:6]
         _pending.register(ask_id)
         sink.emit("ask", {"id": ask_id, "questions": questions})
-        if notify is not None:
-            notify(str(questions[0].get("question") or "(no question text)"))
         answered = False
         value = None
         aborted = False

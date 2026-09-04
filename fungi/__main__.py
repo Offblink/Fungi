@@ -84,7 +84,6 @@ def run_room(args: argparse.Namespace) -> int:
 
     from fungi.config import load_config  # noqa: PLC0415
     from fungi.events import ConsoleSink  # noqa: PLC0415
-    from fungi.notify import Notifier  # noqa: PLC0415
     from fungi.protocol import BAD_NAME_MSG, valid_host_name  # noqa: PLC0415
     from fungi.tray import TrayController  # noqa: PLC0415
 
@@ -131,8 +130,6 @@ def run_room(args: argparse.Namespace) -> int:
         data_dir_for_tray = None
 
     tray = TrayController(on_open_webui=room.open_webui, data_root=data_dir_for_tray)
-    notifier = Notifier(tray)
-    room.notifier = notifier
     room.start()
     tray.show()
 

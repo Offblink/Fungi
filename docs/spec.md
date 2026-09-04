@@ -68,14 +68,14 @@ ask 是普通消息，不需要独立协调设施：
 请求方 clone 调 confirm / inquire
   → 发 ask envelope（to=目标 host:local）
   → PendingAsk 注册表登记，threading.Event 阻塞（复用 YESIR tools/ask.py 机制）
-  → relay 投到目标 host 的本机 clone → 弹系统通知
+  → relay 投到目标 host 的本机 clone → WebUI 卡片（asks 横幅，打开即见）
   → 用户打开 WebUI → 卡片（允许 / 禁止 / 自定义输入）
   → 本机 clone 回 answer envelope（reply_to=ask_id，value=yes|no|自定义文本）
   → 请求方唤醒，返回 "USER: <value>" / "DENIED"
 ```
 
-- 超时默认 600s（通知场景用户可能不在电脑前，比 YESIR 的 300s 长，可配）；超时返回 `"ERROR: 用户未回答"`。
-- 断线补偿：本机 clone 心跳时从 hub pending-ask 注册表重放未决通知。
+- 超时默认 600s（用户可能不在电脑前，比 YESIR 的 300s 长，可配）；超时返回 `"ERROR: 用户未回答"`。
+- 断线补偿：本机 clone 心跳时从 hub pending-ask 注册表重放未决卡片。
 - 裁决者：ask 涉及 `homes/<owner>/` 时 to=属主 host 的 local clone；本机属主操作 to=本机 local clone（同进程直连，不走网络）。
 
 ## 6. Clone 规格
@@ -93,12 +93,12 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.3 ask 汇聚
 
-所有 ask（含通讯 clone 的 inquire / confirm）统一为 ask envelope 落到目标 host 的本机 clone → 系统通知 → WebUI 卡片。本机 clone 自己的 inquire 是同一机制的同进程特例（直连 PendingAsk，不过网络）。
+所有 ask（含通讯 clone 的 inquire / confirm）统一为 ask envelope 落到目标 host 的本机 clone → WebUI 卡片。本机 clone 自己的 inquire 是同一机制的同进程特例（直连 PendingAsk，不过网络）。
 
 ## 7. WebUI 与托盘
 
 - WebUI 默认关闭：进程启动即最小化到托盘（PyQt6，洞见同款：运行时画图标、菜单、单实例）；托盘菜单「打开 WebUI / 打开数据目录 / 退出」，双击托盘打开 WebUI。
-- 有未决 ask 时弹系统通知（PyQt6 showMessage，标题含来源 host 与摘要）；用户点通知或托盘 → 打开 WebUI。
+- 有未决 ask 时在 WebUI 顶部横幅展示卡片（asks banner）；用户点托盘 → 打开 WebUI。
 - ask 卡片渲染于聊天流：允许 / 禁止 / 自定义输入框，对应 answer value `yes` / `no` / 自定义文本。
 - 会话存储在 server；WebUI 经本机 clone 代理读写（对用户透明）。
 
