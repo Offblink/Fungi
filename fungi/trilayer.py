@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fungi import tools
+from fungi import skills, tools
 from fungi.agent import SYSTEM_PROMPT, Agent, BoundTool
 from fungi.config import Config
 from fungi.events import FnSink, Sink
@@ -154,6 +154,7 @@ class TriLayer:
         should_abort: Callable[[], bool] | None = None,
         child_tool_names: frozenset[str] | None = None,
         child_extra_tools: dict[str, BoundTool] | None = None,
+        skill_save: bool = False,
     ) -> None:
         """child_tool_names/child_extra_tools: when set, spawned subagents use
         this surface instead of the native defaults — a clone's spawn inherits
@@ -164,6 +165,9 @@ class TriLayer:
         self._should_abort = should_abort
         self._child_tool_names = child_tool_names
         self._child_extra_tools = child_extra_tools or {}
+        # Whether agents built from this layer may author skills (user-facing
+        # surfaces only; autonomous comm clones get a readonly tool).
+        self._skill_save = skill_save
         self._active = 0
         self._lock = threading.Lock()
         # spec_id -> {id, call_id, layer, goal, reply_format, status, events: [...]}
@@ -184,11 +188,12 @@ class TriLayer:
         return Agent(
             self.cfg,
             sink,
-            system_prompt=SYSTEM_PROMPT + L1_ADDENDUM,
+            system_prompt=SYSTEM_PROMPT + L1_ADDENDUM + skills.section(),
             extra_tools={
                 "spawn": self.bound_spawn(1),
                 "ask_user": make_ask_tool(sink, on_answer=self.asks.append),
                 **mcp_extra_tools(self.cfg.mcp_servers),
+                **skills.bound(),
             },
             parallel_tools={"spawn"},
             llm=self._llm,
@@ -210,9 +215,13 @@ class TriLayer:
         return Agent(
             self.cfg,
             sink,
-            system_prompt=system_prompt,
+            system_prompt=system_prompt + skills.section(),
             tool_names=tool_names,
-            extra_tools={"spawn": self.bound_spawn(1), **extra_tools},
+            extra_tools={
+                "spawn": self.bound_spawn(1),
+                **skills.bound(readonly=not self._skill_save),
+                **extra_tools,
+            },
             parallel_tools={"spawn"},
             llm=self._llm,
             model=model or self.cfg.model_for(1),
@@ -291,9 +300,16 @@ class TriLayer:
                 else (tools.L3_TOOL_NAMES if spec.layer == 3 else tools.BASE_TOOL_NAMES)
             ),
             extra_tools=(
-                {"spawn": self.bound_spawn(spec.layer), **self._child_extra_tools}
+                {
+                    "spawn": self.bound_spawn(spec.layer),
+                    **skills.bound(readonly=not self._skill_save),
+                    **self._child_extra_tools,
+                }
                 if spec.layer == 2
-                else dict(self._child_extra_tools)
+                else {
+                    **skills.bound(readonly=not self._skill_save),
+                    **self._child_extra_tools,
+                }
             ),
             parallel_tools={"spawn"},
             llm=self._llm,

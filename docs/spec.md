@@ -136,3 +136,15 @@ ask 是普通消息，不需要独立协调设施：
   显示 name。入口 `--display`，config.json `display` 可存；昵称做清洗（去控制字符、归一
   空白、截断 64 字符）但不受 ASCII 限制，中文/emoji 均可，且永不进入任何 wire 地址。
 
+## 11. 增补（2026-09-04）：skill 系统
+
+- **存储**：每 host 本地 `data/skills/<name>.md`（frontmatter `name`/`description` + markdown 正文；
+  name 即文件名，kebab-case ≤64 字符，正文上限 32k）。每 host 一份，不随房间同步（v1）。
+- **注入（每次初始化读列表）**：每个 agent 构建点（TriLayer `build_orchestrator` /
+  `build_clone_agent` / `_run_task` 子代理）重新读盘，把「名称+描述」清单追加到 system
+  prompt——本回合保存的 skill 下一回合即对全体 clone 可见。WebUI 已存 session 的 system
+  消息保留原有内容，仅尾部托管 skills 段（去旧附新，见 `agent.run`）。
+- **工具与元技能**：`skills` 工具（list/read/save）；`writing-skills` 元技能在首次访问时自动
+  播种到目录，写明格式与质量标准（description 写触发条件、步骤给精确命令/路径、记录坑与验证法）。
+- **安全**：save 仅限用户面 agent（本机 clone、WebUI 编排者）；通讯 clone 及其 spawn 只读——
+  自主跨 host 代理不得在本 host 持久化 prompt 影响（与 §5/§8 的 consent 思路一致）。

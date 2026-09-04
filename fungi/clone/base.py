@@ -115,6 +115,7 @@ class Clone:
         tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
         child_tool_names: frozenset[str] | None = None,
         child_extra_tools: dict[str, BoundTool] | None = None,
+        skill_save: bool = False,
     ):
         self.addr = addr
         self.host, self.role, self.peer = parse_addr(addr)
@@ -128,6 +129,8 @@ class Clone:
         # Spawned worker surface (None -> TriLayer native defaults)
         self.child_tool_names = child_tool_names
         self.child_extra_tools = child_extra_tools
+        # User-facing clones may author skills; comm clones stay readonly.
+        self.skill_save = skill_save
         self.system_prompt = system_prompt
         self.llm = llm
         self.model = model
@@ -226,6 +229,7 @@ class Clone:
             llm=self.llm,
             child_tool_names=self.child_tool_names,
             child_extra_tools=self.child_extra_tools,
+            skill_save=self.skill_save,
         )
         return trilayer.build_clone_agent(
             self.sink,

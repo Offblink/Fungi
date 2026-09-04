@@ -155,12 +155,21 @@ def test_tool_defs_include_extra_tools():
 
 
 def test_session_messages_reused():
-    """Preexisting system message (loaded session) is not duplicated."""
-    agent, _fake, _events = make_agent([LLMResult(content="ok")])
+    """Preexisting system message (loaded session) is not duplicated; only the
+    managed skills suffix is appended/staleness-replaced."""
     messages = [{"role": "system", "content": "custom"}, {"role": "user", "content": "hi"}]
+    agent, _fake, _events = make_agent([LLMResult(content="ok")])
     agent.run(messages)
     assert sum(1 for m in messages if m["role"] == "system") == 1
-    assert messages[0]["content"] == "custom"
+    assert messages[0]["content"].startswith("custom")
+    assert messages[0]["content"].count("\n\n## Skills\n") == 1
+
+    messages[0]["content"] += "\n\n## Skills\n- stale: old\n"
+    agent, _fake, _events = make_agent([LLMResult(content="ok")])
+    agent.run(messages)
+    assert messages[0]["content"].startswith("custom")
+    assert "stale" not in messages[0]["content"]
+    assert messages[0]["content"].count("\n\n## Skills\n") == 1
 
 
 def test_wrap_reasoning_events_brackets_stream():

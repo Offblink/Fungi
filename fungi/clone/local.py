@@ -52,4 +52,5 @@ def build_local_clone(
         # YESIR native full toolset (spec 6.2); spawned workers inherit it.
         tool_names=BASE_TOOL_NAMES,
         child_tool_names=BASE_TOOL_NAMES,
+        skill_save=True,
     )

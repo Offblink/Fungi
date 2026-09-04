@@ -5,7 +5,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fungi import tools
+from fungi import skills, tools
 from fungi.config import Config
 from fungi.events import EmitFn, Sink
 from fungi.llm import LLMAbortedError, LLMError, LLMResult, stream_chat
@@ -150,7 +150,15 @@ class Agent:
 
     def run(self, messages: list[dict]) -> LLMResult:
         """Drive one user turn to completion, mutating `messages` in place."""
-        if not any(m.get("role") == "system" for m in messages):
+        if messages and messages[0].get("role") == "system":
+            # Loaded session: keep the stored system message, swap only the
+            # managed skills suffix (fresh list each turn, never duplicated).
+            base = messages[0]["content"] or ""
+            cut = base.find(skills.SECTION_HEAD)
+            if cut != -1:
+                base = base[:cut]
+            messages[0]["content"] = base + skills.section()
+        else:
             messages.insert(0, {"role": "system", "content": self.system_prompt})
 
         result = LLMResult()

@@ -496,6 +496,7 @@ class RoomRuntime(WebUIRuntime):
             should_abort=should_abort,
             child_tool_names=clone.child_tool_names,
             child_extra_tools=clone.child_extra_tools,
+            skill_save=clone.skill_save,
         )
         return trilayer.build_clone_agent(
             sink,
