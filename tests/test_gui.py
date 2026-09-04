@@ -9,6 +9,7 @@ pytest.importorskip("qfluentwidgets", reason="PyQt6-Fluent-Widgets (qfluentwidge
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtCore import QSharedMemory
+from PyQt5.QtNetwork import QLocalSocket
 from PyQt5.QtWidgets import QApplication
 
 from fungi import gui
@@ -378,3 +379,20 @@ def test_gui_singleton_guard():
     assert gui._singleton_taken(key)
     shared.detach()
     assert not gui._singleton_taken(key)
+
+
+def test_second_launch_activates_existing_window(window, monkeypatch):
+
+    calls = []
+    monkeypatch.setattr(window, "show_and_raise", lambda: calls.append(1))
+    sock = QLocalSocket()
+    sock.connectToServer(gui._GUI_IPC)
+    assert sock.waitForConnected(1000)
+    sock.write(b"show")
+    sock.waitForBytesWritten(500)
+    sock.disconnectFromServer()
+    for _ in range(200):
+        QApplication.processEvents()
+        if calls:
+            break
+    assert calls

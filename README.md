@@ -43,7 +43,7 @@ Fungi 不是凭空长出来的。五个先行项目，各有分工：
   路径守卫在 **server 端强制**（前缀校验，拒绝 `..` 与绝对路径逃逸），不依赖 clone 自觉。
 - **send_file 传输**：字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
 - **skill 系统**：每台主机的 clone 可沉淀可复用流程——`data/skills/<name>/SKILL.md` + 可选配套脚本，列表注入 system prompt，通讯 clone 只读。
-- **GUI 启动器**：PyQt5 + qfluentwidgets 程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。Token 支持自定义（字母/数字/-/_，1-64 位），发起前改即开房生效；运行中改完按回车（或移开焦点）即时热更新，已加入的好友需用新 Token 重新加入。
+- **GUI 启动器**：PyQt5 + qfluentwidgets 程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。单实例：再次启动会唤起已运行的主界面。Token 支持自定义（字母/数字/-/_，1-64 位），发起前改即开房生效；运行中改完按回车（或移开焦点）即时热更新，已加入的好友需用新 Token 重新加入。
 
 ```
           ┌─────────────── server (hub) ───────────────┐

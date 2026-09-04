@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PyQt5.QtCore import QSettings, QSharedMemory, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QCursor, QGuiApplication, QKeySequence
+from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -61,6 +62,7 @@ SWEEP_TIMEOUT = 0.2  # TCP connect sweep: LAN answers are ms-fast, dead IPs wait
 PROBE_TIMEOUT = 1.5
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
+_GUI_IPC = "FungiGuiIPC"  # named pipe: second launch -> running window shows itself
 GUI_SCALE = float(os.environ.get("FUNGI_GUI_SCALE", "1.0"))  # fonts + window, uniform
 
 
@@ -252,7 +254,8 @@ HELP_SECTIONS = [
      "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
      "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"),
     ("托盘与后台",
-     "关闭窗口不停房间：转入托盘后台；托盘菜单可回主界面、开 WebUI、退出。"
+     "关闭窗口不停房间：转入托盘后台；托盘右键菜单可回主界面、开 WebUI、退出。"
+     "再次启动程序会唤起已运行的主界面（单实例）。"
      "只有托盘「退出」或页面「离开房间」才真正停房。"),
     ("模型配置与文件",
      "模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
@@ -304,9 +307,10 @@ class _Tray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason) -> None:
-        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            self._window.show_and_raise()
-        elif reason == QSystemTrayIcon.Context:
+        # Activation reasons are an unreliable way to reach the window on
+        # Windows (double-click often no-ops); the right-click menu covers
+        # everything and a second app launch raises the window via IPC.
+        if reason == QSystemTrayIcon.Context:
             self._menu.exec_(QCursor.pos())
 
     def notify(self, title: str, body: str) -> None:
@@ -835,6 +839,11 @@ class FungiGui(FluentWindow):
         self.setWindowTitle("Fungi")
         self.resize(900, 560)  # sidebar layout needs a little width for the nav
         self._tray: _Tray | None = None
+        # single-instance IPC: a second launch asks this window to show itself
+        QLocalServer.removeServer(_GUI_IPC)  # stale pipe from a hard crash
+        self._ipc_server = QLocalServer(self)
+        if self._ipc_server.listen(_GUI_IPC):
+            self._ipc_server.newConnection.connect(self._on_ipc_connection)
 
     # ── tray / background lifecycle ──
 
@@ -859,6 +868,15 @@ class FungiGui(FluentWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+
+    def _on_ipc_connection(self) -> None:
+        """Second-launch signal: raise the running window (洞见-style)."""
+        conn = self._ipc_server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.readAll()
+        conn.disconnectFromServer()
+        self.show_and_raise()
 
     def open_webui_from_tray(self) -> None:
         rooms = self.rooms()
@@ -888,7 +906,7 @@ class FungiGui(FluentWindow):
                 self.update_tray()
             self._tray.notify(
                 "Fungi 已最小化到托盘",
-                "房间仍在后台运行；双击托盘回到主界面，菜单可打开 WebUI 或退出。",
+                "房间仍在后台运行；托盘菜单可回主界面、打开 WebUI 或退出；再次启动 Fungi 也会唤起主界面。",
             )
             return
         if self._tray is not None:
@@ -903,17 +921,33 @@ def _singleton_taken(key: str = "FungiGuiSingleton") -> bool:
     return shared.attach() or not shared.create(1)
 
 
+def _activate_running_instance() -> bool:
+    """Second launch: ask the running GUI to show itself. True when delivered."""
+    sock = QLocalSocket()
+    sock.connectToServer(_GUI_IPC)
+    ok = sock.waitForConnected(500)
+    if ok:
+        sock.write(b"show")
+        sock.waitForBytesWritten(200)
+        sock.disconnectFromServer()
+    return ok
+
+
 def run_gui() -> int:
     # QT_SCALE_FACTOR grows fonts, widgets and the window together (must be set
     # before QApplication exists); AA_EnableHighDpiScaling lets Qt5 honor it.
     os.environ.setdefault("QT_SCALE_FACTOR", str(GUI_SCALE))
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
-    # Single instance: a second launcher tells the user and exits. Without
-    # this, two GUI windows (each able to host a room) could coexist
-    # (2026-09-04 real-machine finding; tray-room mode had the same guard).
+    # Single instance: a second launcher raises the running window instead
+    # (IPC ping). Without the guard, two GUI windows (each able to host a
+    # room) could coexist (2026-09-04 real-machine finding; tray-room mode
+    # had the same guard).
     if _singleton_taken():
-        QMessageBox.warning(None, "Fungi", "Fungi GUI 已在运行。")
+        if _activate_running_instance():
+            print("Fungi GUI 已在运行：已唤起主界面。")
+        else:
+            QMessageBox.warning(None, "Fungi", "Fungi GUI 已在运行。")
         return 0
     win = FungiGui()
     win.show()

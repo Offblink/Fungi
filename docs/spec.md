@@ -163,7 +163,10 @@ ask 是普通消息，不需要独立协调设施：
   GUI（gui.py）全程 PyQt5——托盘（`fungi/tray.py`）与 CLI 房间模式（`__main__.py`）、
   selftest 一并迁到 PyQt5，**全仓库单一 Qt 绑定**。托盘菜单用 qfluentwidgets
   `SystemTrayMenu`（与 GUI 同一套 fluent 组件；右键弹出，零新增依赖）。
-  GUI 托盘与 CLI 托盘行为不变：左键/双击开 WebUI，菜单项一致。
+  CLI 托盘行为不变（左键/双击开 WebUI）；GUI 托盘只有右键 fluent 菜单——托盘激活
+  唤起主界面在 Windows 上不可靠，改为**单实例 IPC**：GUI 监听 QLocalServer
+  `FungiGuiIPC`，二次启动经 QLocalSocket 发 `show`，运行实例 `show_and_raise`
+  后第二实例退出（洞见 v2 同款）。
 - **房主 Token 自定义**：GUI「发起房间」页 Token 行是可编辑输入项（位于发起按钮上方，
   预填自动生成值）。字符集 `[A-Za-z0-9_-]`、1-64 位——token 进 URL 与加入命令，空格/中文非法。
   发起前修改：开房即用该值；留空则自动生成。
