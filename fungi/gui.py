@@ -1,4 +1,4 @@
-"""Fungi GUI launcher: three pages — 发起房间 / 加入房间 / 模型配置.
+"""Fungi GUI launcher: four pages — 发起房间 / 加入房间 / 模型配置 / 帮助.
 
 Entry: ``python start.py`` (or ``python -m fungi --gui``). The GUI hosts the
 room IN-PROCESS (hub/clones/poller run on daemon threads; closing the window
@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QMenu,
     QMessageBox,
+    QScrollArea,
     QShortcut,
     QSystemTrayIcon,
     QVBoxLayout,
@@ -42,6 +43,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    TitleLabel,
     ToolButton,
 )
 
@@ -230,25 +232,57 @@ def _row(label: str, widget: QWidget, parent=None) -> QWidget:
 _ACCENT = "#e07a5f"
 
 
-HELP_TEXT = """\
-Fungi 快速上手
+HELP_SECTIONS = [
+    ("Fungi 是什么",
+     "一款局域网多主机 Orchestrator：一台机器「发起房间」，同一局域网的同伴"
+     "「加入房间」，各自通过 WebUI 与本机 clone 对话，让多个 AI 跨主机协作。"
+     "无需公网，所有流量不出局域网。"),
+    ("发起房间",
+     "一台机器点「发起房间」：得到房间 IP 和 Token，发给要加入的同伴。"
+     "房主点「离开房间」即解散房间。"),
+    ("加入房间",
+     "同伴点「加入房间」：填 IP + Token（同一局域网可留空 IP，自动全网段发现）。"
+     "Token 即身份；Token 对不上的房间会被自动跳过。"),
+    ("WebUI 与 clone 能力",
+     "双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。"
+     "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
+     "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"),
+    ("托盘与后台",
+     "关闭窗口不停房间：转入托盘后台；托盘菜单可回主界面、开 WebUI、退出。"
+     "只有托盘「退出」或页面「离开房间」才真正停房。"),
+    ("模型配置与文件",
+     "模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
+    ("更多文档",
+     "细节见仓库 README 与 docs/spec.md。"),
+]
 
-1. 一台机器点「发起房间」：得到房间 IP 和 Token，发给要加入的同伴。
-2. 同伴点「加入房间」：填 IP + Token（同一局域网可留空 IP 自动发现）。
-3. 双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。
-4. clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件
-   （对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。
-5. 关闭窗口不停房间：转入托盘后台；托盘菜单可回主界面、开 WebUI、退出。
-6. 模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。
 
-更多细节见仓库 README 与 docs/spec.md。"""
+class HelpPage(QScrollArea):
+    """帮助页：Face 式分节说明（侧栏常驻入口，替代旧的帮助按钮弹窗）。"""
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("helpPage")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.NoFrame)
 
-def _show_help(parent) -> None:
-    box = QMessageBox(parent)
-    box.setWindowTitle("Fungi 使用帮助")
-    box.setText(HELP_TEXT)
-    box.exec()
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(48, 32, 48, 32)
+        lay.setSpacing(10)
+
+        lay.addWidget(TitleLabel("帮助"))
+        lay.addSpacing(6)
+        for heading, text in HELP_SECTIONS:
+            lay.addWidget(SubtitleLabel(heading))
+            label = BodyLabel(text)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            lay.addWidget(label)
+            lay.addSpacing(8)
+        lay.addStretch(1)
+
+        self.setWidget(body)
 
 
 def _mushroom_icon(size: int = 64) -> QIcon:
@@ -337,9 +371,6 @@ class HostPage(QWidget):
         self.leave_btn.clicked.connect(self._leave)
         btn_row.addWidget(self.start_btn, 1)
         btn_row.addWidget(self.leave_btn, 1)
-        self.help_btn = PushButton(FluentIcon.INFO, "帮助")
-        self.help_btn.clicked.connect(lambda: _show_help(self))
-        btn_row.addWidget(self.help_btn)
         root.addLayout(btn_row)
 
         # -- status card (populated after launch) --
@@ -531,9 +562,6 @@ class JoinPage(QWidget):
         self.leave_btn.clicked.connect(self._leave)
         btn_row.addWidget(self.join_btn, 1)
         btn_row.addWidget(self.leave_btn, 1)
-        self.help_btn = PushButton(FluentIcon.INFO, "帮助")
-        self.help_btn.clicked.connect(lambda: _show_help(self))
-        btn_row.addWidget(self.help_btn)
         root.addLayout(btn_row)
         self.leave_btn.setVisible(False)
 
@@ -768,9 +796,11 @@ class FungiGui(FluentWindow):
         self.host_page = HostPage(self)
         self.join_page = JoinPage(self)
         self.cfg_page = ConfigPage(self)
+        self.help_page = HelpPage()
         self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
         self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
         self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
+        self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
         self.setWindowTitle("Fungi")
         self.resize(900, 560)  # sidebar layout needs a little width for the nav
         self._tray: _Tray | None = None
