@@ -1,16 +1,37 @@
 # Fungi
 
-LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/Offblink/YESIR) TriLayer agent harness 之上。
+LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/Offblink/YESIR) TriLayer agent harness 之上——是 Psi → YESIR → Fungi 三代 harness 里的第三代。
 
-一台机器一个进程，进程内跑多个 LLM Orchestrator 分身（clone）。不同主机的 Orchestrator 之间可以自主交流、协作完成任务；涉及对方地盘的文件操作时，由对方主机的人类用户通过系统通知 + WebUI 卡片裁决。**用户只与本机 Orchestrator 对话，跨主机事务由它转交通讯 clone 处理。**
+一台机器一个进程，进程内跑多个 LLM Orchestrator 分身（clone）。不同主机的 Orchestrator 之间可以自主交流、协作完成任务；涉及对方地盘的文件操作时，由对方主机的人类用户通过 WebUI 卡片裁决。**用户只与本机 Orchestrator 对话，跨主机事务由它转交通讯 clone 处理。**
 
-## 核心设计
+## 血缘：从 MnemeNet 到 Fungi
+
+Fungi 不是凭空长出来的。五个先行项目，各有分工：
+
+| | 它是什么 | 给 Fungi 留下了什么 |
+|---|---|---|
+| [MnemeNet](https://github.com/Offblink/MnemeNet) | 连接全体 AI Agent 的记忆网：个体记忆 + 技能沉淀 + 群体记忆（薪火相传） | **根理念——agent 不从零开始。** Fungi 的会话持久化、每主机技能沉淀（`SKILL.md` 结构与 MnemeNet 的 skills/ 同构）、断线重连重放未决卡片，都是这个理念在多主机网络里的工程化 |
+| [Psi](https://github.com/Offblink/Psi) | PowerShell 单文件 harness（~900 行） | **哲学**——harness 的核心可以小到一个下午读完；零依赖传统；WebUI 视觉语言（配色、版式、模态框）的源头 |
+| [YESIR](https://github.com/Offblink/YESIR) | AIOS 构思的第一块实体：TriLayer + Inquire + MCP | **骨架**——`agent.py / llm.py / trilayer.py / session.py / events.py / tools/` 直接移植；spawn 派发、MCP 客户端、分层模型、`Alt+R` 重试原样保留 |
+| [Face](https://github.com/Offblink/Face) | 纯局域网 PySide6 视频聊天 | **产品形态**——房主创建 / 加入 / 心跳名册 / 自动发现 / 托盘驻留的房间体验；端口约定（8899 起向上扫描）；GUI 内置帮助页的样式 |
+| [Around](https://github.com/Offblink/Around) | 局域网聊天 + 文件传输（网页版 TypeScript） | **先例与教训**——乐观渲染（消息的临时/正式属性）、局域网传输体验；PyQt 重构版因过度设计弃坑，所以 Fungi 先写 `docs/spec` 再动手、坚持"消息即 envelope、无协调设施"的克制 |
+
+串起来读：**MnemeNet 给了为什么（agent 要延续、要沉淀），Psi 给了多小才够（一晚上读完），YESIR 给了骨架（TriLayer 编排），Face 给了房间长什么样，Around 提醒了别做什么（过度设计）。** Fungi 把这些放进一张 LAN 网络：让每台主机上的 Orchestrator 拥有记忆、技能和彼此。
+
+几条具体的继承：
+
+- **WebUI 视觉语言一脉相承**：Psi 的 `agent.ps1` 内嵌前端奠定，YESIR 原样复用，Fungi 继续沿用并扩展（好友视图、暗色主题、ask 卡片）。
+- **Fungi 回答了 YESIR 没回答的问题**：一个进程里的 Orchestrator 再强，也只在一台机器上。Fungi 把 Orchestrator 撒到 LAN 的每台主机上，让它们彼此成为工具。
+- **Inquire 正名**：YESIR 的主动发问机制叫 Inquire，工具却叫 `ask_user`；Fungi 把工具名改回了 **`inquire`**，并新增 **`confirm`**（consent 卡：跨主机文件操作的允许/禁止裁决）——两者统一为 ask envelope 走同一条投递链。
+
+
+## Fungi 新增了什么
 
 - **星型拓扑，server relay**：一台主机 `--server` 起房（承载 HTTP hub + 存储），其余 `--join` 直连；clone 间流量全部经 server 投递（at-least-once，消息 id 去重）。
 - **两类 clone**：
   - 本机 clone（local）：每 host 恰一个，专职与用户交互，持原生全套工具 + `delegate(host, goal, reply_format)` 跨主机委派。
   - 通讯 clone（comm）：每远端 host 一个，与对位通讯 clone 自由 chat/task 往来，**不自动回信**——LLM 想回才显式调 `send_peer`；工具面只有守卫版文件工具 + `send_peer` / `confirm` / `inquire`，原生 bash/read/write 不下放。
-- **同意流即消息**：无 Redis 等协调设施。ask 是普通 envelope，投到属主 host 的本机 clone → PyQt6 系统通知 → WebUI 卡片（允许 / 禁止 / 自定义输入 / 始终允许）→ answer envelope 唤醒阻塞中的请求方。断线重连后心跳重放未决通知。
+- **同意流即消息**：无 Redis 等协调设施。ask 是普通 envelope，投到属主 host 的本机 clone → WebUI 卡片（允许 / 禁止 / 自定义输入 / 始终允许）→ answer envelope 唤醒阻塞中的请求方。断线重连后心跳重放未决卡片。
 - **文件空间**（存于 server `data/`）：
 
   | 目录 | 规则 |
@@ -20,6 +41,9 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
   | `sessions/` | 拒绝 clone 访问，仅经本机 clone 代理给用户 |
 
   路径守卫在 **server 端强制**（前缀校验，拒绝 `..` 与绝对路径逃逸），不依赖 clone 自觉。
+- **send_file 传输**：字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
+- **skill 系统**：每台主机的 clone 可沉淀可复用流程——`data/skills/<name>/SKILL.md` + 可选配套脚本，列表注入 system prompt，通讯 clone 只读。
+- **GUI 启动器**：PyQt6 托盘程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。
 
 ```
           ┌─────────────── server (hub) ───────────────┐
@@ -29,7 +53,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
         ┌────────┴───────┐  ┌───────┴────────┐
         │ host A (local) │  │ host B (local) │   用户 ↔ 本机 clone
         │  └ comm-B      │  │  └ comm-A      │   comm-B ↔ comm-A 自主交流
-        └────────────────┘  └────────────────┘   越界文件操作 → consent
+        └────────────────┘  └────────────────┘   越界文件操作 → confirm
 ```
 
 ## 数据目录口径
@@ -47,7 +71,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 
 ## 快速开始
 
-要求 Python ≥ 3.13。运行时唯一第三方依赖是 PyQt6（托盘/通知）；LLM 与 HTTP 均走标准库。开发另需 ruff + pytest。
+要求 Python ≥ 3.13。运行时唯一第三方依赖是 PyQt6（托盘 GUI）；LLM 与 HTTP 均走标准库。开发另需 ruff + pytest。
 
 ```powershell
 # 依赖
@@ -57,27 +81,31 @@ pip install ruff pytest  # 仅开发
 # 模型配置（config.json，同目录；不入库）
 # { "api_key": "...", "endpoint": "https://api.z.ai/api/paas/v4/chat/completions", "model": "glm-5.3-flash" }
 
-# 主机 A：起房（图形启动器 python start.py，或托盘模式直接：
+# 图形启动器（推荐）：发起 / 加入房间、WebUI、模型配置、帮助都在里面
+python start.py
+
+# 或纯托盘模式：
+# 主机 A：起房
 python -m fungi --server [--name alpha] [--token T] [--port P] [--data DIR]
 
 # 主机 B / C：加入（join 命令与真实 LAN IP 由 server 启动时打印）
 python -m fungi --join http://<server-ip>:<port> --token <token> [--name beta]
 ```
 
-server 启动后最小化到系统托盘；有未决同意请求时弹系统通知，点通知或托盘打开 WebUI（会话、聊天、ask 卡片均在其中）。
+server 启动后最小化到系统托盘；未决同意请求以 WebUI 卡片呈现（顶部横幅 + 聊天流），点托盘打开 WebUI。
 
 单机模式（无房间）仍可用：`python -m fungi --web`（WebUI）或 `python -m fungi "查询"`（命令行单发）。
 
 ## 验证
 
 ```powershell
-# 全量门禁：ruff --fix → format → 复检 → pytest（186 passed）
+# 全量门禁：ruff --fix → format → 复检 → pytest（263 passed）
 powershell -File scripts/check.ps1
 
 # 三进程冒烟（1 server + 2 client，FakeLLM，~18s；--real 走真实 LLM ~90s，--keep 留数据调试）
 python scripts/smoke_fungi.py
 
-# 自测钩子：托盘 + 通知 + 卡片应答 + 阻塞解除全链路，~7s 出 "FUNGI SELFTEST OK"
+# 自测钩子：托盘 + 卡片应答 + 阻塞解除全链路，~7s 出 "FUNGI SELFTEST OK"
 FUNGI_SELFTEST=1 python -m fungi --server --token x --data %TEMP%\fungi-selftest
 ```
 
