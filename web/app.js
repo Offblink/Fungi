@@ -91,7 +91,9 @@ async function reloadSessionFromServer() {
     const s = await r.json();
     rawMessages = s.messages || [];
     registerArchived(s.subagents);
+    const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
     renderMessages(s);
+    if (stick) { msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
     loadSessions();
   } catch (e) {}
 }
@@ -134,6 +136,7 @@ async function switchSession(id) {
     tray.innerHTML = '';
     registerArchived(s.subagents);
     renderMessages(s);
+    msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); // a freshly opened session starts at the latest message
     renderSessionList(); loadSessions();
   } catch (e) { console.error('switchSession:', e); }
 }
