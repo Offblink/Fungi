@@ -1033,5 +1033,7 @@ function applyTheme(t) {
 }
 try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
 document.getElementById('theme-switch').addEventListener('click', () => {
+  themeRoot.classList.add('theme-anim'); // cross-fade colors, then back to instant
   applyTheme(themeRoot.dataset.theme === 'dark' ? 'light' : 'dark');
+  setTimeout(() => themeRoot.classList.remove('theme-anim'), 500);
 });

@@ -221,3 +221,8 @@ html[data-theme="dark"] .theme-moon{stroke:var(--accent)}
 html:not([data-theme="dark"]) .theme-sun{stroke:var(--accent)}
 html[data-theme="dark"] .consent-slider[data-mode="allow"] .consent-opt[data-v="allow"]{color:#4ade80}
 html[data-theme="dark"] .consent-slider[data-mode="ask"] .consent-opt[data-v="ask"]{color:#fbbf24}
+/* cross-fade while switching: temporary class on <html>, removed after the fade */
+html.theme-anim, html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
+  transition: background-color 0.4s ease, color 0.4s ease, border-color 0.4s ease,
+    fill 0.4s ease, stroke 0.4s ease, box-shadow 0.4s ease !important;
+}
