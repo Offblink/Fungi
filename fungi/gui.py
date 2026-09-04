@@ -254,8 +254,8 @@ HELP_SECTIONS = [
      "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
      "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"),
     ("托盘与后台",
-     "关闭窗口不停房间：转入托盘后台；托盘右键菜单可回主界面、开 WebUI、退出。"
-     "再次启动程序会唤起已运行的主界面（单实例）。"
+     "关闭窗口不停房间：转入托盘后台；点击或右键托盘图标可回主界面，菜单可开 WebUI、退出。"
+     "再次启动程序也会唤起主界面（单实例）。"
      "只有托盘「退出」或页面「离开房间」才真正停房。"),
     ("模型配置与文件",
      "模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
@@ -307,10 +307,9 @@ class _Tray(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason) -> None:
-        # Activation reasons are an unreliable way to reach the window on
-        # Windows (double-click often no-ops); the right-click menu covers
-        # everything and a second app launch raises the window via IPC.
-        if reason == QSystemTrayIcon.Context:
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._window.show_and_raise()
+        elif reason == QSystemTrayIcon.Context:
             self._menu.exec_(QCursor.pos())
 
     def notify(self, title: str, body: str) -> None:
@@ -905,8 +904,8 @@ class FungiGui(FluentWindow):
             if self._tray is None:
                 self.update_tray()
             self._tray.notify(
-                "Fungi 已最小化到托盘",
-                "房间仍在后台运行；托盘菜单可回主界面、打开 WebUI 或退出；再次启动 Fungi 也会唤起主界面。",
+                "Fungi 已转入托盘",
+                "房间仍在后台运行。",
             )
             return
         if self._tray is not None:
