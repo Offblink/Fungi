@@ -57,11 +57,20 @@ class DelegateTools:
         host = str(args.get("host") or "").strip()
         goal = str(args.get("goal") or "").strip()
         reply_format = str(args.get("reply_format") or "").strip()
+        known = self.peers_fn() or []
+        # Sole peer: no ambiguity — fill the host in. The model kept omitting
+        # it (twice reported by the user) and erroring into a retry loop.
+        if not host and len(known) == 1:
+            host = known[0]
         missing = [k for k, v in (("host", host), ("goal", goal)) if not v]
         if missing:
+            hint = ""
+            if "host" in missing:
+                hint = " — pick one of: " + ", ".join(known) if known else " — no peers are connected"
             return (
                 "ERROR: missing required argument(s): " + ", ".join(missing)
                 + f" (received keys: {sorted(args) or 'none'})"
+                + hint
                 + " — re-issue the tool call with the complete JSON arguments."
             )
         if host == self.host:
@@ -173,7 +182,7 @@ _SCHEMA_DELEGATE = {
         "parameters": {
             "type": "object",
             "properties": {
-                "host": {"type": "string", "description": "target host name"},
+                "host": {"type": "string", "description": "target host name (omit only when exactly one peer is connected — it is then filled in automatically)"},
                 "goal": {"type": "string", "description": "what to do"},
                 "reply_format": {"type": "string", "description": "expected reply shape"},
                 "context": {"type": "string", "description": "background material"},
