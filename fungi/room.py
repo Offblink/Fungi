@@ -5,7 +5,9 @@ Client role: one HubClient; a single HostPoller drains the host buffer on the
 server and fans envelopes out to per-clone inboxes (clones must not share one
 cursor). Roster diffs (server monitor thread / client heartbeat) add and
 remove comm clones on both ends. The WebUI starts lazily from the tray and
-runs the local clone's toolset with hub-backed sessions.
+runs the local clone's toolset with per-host sessions (server: hub store;
+client: the joining machine's own disk — conversations must not land on the
+peer-operated hub).
 
 Consent modes (WebUI friend-view slider): a host set to "allow" gets its
 consent-shaped asks (file ops, transfers) auto-answered yes at on_ask — no
@@ -34,6 +36,7 @@ from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
 from .protocol import Envelope, parse_addr
 from .server import WebUIRuntime, make_webui_server
+from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
 from .trilayer import TriLayer
 
@@ -272,30 +275,27 @@ class StoreSessions:
 
 
 class ClientSessions:
-    """Client-role session backend: proxied over the hub API."""
+    """Client-role session backend: a local store on the joining machine.
 
-    def __init__(self, client: HubClient):
-        self.client = client
+    Conversations must not be proxied into the hub store: the peer operates
+    that machine, and a single shared sessions/ directory made every host's
+    WebUI list every other host's chats (2026-09-04 real-machine finding).
+    """
+
+    def __init__(self, directory: Path):
+        self.store = SessionStore(directory)
 
     def list(self) -> list[dict]:
-        return self.client.list_sessions()
+        return self.store.list_sessions()
 
     def load(self, session_id: str) -> dict | None:
-        return self.client.load_session(session_id)
+        return self.store.load(session_id)
 
     def save(self, session_id, title, messages, subagents=None, asks=None) -> None:
-        self.client.save_session(
-            {
-                "id": session_id,
-                "title": title,
-                "messages": messages,
-                "subagents": subagents or [],
-                "asks": asks or [],
-            }
-        )
+        self.store.save(session_id, title, messages, subagents, asks)
 
     def delete(self, session_id: str) -> None:
-        self.client.delete_session(session_id)
+        self.store.delete(session_id)
 
 
 class RoomServer(RoomBase):
@@ -378,6 +378,7 @@ class RoomClient(RoomBase):
         llm=None,
         rules_path=None,
         display="",
+        sessions_dir: Path | None = None,
     ):
         super().__init__(
             host, cfg, sink, notifier=notifier, llm=llm, rules_path=rules_path, display=display
@@ -387,6 +388,9 @@ class RoomClient(RoomBase):
         self._peers_known: set[str] = set()
         self._entries: list[dict] = []  # roster display records from join/heartbeat
         self._hb: threading.Thread | None = None
+        # Client conversations live on THIS machine only (default: the shared
+        # single-host location); never staged on the hub's disk.
+        self._sessions = ClientSessions(sessions_dir or SESSIONS_DIR)
 
     def start(self) -> None:
         out = self.client.join()
@@ -444,7 +448,7 @@ class RoomClient(RoomBase):
         self._on_ask(env)
 
     def _sessions_backend(self) -> ClientSessions:
-        return ClientSessions(self.client)
+        return self._sessions
 
     def stop(self) -> None:
         super().stop()
@@ -454,7 +458,7 @@ class RoomClient(RoomBase):
 
 
 class RoomRuntime(WebUIRuntime):
-    """WebUI wired to the local clone: hub-backed sessions, local toolset,
+    """WebUI wired to the local clone: per-host sessions, local toolset,
     card answers routed back out as answer envelopes."""
 
     def __init__(self, room: RoomBase, sessions):
@@ -565,9 +569,6 @@ class RoomRuntime(WebUIRuntime):
         if getattr(self.room, "hub", None) is not None:  # server role: direct
             return self.room.hub.commlog.read(self.room.host, host)
         return self.room.client.comm_log(host)  # client role: hub API
-
-    def mcp_tools(self) -> dict:
-        return {}  # room mode keeps clone toolsets lean; MCP is a single-host concern
 
 
 # ── selftest hook (FUNGI_SELFTEST=1, server role) ──

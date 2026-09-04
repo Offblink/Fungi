@@ -2,7 +2,8 @@
 
 Single-host mode keeps the original YESIR behavior (TriLayer in the request
 thread, local session files). Room mode (fungi/room.py) injects a WebUIRuntime
-that runs the local clone's toolset, backs sessions with the hub, and routes
+that runs the local clone's toolset, backs sessions per host (server: hub
+store; client: its own disk — never the peer-operated hub), and routes
 card answers back out as answer envelopes.
 """
 

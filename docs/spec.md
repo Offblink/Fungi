@@ -52,6 +52,14 @@ hub 内存态：名册、各 clone inbox、pending-ask 注册表（ask_id → �
 
 存储布局（server `data/`）：`sessions/`（YESIR 兼容 JSON）、`public/`、`homes/<host>/`。
 
+> **会话归属修订（2026-09-04）**：会话必须按 host 隔离——server 角色存 hub store
+> `data/sessions/`；client 角色存**本机** `sessions/`（YESIR 默认目录），不再经
+> `/api/save` 落到对面操作的磁盘上。此前共享单目录导致任一方的 WebUI 会话列表
+> 列出对方全部对话（真机回归发现，用户判定为严重隐私问题）。hub 的
+> `/api/sessions` 仅供 server 角色自身使用；另加 `POST /api/transfer/upload`
+> （raw 字节流式上传，token 查询串鉴权，413=超 max_file_mb），让用户面 clone
+> 能发送**本机真实文件**（store 之外的路径）。
+
 ## 5. 同意流（消息面承载，无 Redis）
 
 ask 是普通消息，不需要独立协调设施：

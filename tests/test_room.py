@@ -291,6 +291,7 @@ def client_room(tmp_path):
         "tok",
         llm=LLM,
         rules_path=tmp_path / "rules.json",
+        sessions_dir=tmp_path / "client-sessions",
     )
     room.start()
     yield hub, room
@@ -341,3 +342,13 @@ def test_client_runtime_answers_via_remote_transport(client_room):
     assert _wait(lambda: (hub.asks.get(ask.id) or {}).get("status") == "denied", timeout_s=5.0), (
         "answer envelope never resolved the hub ask registry"
     )
+
+
+def test_client_sessions_stay_off_the_hub_disk(client_room):
+    """Client conversations must never land in the peer-operated hub store."""
+
+    hub, room = client_room
+    backend = room._sessions_backend()
+    backend.save("s1", "t", [{"role": "user", "content": "private"}])
+    assert backend.load("s1")["messages"][0]["content"] == "private"
+    assert hub.store.sessions.list_sessions() == []
