@@ -242,7 +242,7 @@ HELP_SECTIONS = [
     ("发起房间",
      "一台机器点「发起房间」：得到房间 IP 和 Token，发给要加入的同伴。"
      "Token 可自定义（字母/数字/-/_，1-64 位）：发起前改，开房即用；"
-     "运行中在 Token 框里改则即时热更新——已加入的好友需用新 Token 重新加入。"
+     "运行中改完按回车（或移开焦点）即时热更新——已加入的好友需用新 Token 重新加入。"
      "房主点「离开房间」即解散房间。"),
     ("加入房间",
      "同伴点「加入房间」：填 IP + Token（同一局域网可留空 IP，自动全网段发现）。"
@@ -355,7 +355,8 @@ class HostPage(QWidget):
         self.token_edit.setPlaceholderText("留空则发起房间时自动生成")
         self.token_edit.setToolTip(
             "可自定义（字母/数字/-/_，1-64 位）。\n"
-            "发起前修改：开房即用该 Token；运行中修改：即时热更新，"
+            "发起前修改：开房即用该 Token；\n"
+            "运行中修改：按回车（或移开焦点）即时热更新，"
             "已加入的好友需用新 Token 重新加入"
         )
         self.token_edit.editingFinished.connect(self._apply_token)

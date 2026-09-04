@@ -167,9 +167,10 @@ ask 是普通消息，不需要独立协调设施：
 - **房主 Token 自定义**：GUI「发起房间」页 Token 行是可编辑输入项（位于发起按钮上方，
   预填自动生成值）。字符集 `[A-Za-z0-9_-]`、1-64 位——token 进 URL 与加入命令，空格/中文非法。
   发起前修改：开房即用该值；留空则自动生成。
-- **Token 运行中热更新**：房间运行中改 Token 即时改写 `hub.token`；所有 API 鉴权逐请求读它，
-  无需重启房间。语义：旧 token 立即失效（403）——**已加入的好友需用新 Token 重新加入**；
-  UI 以 InfoBar 提示。CLI `--token` 语义不变（仅开房时定值）。
+- **Token 运行中热更新**：房间运行中改完 Token 按回车（或移开焦点，`editingFinished`）
+  即改写 `hub.token`；所有 API 鉴权逐请求读它，无需重启房间。语义：旧 token 立即失效
+  （403）——**已加入的好友需用新 Token 重新加入**；UI 以 InfoBar 提示。CLI `--token`
+  语义不变（仅开房时定值）。
 - **CI/CD**：`.github/workflows/ci.yml`（push main / PR）与 `release.yml`（tag `v*`）均以
   pytest 为门禁（windows-latest + py3.13，Qt 测试在 runner 上 importorskip 跳过）；
   release 追加 `git archive` 源码 zip + GitHub Release（generate_release_notes）。
