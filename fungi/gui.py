@@ -7,7 +7,7 @@ host's IP + token. Each launch spawns the room process (tray + WebUI) in its
 own console window.
 
 The whole UI scales proportionally (fonts and window together) via
-QT_SCALE_FACTOR — set FUNGI_GUI_SCALE to override (default 1.2).
+QT_SCALE_FACTOR — set FUNGI_GUI_SCALE to override (default 1.1).
 """
 
 import os
@@ -40,7 +40,7 @@ from .protocol import BAD_NAME_MSG, valid_host_name
 GUI_PORT = 8899  # fixed anchor port: join pages only ever ask for an IP
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
-GUI_SCALE = float(os.environ.get("FUNGI_GUI_SCALE", "1.2"))  # fonts + window, uniform
+GUI_SCALE = float(os.environ.get("FUNGI_GUI_SCALE", "1.1"))  # fonts + window, uniform
 
 
 def lan_ip() -> str:
