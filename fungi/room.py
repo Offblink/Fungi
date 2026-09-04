@@ -570,18 +570,26 @@ class RoomRuntime(WebUIRuntime):
         return resolve_ask(ask_id, value)
 
     def pending_asks(self) -> list[dict]:
+        def conv_of(src: str) -> str:
+            # Envelope src is the raising comm clone ("<host>:comm-<peer>");
+            # its agent suffix names the friend conversation the ask belongs to.
+            host_part, _, agent_part = str(src).partition(":")
+            return agent_part[len("comm-"):] if agent_part.startswith("comm-") else host_part
+
         out = []
         for card in self.room.cards.pending():
             body = card["body"]
+            conv = conv_of(card["src"])
             src = body.get("from") or card["src"]
             questions = body.get("questions")
             if isinstance(questions, list) and questions:
-                out.append({"id": card["id"], "from": src, "kind": "ask", "questions": questions})
+                out.append({"id": card["id"], "from": src, "kind": "ask", "conv": conv, "questions": questions})
             elif body.get("question"):
                 out.append(
                     {
                         "id": card["id"],
                         "from": src,
+                        "conv": conv,
                         "kind": "consent",
                         "questions": [
                             {"question": body["question"], "options": [], "allow_custom": True}
@@ -593,6 +601,7 @@ class RoomRuntime(WebUIRuntime):
                     {
                         "id": card["id"],
                         "from": card["src"],
+                        "conv": conv,
                         "kind": "ask",
                         "questions": [
                             {"question": "(no question text)", "options": [], "allow_custom": True}

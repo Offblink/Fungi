@@ -103,6 +103,8 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
     pending = runtime.pending_asks()
     assert pending[0]["kind"] == "consent"
     assert pending[0]["from"] == "alpha:comm-selftest"
+    # conv = the friend conversation the ask belongs to (agent suffix "selftest")
+    assert pending[0]["conv"] == "selftest"
 
     assert runtime.route_answer(ask.id, "yes") is True
     msgs, _cursor = requester_inbox.after(0, 2.0)

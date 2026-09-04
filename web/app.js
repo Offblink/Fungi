@@ -142,6 +142,7 @@ function renderMessages(s) {
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
   renderTranscript(rawMessages, s.asks || []);
   if (turn && turn.sessionId === currentSessionId) renderTurnLive();
+  placeAskCards(); // friend-view inline cards move back to the banner here
 }
 
 /* Session-style rendering shared by local sessions and friend transcripts:
@@ -756,6 +757,16 @@ function renderArchivedAsk(rec) {
 
 /* ---------- pending card asks (consent / cross-host asks, out-of-band) ---------- */
 const pendingAskIds = new Set();
+const pendingAskCards = new Map(); // ask id -> {rec, el} while the card is live
+function placeAskCards() {
+  // A pending ask belongs to the conversation that raised it: inline in the
+  // matching open friend view, otherwise the global banner.
+  const banner = document.getElementById('asks-banner');
+  pendingAskCards.forEach(({ rec, el }) => {
+    if (friendView && rec.conv === friendView) msgs.appendChild(el);
+    else if (el.parentElement !== banner) banner.appendChild(el);
+  });
+}
 function buildPendingAskCard(a) {
   const card = document.createElement('div');
   card.className = 'msg ask-card pending-ask';
@@ -793,7 +804,11 @@ function buildPendingAskCard(a) {
       for (let qi = 0; qi < qs.length; qi++) {
         const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
         const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-        const v = sel ? sel.querySelector('b').textContent : (inp ? inp.value.trim() : '');
+        const label = sel ? sel.querySelector('b').textContent : '';
+        const note = inp ? inp.value.trim() : '';
+        // Same compose rule as live ask cards: option + typed note both
+        // survive ("Label: note"); no silent wiping in either direction.
+        const v = label && note ? label + ': ' + note : (label || note);
         if (!v) { if (inp) { inp.focus(); inp.placeholder = 'Required'; } return; }
         vals.push(v);
       }
@@ -806,6 +821,7 @@ function answerPendingAsk(a, card, value) {
   fetch('/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: a.id, value }) }).catch(() => {});
   pendingAskIds.delete(a.id);
+  pendingAskCards.delete(a.id);
   const done = document.createElement('div');
   done.className = 'msg ask-card answered';
   const verdict = value === 'no' ? '\u274C denied'
@@ -820,7 +836,10 @@ async function pollPendingAsks() {
     (d.asks || []).forEach(a => {
       if (pendingAskIds.has(a.id)) return;
       pendingAskIds.add(a.id);
-      document.getElementById('asks-banner').appendChild(buildPendingAskCard(a));
+      const el = buildPendingAskCard(a);
+      pendingAskCards.set(a.id, { rec: a, el });
+      if (friendView && a.conv === friendView) msgs.appendChild(el);
+      else document.getElementById('asks-banner').appendChild(el);
     });
   } catch (e) {}
 }
@@ -991,7 +1010,12 @@ function renderFriendChat(d) {
   events.forEach(row => {
     if (row.kind === 'transfer')
       addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+    else if (row.kind === 'task')
+      addDiv('msg friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+    else if (row.kind === 'result')
+      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
   });
+  placeAskCards(); // re-seat pending asks after the transcript repaint
   msgs.scrollTop = msgs.scrollHeight;
 }
 
