@@ -1024,3 +1024,14 @@ function renderFriendChat(d) {
 
 setInterval(loadPeers, 5000);
 loadPeers();
+
+/* theme: light default, persisted; the switch flips html[data-theme] */
+const themeRoot = document.documentElement;
+function applyTheme(t) {
+  themeRoot.dataset.theme = t;
+  try { localStorage.setItem('fungi-theme', t); } catch (e) {}
+}
+try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
+document.getElementById('theme-switch').addEventListener('click', () => {
+  applyTheme(themeRoot.dataset.theme === 'dark' ? 'light' : 'dark');
+});
