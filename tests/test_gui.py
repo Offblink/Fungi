@@ -84,6 +84,16 @@ def test_host_page_rejects_bad_host_name(window, monkeypatch):
     assert page.ip_edit.text() == ""  # status card never populated
 
 
+def test_host_page_refreshes_ip(window, monkeypatch):
+    page = window.host_page
+    page.ip_edit.setText("192.168.1.10")
+    monkeypatch.setattr(gui, "lan_ip", lambda: "10.0.0.9")
+    page._refresh_ip()
+    assert page.ip_edit.text() == "10.0.0.9"
+    page._refresh_ip()  # unchanged: must not raise
+    assert page.ip_edit.text() == "10.0.0.9"
+
+
 def test_host_page_leave_stops_room(window):
     page = window.host_page
     room = FakeRoom()

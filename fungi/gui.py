@@ -203,6 +203,9 @@ class HostPage(QWidget):
         self.ip_edit.setReadOnly(True)
         self.ip_btn = _copy_button()
         self.ip_btn.clicked.connect(lambda: _copy(self.ip_edit.text(), window, "房间 IP"))
+        self.ip_refresh_btn = ToolButton(FluentIcon.SYNC)
+        self.ip_refresh_btn.setToolTip("刷新 IP（网络切换 / DHCP 续租后使用；房间绑定所有网卡，端口不变）")
+        self.ip_refresh_btn.clicked.connect(self._refresh_ip)
         self.token_edit = LineEdit()
         self.token_edit.setFixedWidth(360)
         self.token_edit.setReadOnly(True)
@@ -210,7 +213,13 @@ class HostPage(QWidget):
         self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
         self.webui_btn = PushButton(FluentIcon.GLOBE, "打开 WebUI")
         self.webui_btn.clicked.connect(self._open_webui)
-        self.ip_row = _row("房间 IP", self.ip_edit, self.ip_btn)
+        ip_buttons = QWidget()
+        ip_box = QHBoxLayout(ip_buttons)
+        ip_box.setContentsMargins(0, 0, 0, 0)
+        ip_box.setSpacing(4)
+        ip_box.addWidget(self.ip_refresh_btn)
+        ip_box.addWidget(self.ip_btn)
+        self.ip_row = _row("房间 IP", self.ip_edit, ip_buttons)
         self.token_row = _row("Token", self.token_edit, self.token_btn)
         self.webui_row = _row("WebUI", self.webui_btn)
         root.addWidget(self.ip_row)
@@ -234,6 +243,24 @@ class HostPage(QWidget):
             row.setVisible(started)
         self.start_btn.setEnabled(not started)
         self.leave_btn.setVisible(started)
+
+    def _refresh_ip(self) -> None:
+        """Re-detect the LAN IP: DHCP renewals / Wi-Fi switches change it while
+        the room keeps running (the hub binds 0.0.0.0, so only the display ages)."""
+        ip = lan_ip()
+        changed = ip != self.ip_edit.text()
+        self.ip_edit.setText(ip)
+        if ip == "127.0.0.1":
+            InfoBar.warning(
+                "未检测到局域网",
+                "当前 IP 显示为 127.0.0.1，请检查网络连接",
+                duration=4000,
+                parent=self.window_ref,
+            )
+        elif changed:
+            InfoBar.success("IP 已刷新", f"当前房间 IP：{ip}", duration=3000, parent=self.window_ref)
+        else:
+            InfoBar.info("IP 未变化", ip, duration=2000, parent=self.window_ref)
 
     _idle_status = (
         "尚未发起。\n"
