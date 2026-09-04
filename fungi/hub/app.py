@@ -11,7 +11,7 @@ import shutil
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from ..protocol import (
     BAD_NAME_MSG,
@@ -274,11 +274,16 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply(self, obj: dict, code: int = 200) -> None:
         data = json.dumps(obj).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # Long-poll replies race client reconnects/disconnects all the
+            # time; a gone reader is routine, not an error worth a traceback.
+            self.close_connection = True
 
     def _body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -513,7 +518,13 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
                 self.send_header("Content-Length", str(rec["size"]))
-                self.send_header("Content-Disposition", f'attachment; filename="{rec["name"]}"')
+                # Headers are latin-1 only: RFC 5987 the unicode name, and
+                # keep an ASCII fallback (拾荒集.zip crashed the whole reply).
+                quoted = quote(str(rec["name"]), safe="")
+                self.send_header(
+                    "Content-Disposition",
+                    f"attachment; filename=\"{quoted}\"; filename*=UTF-8''{quoted}",
+                )
                 self.end_headers()
                 shutil.copyfileobj(fh, self.wfile)
         except OSError:
