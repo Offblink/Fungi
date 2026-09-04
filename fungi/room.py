@@ -42,6 +42,7 @@ from .trilayer import TriLayer
 
 MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
+ASK_NOTIFY_IDLE_S = 30.0  # WebUI idle this long => nobody is looking => toast
 MAX_TRANSCRIPT_MESSAGES = 400  # friend-view transcript cap (messages per peer)
 
 
@@ -548,13 +549,16 @@ class RoomRuntime(WebUIRuntime):
             child_extra_tools=clone.child_extra_tools,
             skill_save=clone.skill_save,
         )
-        # ask_user rides the turn sink so its card streams in the NDJSON flow;
+        # confirm rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).
         # on_answer persists completed asks on the turn agent so sessions
         # replay answered cards after reload — room mode lost this wiring,
         # leaving every session's asks bucket permanently empty.
-        tools["ask_user"] = make_ask_tool(
-            sink, on_answer=trilayer.asks.append, should_abort=should_abort
+        tools["confirm"] = make_ask_tool(
+            sink,
+            on_answer=trilayer.asks.append,
+            should_abort=should_abort,
+            notify=self._notify_in_turn_ask,
         )
         return trilayer.build_clone_agent(
             sink,
@@ -563,6 +567,19 @@ class RoomRuntime(WebUIRuntime):
             tool_names=clone.tool_names,
             model=clone.model,
         )
+
+    def _notify_in_turn_ask(self, summary: str) -> None:
+        """confirm raises its card inside the live turn stream. When nobody
+        has the WebUI open, that card is invisible and the turn silently
+        blocks for up to 15 minutes — fire a system notification instead.
+        Recent HTTP activity means a browser is polling and the card is on
+        screen; skip the toast to avoid nagging someone who is watching."""
+        notifier = self.room.notifier
+        if notifier is None:
+            return
+        if time.monotonic() - self.last_seen < ASK_NOTIFY_IDLE_S:
+            return
+        notifier.ask(self.room.display_of(self.room.host) or self.room.host, summary)
 
     # ── answers ──
     def route_answer(self, ask_id: str, value) -> bool:

@@ -1,4 +1,4 @@
-"""ask_user tool (L1 only): the Inquire mechanism.
+"""confirm tool (L1 only): the Inquire mechanism.
 
 Emits an `ask` event on the turn sink, then blocks the calling agent thread
 until the UI answers via POST /answer (resolve_ask) or the timeout expires.
@@ -21,7 +21,7 @@ HEARTBEAT_S = 15
 ASK_SCHEMA = {
     "type": "function",
     "function": {
-        "name": "ask_user",
+        "name": "confirm",
         "description": (
             "Ask the user one or several questions and wait for their answers. Only the"
             " orchestrator can ask; use it when a decision genuinely needs the user (approach"
@@ -81,7 +81,7 @@ ASK_SCHEMA = {
     },
 }
 
-# Ask registry shared by every ask_user tool instance; /answer resolves in-process.
+# Ask registry shared by every confirm tool instance; /answer resolves in-process.
 _pending = PendingAsks()
 
 
@@ -145,13 +145,17 @@ def make_ask_tool(
     sink: Sink,
     on_answer: Callable[[dict], None] | None = None,
     should_abort: Callable[[], bool] | None = None,
+    notify: Callable[[str], None] | None = None,
 ) -> BoundTool:
-    """Build the ask_user BoundTool bound to one turn's sink.
+    """Build the confirm BoundTool bound to one turn's sink.
 
     `on_answer(record)` is called once per completed ask with
     {id, questions, answers, status: answered|timeout|aborted} for
     persistence. `should_abort` lets a stopped turn wake the blocked tool
     instead of holding the session for the full ASK_TIMEOUT_S (15 min).
+    `notify(summary)` fires once when the card is raised — callers use it
+    for a system notification when nobody has the WebUI open (the card
+    alone is invisible there, and the turn blocks up to 15 minutes).
     """
 
     def ask(args: dict) -> str:
@@ -161,6 +165,8 @@ def make_ask_tool(
         ask_id = uuid.uuid4().hex[:6]
         _pending.register(ask_id)
         sink.emit("ask", {"id": ask_id, "questions": questions})
+        if notify is not None:
+            notify(str(questions[0].get("question") or "(no question text)"))
         answered = False
         value = None
         aborted = False

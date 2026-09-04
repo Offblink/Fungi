@@ -10,6 +10,7 @@ card answers back out as answer envelopes.
 import json
 import socket
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -99,6 +100,15 @@ def repair_tool_gaps(messages: list[dict]) -> list[dict]:
 class WebUIRuntime:
     """Turn/sessions/answer wiring for the WebUI. Default = single-host mode."""
 
+    # Monotonic timestamp of the last WebUI HTTP request: the "is anyone
+    # actually looking" signal. ask notifications fire only when this is
+    # stale (nobody has the page open). Class attribute because RoomRuntime
+    # does not chain __init__; touch() shadows it per instance.
+    last_seen: float = 0.0
+
+    def touch(self) -> None:
+        self.last_seen = time.monotonic()
+
     def sessions_list(self) -> list[dict]:
         return session.list_sessions()
 
@@ -128,7 +138,7 @@ class WebUIRuntime:
         return TriLayer(load_config(), sink, should_abort=should_abort).build_orchestrator(sink)
 
     def route_answer(self, ask_id: str, value: str | list[str]) -> bool:
-        """Resolve an /answer submission. Default: in-process ask_user only."""
+        """Resolve an /answer submission. Default: in-process confirm only."""
         return resolve_ask(ask_id, value)
 
     def pending_asks(self) -> list[dict]:
@@ -229,6 +239,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
 
     # ---- GET --------------------------------------------------------------
     def do_GET(self):
+        self.runtime.touch()  # anyone still polling = someone is looking
         url = urlparse(self.path)
         route = url.path
         if route == "/":
@@ -263,12 +274,18 @@ class YesSirHandler(BaseHTTPRequestHandler):
             if not host:
                 self._send_json({"error": "missing host"}, status=400)
             else:
-                self._send_json({"messages": self.runtime.comm_log(host)})
+                # comm_log already returns the full friend-view payload
+                # {messages, subagents, asks, events}; re-wrapping it under
+                # "messages" handed the frontend an object where it expects
+                # an array, and the render threw into the swallowed catch —
+                # the friend view stayed blank forever.
+                self._send_json(self.runtime.comm_log(host))
         else:
             self._send_json({"error": "not found"}, status=404)
 
     # ---- POST -------------------------------------------------------------
     def do_POST(self):
+        self.runtime.touch()
         url = urlparse(self.path)
         if url.path == "/chat":
             self._handle_chat()

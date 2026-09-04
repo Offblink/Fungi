@@ -25,7 +25,7 @@ when a reply is warranted — never reply just to acknowledge. If you end your t
 send_peer, your final message is delivered automatically. To say nothing, end your turn with the \
 exact single line <<SILENT>> — prose "silence declarations" would themselves be delivered; only \
 the bare marker stays silent.
-- Use ask_user only when your own host's user must decide something.
+- Use confirm only when your own host's user must decide something.
 - When given a [TASK], do exactly what the goal says and answer strictly in the reply format; report \
 failure as specified instead of improvising.
 """
