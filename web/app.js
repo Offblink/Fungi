@@ -782,8 +782,13 @@ function placeAskCards() {
   // matching open friend view, otherwise the global banner.
   const banner = document.getElementById('asks-banner');
   pendingAskCards.forEach(({ rec, el }) => {
-    if (friendView && rec.conv === friendView) msgs.appendChild(el);
-    else if (el.parentElement !== banner) banner.appendChild(el);
+    if (friendView && rec.conv === friendView) {
+      msgs.appendChild(el);
+      window.fungiMotion?.askCardIn?.(el);
+    } else if (el.parentElement !== banner) {
+      banner.appendChild(el);
+      window.fungiMotion?.askCardIn?.(el);
+    }
   });
 }
 function buildPendingAskCard(a) {
@@ -846,8 +851,17 @@ function answerPendingAsk(a, card, value) {
   const verdict = value === 'no' ? '\u274C denied'
     : '\u2705 ' + (Array.isArray(value) ? value.join(', ') : value);
   done.textContent = (a.kind === 'consent' ? 'Consent ' : 'Ask ') + verdict;
-  card.replaceWith(done);
-  setTimeout(() => done.remove(), 8000);
+  const M = window.fungiMotion;
+  const finish = () => {
+    card.replaceWith(done);
+    setTimeout(() => done.remove(), 8000);
+  };
+  if (M && !M.reduced && M.askResolved) {
+    const ok = value !== 'no';
+    M.askResolved(card, ok);
+    if (ok) M.spores(card);
+    setTimeout(finish, 1000); // let the stamp read before collapsing
+  } else finish();
 }
 async function pollPendingAsks() {
   try {
@@ -856,9 +870,13 @@ async function pollPendingAsks() {
       if (pendingAskIds.has(a.id)) return;
       pendingAskIds.add(a.id);
       const el = buildPendingAskCard(a);
-      pendingAskCards.set(a.id, { rec: a, el });
-      if (friendView && a.conv === friendView) msgs.appendChild(el);
-      else document.getElementById('asks-banner').appendChild(el);
+      if (friendView && a.conv === friendView) {
+        msgs.appendChild(el);
+        window.fungiMotion?.askCardIn?.(el);
+      } else {
+        document.getElementById('asks-banner').appendChild(el);
+        window.fungiMotion?.askCardIn?.(el);
+      }
     });
   } catch (e) {}
 }
@@ -960,6 +978,7 @@ function renderFriendList() {
 async function openFriendChat(host) {
   friendView = host;
   lastFriendPayload = null;
+  lastTransferCount = -1;
   msgs.innerHTML = '';
   tray.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
@@ -1026,14 +1045,21 @@ function renderFriendChat(d) {
     return;
   }
   renderTranscript(messages, d.asks || []);
+  var fileNodes = [];
   events.forEach(row => {
     if (row.kind === 'transfer')
-      addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+      fileNodes.push(addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer')));
     else if (row.kind === 'task')
       addDiv('msg friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
       addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
   });
+  // New file landed since the previous poll -> spore burst from its card
+  // (first render of a view replays history silently: lastTransferCount < 0).
+  if (fileNodes.length > lastTransferCount && lastTransferCount >= 0) {
+    window.fungiMotion?.spores?.(fileNodes[fileNodes.length - 1]);
+  }
+  lastTransferCount = fileNodes.length;
   placeAskCards(); // re-seat pending asks after the transcript repaint
   msgs.scrollTop = msgs.scrollHeight;
 }
