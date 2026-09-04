@@ -1,10 +1,15 @@
-"""Skill system: reusable markdown procedure files, per host, in data/skills/.
+"""Skill system: reusable procedure packages, per host, in data/skills/.
+
+A skill is a directory: SKILL.md (required, the procedure document) plus any
+companion files such as scripts (optional, shipped and referenced by the
+doc). Legacy flat `data/skills/<name>.md` files from earlier versions are
+still read; a directory with the same name shadows the flat file.
 
 Every agent build appends `section()` to its system prompt — a fresh list of
 skill names + descriptions read from disk (so a skill saved mid-session is
-visible on the next turn). The `skills` tool reads full bodies and saves new
-files; the writing-skills meta-skill teaches the format and seeds the
-directory on first use.
+visible on the next turn). The `skills` tool reads docs and companion files
+and saves new skills; the writing-skills meta-skill teaches the format and
+seeds the directory on first use.
 
 Security: comm clones (and their spawns) get a readonly tool — autonomous
 inter-host agents must not be able to persist prompt changes on this host.
@@ -25,16 +30,15 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_BODY = 32768
 MAX_DESC = 200
 _GUARD = threading.Lock()
-
 WRITING_SKILLS = """\
 ---
 name: writing-skills
-description: How to author a new skill file for this host (format, naming, quality bar, save procedure).
+description: How to author a new skill for this host (layout, naming, quality bar, save procedure).
 ---
 # Writing skills
 
 A skill is a reusable step-by-step procedure stored on this host in
-`data/skills/<name>.md`. When a task matches a skill, read it first and
+`data/skills/<name>/SKILL.md`. When a task matches a skill, read it first and
 follow it instead of improvising.
 
 ## When to write one
@@ -43,9 +47,20 @@ follow it instead of improvising.
 - Do NOT write skills for one-off tasks or facts already obvious from the
   codebase or docs.
 
+## Layout
+A skill is a directory:
+- `SKILL.md` (required): frontmatter + markdown body — the procedure itself.
+- Companion files (optional): scripts or data shipped next to the doc, e.g.
+  `scripts/check.py`. Reference them from SKILL.md by relative path. Read or
+  run them directly by absolute path, or via the `skills` tool's `path`
+  argument when direct file access is not available.
+
+Legacy flat `data/skills/<name>.md` files still read fine; a directory with
+the same name wins.
+
 ## Format
 The `skills` tool writes the frontmatter for you; pass:
-- `name`: kebab-case ([a-z0-9-], max 64 chars) — the filename stem.
+- `name`: kebab-case ([a-z0-9-], max 64 chars) — becomes the directory name.
 - `description`: one line stating WHEN to use the skill. This is the only
   thing other agents see in the list, so make it a trigger condition, not
   a summary.
@@ -71,16 +86,20 @@ class Skill:
 def _seed() -> None:
     """Create the skills dir and the writing-skills meta-skill on first use."""
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    meta = SKILLS_DIR / "writing-skills.md"
-    if not meta.is_file():
+    meta_dir = SKILLS_DIR / "writing-skills"
+    doc = meta_dir / "SKILL.md"
+    legacy = SKILLS_DIR / "writing-skills.md"  # pre-directory auto-generated seed
+    if not doc.is_file():
         with _GUARD:
-            if not meta.is_file():
-                meta.write_text(WRITING_SKILLS, encoding="utf-8")
+            if not doc.is_file():
+                meta_dir.mkdir(parents=True, exist_ok=True)
+                doc.write_text(WRITING_SKILLS, encoding="utf-8")
+                if legacy.is_file():
+                    legacy.unlink()  # superseded by the directory version
 
-
-def _parse(path: Path) -> Skill:
+def _parse(path: Path, name: str | None = None) -> Skill:
     text = path.read_text(encoding="utf-8-sig")
-    name = path.stem
+    name = name or path.stem
     description = ""
     body = text
     if text.startswith("---\n"):
@@ -89,9 +108,7 @@ def _parse(path: Path) -> Skill:
             for line in text[4:end].splitlines():
                 key, _, value = line.partition(":")
                 value = value.strip()
-                if key.strip() == "name" and value:
-                    name = value
-                elif key.strip() == "description" and value:
+                if key.strip() == "description" and value:
                     description = value
             body = text[end + 4 :]
     if not description:
@@ -104,10 +121,27 @@ def _parse(path: Path) -> Skill:
 
 
 def load_all() -> list[Skill]:
-    """All skills on this host, sorted by name; seeds the meta-skill."""
+    """All skills on this host, sorted by name; seeds the meta-skill.
+
+    Directory skills (<name>/SKILL.md) come first; a legacy flat <name>.md
+    whose name is taken by a directory is shadowed, not duplicated."""
     _seed()
     out: list[Skill] = []
+    seen: set[str] = set()
+    for entry in sorted(SKILLS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        doc = entry / "SKILL.md"
+        if not doc.is_file():
+            continue
+        try:
+            out.append(_parse(doc, entry.name))
+            seen.add(entry.name)
+        except OSError:
+            continue
     for path in sorted(SKILLS_DIR.glob("*.md")):
+        if path.stem in seen:
+            continue
         try:
             out.append(_parse(path))
         except OSError:
@@ -118,17 +152,19 @@ def load_all() -> list[Skill]:
 def get(name: str) -> Skill | None:
     if not NAME_RE.fullmatch(name):
         return None
-    path = SKILLS_DIR / f"{name}.md"
-    if not path.is_file():
+    doc = SKILLS_DIR / name / "SKILL.md"
+    legacy = SKILLS_DIR / f"{name}.md"
+    path = doc if doc.is_file() else (legacy if legacy.is_file() else None)
+    if path is None:
         return None
     try:
-        return _parse(path)
+        return _parse(path, name if path == doc else None)
     except OSError:
         return None
 
 
 def save(name: str, description: str, body: str) -> str:
-    """Write one skill file; returns an OK/ERROR status line."""
+    """Write one skill as <name>/SKILL.md; returns an OK/ERROR status line."""
     if not NAME_RE.fullmatch(name):
         return f"ERROR: invalid skill name {name!r} (kebab-case [a-z0-9-], max 64 chars)"
     if not body.strip():
@@ -137,11 +173,17 @@ def save(name: str, description: str, body: str) -> str:
         return f"ERROR: body too large ({len(body)} > {MAX_BODY} chars)"
     description = " ".join(description.split())[:MAX_DESC]
     _seed()
-    path = SKILLS_DIR / f"{name}.md"
-    text = f"---\nname: {name}\ndescription: {description}\n---\n\n{body.strip()}\n"
+    skill_dir = SKILLS_DIR / name
+    doc = skill_dir / "SKILL.md"
+    text = f"---\ndescription: {description}\n---\n\n{body.strip()}\n"
     with _GUARD:
-        path.write_text(text, encoding="utf-8")
-    return f"OK: saved {path.name} ({len(body.strip())} chars)"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        doc.write_text(text, encoding="utf-8")
+    legacy = SKILLS_DIR / f"{name}.md"
+    if legacy.is_file():
+        with _GUARD:
+            legacy.unlink()  # superseded by the directory version
+    return f"OK: saved {name}/SKILL.md ({len(body.strip())} chars)"
 
 
 SECTION_HEAD = "\n\n## Skills\n"
@@ -160,6 +202,39 @@ def section() -> str:
     )
 
 
+
+
+def _companion_files(skill_dir: Path) -> list[Path]:
+    """Every file in a directory skill except SKILL.md itself."""
+    root = skill_dir.resolve()
+    if not root.is_dir():
+        return []
+    out: list[Path] = []
+    for p in sorted(root.rglob("*")):
+        if p.is_file() and p != root / "SKILL.md":
+            out.append(p)
+    return out
+
+
+def _read_companion(name: str, rel: str) -> str:
+    """Read one companion file inside a directory skill (path-confined)."""
+    if not NAME_RE.fullmatch(name):
+        return f"ERROR: invalid skill name {name!r}"
+    root = (SKILLS_DIR / name).resolve()
+    if not (root / "SKILL.md").is_file():
+        return f"ERROR: skill {name!r} has no directory (legacy flat file)"
+    target = (root / rel).resolve()
+    if target != root and root not in target.parents:
+        return "ERROR: path escapes the skill directory"
+    if not target.is_file():
+        return f"ERROR: no file {rel!r} in skill {name!r}"
+    try:
+        text = target.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return f"ERROR: unreadable: {exc}"
+    if len(text) > MAX_BODY:
+        text = text[:MAX_BODY] + "\n…(truncated)"
+    return f"# {name}/{rel}\n\n{text}"
 def skill_tool(args: dict, readonly: bool = False) -> str:
     action = str(args.get("action") or "")
     if action == "list":
@@ -171,10 +246,22 @@ def skill_tool(args: dict, readonly: bool = False) -> str:
     if action == "read":
         if not name:
             return "ERROR: name required"
+        rel = str(args.get("path") or "").strip()
+        if rel:
+            return _read_companion(name, rel)
         skill = get(name)
         if skill is None:
             return f"ERROR: no skill named {name!r}"
-        return f"# {skill.name}: {skill.description}\n\n{skill.body}"
+        out = f"# {skill.name}: {skill.description}\n\n{skill.body}"
+        files = _companion_files(SKILLS_DIR / name)
+        if files:
+            listed = "\n".join(
+                f"- {q.relative_to((SKILLS_DIR / name).resolve()).as_posix()}"
+                f" ({q.stat().st_size} bytes)"
+                for q in files
+            )
+            out += f"\n\nCompanion files — read with action=read plus path:\n{listed}"
+        return out
     if action == "save":
         if readonly:
             return "ERROR: this agent may read skills but not save them"
@@ -187,9 +274,10 @@ SKILLS_SCHEMA = {
     "function": {
         "name": "skills",
         "description": (
-            "Reusable skill files stored on this host (data/skills/). "
-            "list: enumerate skills; read: load one skill's full body; "
-            "save: create or update a skill (see the writing-skills skill for the format)."
+            "Reusable skill packages stored on this host (data/skills/<name>/SKILL.md"
+            " plus optional companion scripts). list: enumerate skills; read: load one"
+            " skill's doc (or a companion file via path); save: create or update a"
+            " skill (see the writing-skills skill for the format)."
         ),
         "parameters": {
             "type": "object",
@@ -197,7 +285,11 @@ SKILLS_SCHEMA = {
                 "action": {"type": "string", "enum": ["list", "read", "save"]},
                 "name": {
                     "type": "string",
-                    "description": "Skill name (kebab-case, the filename stem). Required for read/save.",
+                    "description": "Skill name (kebab-case, the directory name). Required for read/save.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "For read: relative companion-file path inside the skill directory (e.g. scripts/check.py).",
                 },
                 "description": {
                     "type": "string",

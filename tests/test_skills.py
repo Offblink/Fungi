@@ -22,7 +22,7 @@ def test_seed_creates_meta_skill():
     out = skills.load_all()
     assert [s.name for s in out] == ["writing-skills"]
     assert out[0].description
-    assert (skills.SKILLS_DIR / "writing-skills.md").is_file()
+    assert (skills.SKILLS_DIR / "writing-skills" / "SKILL.md").is_file()
     # seeding is idempotent
     assert [s.name for s in skills.load_all()] == ["writing-skills"]
 
@@ -88,7 +88,7 @@ def test_clone_agent_gets_section_and_tool():
         .fn({"action": "save", "name": "x", "body": "b"})
         .startswith("OK")
     )
-    assert (skills.SKILLS_DIR / "x.md").is_file()
+    assert (skills.SKILLS_DIR / "x" / "SKILL.md").is_file()
 
 
 def test_orchestrator_includes_skills_tool():
@@ -130,3 +130,39 @@ def test_agent_refreshes_stored_system_message():
     # managed suffix: stored content kept, skills list appended fresh
     assert seen[0][0]["content"].startswith("STALE")
     assert seen[0][0]["content"].count("\n\n## Skills\n") == 1
+
+
+def test_directory_skill_with_companion_script():
+    assert skills.save("deploy-check", "Use before releasing.", "1. Run the script.").startswith("OK")
+    d = skills.SKILLS_DIR / "deploy-check"
+    (d / "scripts").mkdir(parents=True, exist_ok=True)
+    (d / "scripts" / "check.py").write_text("print('ok')\n", encoding="utf-8")
+
+    out = skills.skill_tool({"action": "read", "name": "deploy-check"})
+    assert "scripts/check.py" in out, "companion file not surfaced in the doc read"
+    assert "print('ok')" not in out  # doc read does not inline script bodies
+
+    # path-confined companion read
+    assert "print('ok')" in skills.skill_tool(
+        {"action": "read", "name": "deploy-check", "path": "scripts/check.py"}
+    )
+    assert skills.skill_tool(
+        {"action": "read", "name": "deploy-check", "path": "../secrets.txt"}
+    ).startswith("ERROR")
+    assert skills.skill_tool(
+        {"action": "read", "name": "demo-recipe", "path": "scripts/check.py"}
+    ).startswith("ERROR")  # skill without a directory
+
+
+def test_legacy_flat_skills_still_read_and_shadowed():
+    skills.load_all()  # seed the dir before placing a legacy flat file
+    (skills.SKILLS_DIR / "old-style.md").write_text(
+        "---\nname: old-style\ndescription: flat file skill\n---\nbody here\n", encoding="utf-8"
+    )
+    assert skills.get("old-style").description == "flat file skill"
+    assert "- old-style: flat file skill" in skills.skill_tool({"action": "list"})
+
+    # a directory with the same name shadows the flat file, no duplicate
+    skills.save("old-style", "directory version", "new body")
+    loaded = [s for s in skills.load_all() if s.name == "old-style"]
+    assert len(loaded) == 1 and loaded[0].description == "directory version"
