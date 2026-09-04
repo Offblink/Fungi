@@ -311,6 +311,13 @@ class _Tray(QSystemTrayIcon):
         self.showMessage(title, body, QSystemTrayIcon.Information, 8000)
 
 
+_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")  # token rides URLs / join commands
+
+
+def _valid_token(token: str) -> bool:
+    return _TOKEN_RE.fullmatch(token) is not None
+
+
 class HostPage(QWidget):
     """发起房间：GUI 进程内直启 hub，随后显示 IP / Token / WebUI 入口。"""
 
@@ -361,7 +368,14 @@ class HostPage(QWidget):
         self.ip_refresh_btn.clicked.connect(self._refresh_ip)
         self.token_edit = LineEdit()
         self.token_edit.setFixedWidth(360)
-        self.token_edit.setReadOnly(True)
+        self.token_edit.setPlaceholderText("留空则发起房间时自动生成")
+        self.token_edit.setToolTip(
+            "可自定义（字母/数字/-/_，1-64 位）。\n"
+            "发起前修改：开房即用该 Token；运行中修改：即时热更新，"
+            "已加入的好友需用新 Token 重新加入"
+        )
+        self.token_edit.editingFinished.connect(self._apply_token)
+        self.token_edit.setText(secrets.token_urlsafe(12))
         self.token_btn = _copy_button()
         self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
         self.webui_btn = PushButton(FluentIcon.GLOBE, "打开 WebUI")
@@ -392,8 +406,9 @@ class HostPage(QWidget):
         self._set_started(False)
 
     def _set_started(self, started: bool) -> None:
-        for row in (self.ip_row, self.token_row, self.webui_row):
+        for row in (self.ip_row, self.webui_row):
             row.setVisible(started)
+        # token row stays visible: the token is editable before AND after launch
         self.start_btn.setEnabled(not started)
         self.leave_btn.setVisible(started)
 
@@ -417,6 +432,33 @@ class HostPage(QWidget):
         else:
             InfoBar.info("IP 未变化", ip, duration=2000, parent=self.window_ref)
 
+    def _apply_token(self) -> None:
+        """Commit a token edit. Before launch: no-op (validated at _start).
+        While the room runs: hot-swap hub.token — every request re-reads it,
+        so the change is live; joined peers must re-join with the new token."""
+        if self.room is None:
+            return
+        token = self.token_edit.text().strip()
+        if token == self._token:
+            return
+        if not _valid_token(token):
+            self.token_edit.setText(self._token)
+            InfoBar.warning(
+                "Token 未更改",
+                "仅限字母、数字、- 和 _（Token 进 URL），1-64 位",
+                duration=5000,
+                parent=self.window_ref,
+            )
+            return
+        self.room.hub.token = token
+        self._token = token
+        InfoBar.success(
+            "Token 已更新",
+            "新 Token 即时生效；已加入的好友需用新 Token 重新加入",
+            duration=5000,
+            parent=self.window_ref,
+        )
+
     _idle_status = (
         "尚未发起。\n"
         "· 端口从 8899 起自动向上寻找，加入方无需填 IP（同网段自动发现），只需 Token\n"
@@ -431,7 +473,7 @@ class HostPage(QWidget):
         self._set_started(False)
         self.window_ref.update_tray()
         self.ip_edit.clear()
-        self.token_edit.clear()
+        self.token_edit.setText(secrets.token_urlsafe(12))
         self.status.setText(self._idle_status)
         InfoBar.info("已离开", "房间已停止", duration=2500, parent=self.window_ref)
 
@@ -460,7 +502,16 @@ class HostPage(QWidget):
         except OSError as exc:
             InfoBar.error("无可用端口", str(exc), duration=5000, parent=self.window_ref)
             return
-        self._token = secrets.token_urlsafe(12)
+        token = self.token_edit.text().strip() or secrets.token_urlsafe(12)
+        if not _valid_token(token):
+            InfoBar.error(
+                "Token 不合法",
+                "仅限字母、数字、- 和 _（Token 进 URL），1-64 位",
+                duration=5000,
+                parent=self.window_ref,
+            )
+            return
+        self._token = token
         self.room = start_server_room(host, display, self._token, port)
         self.ip_edit.setText(lan_ip())
         self.token_edit.setText(self._token)

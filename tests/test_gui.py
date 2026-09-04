@@ -136,6 +136,51 @@ def test_host_page_leave_without_room_is_noop(window):
     window.host_page._leave()  # must not raise
 
 
+def test_host_page_start_uses_custom_token(window, monkeypatch):
+    page = window.host_page
+    started = []
+
+    def fake_start(_host, _display, token, _port):
+        started.append(token)
+        return object()
+
+    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    page.name_edit.setText("pc-alpha")
+    page.token_edit.setText("my-token_1")
+    page._start()
+    assert started == ["my-token_1"]
+    assert page.token_edit.text() == "my-token_1" and page._token == "my-token_1"
+    page.room = None
+
+
+def test_host_page_start_rejects_invalid_token(window):
+    page = window.host_page
+    page.name_edit.setText("pc-alpha")
+    page.token_edit.setText("bad token 中文")  # token rides URLs: spaces/CJK invalid
+    page._start()
+    assert page.room is None and page.start_btn.isEnabled()
+
+
+def test_host_page_token_hot_update(window):
+    page = window.host_page
+
+    class FakeHub:
+        token = "old-token-12"
+
+    page.room = FakeRoom()
+    page.room.hub = FakeHub()
+    page._token = "old-token-12"
+    page.token_edit.setText("new-token-99")
+    page._apply_token()
+    assert page.room.hub.token == "new-token-99" and page._token == "new-token-99"
+    # invalid edit reverts the field and keeps the live token
+    page.token_edit.setText("不合法 token")
+    page._apply_token()
+    assert page.token_edit.text() == "new-token-99"
+    assert page.room.hub.token == "new-token-99"
+    page.room = None
+
+
 def test_join_page_leave_stops_room(window):
     page = window.join_page
     room = FakeRoom()
