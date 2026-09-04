@@ -347,7 +347,7 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
         self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
         self.setWindowTitle("Fungi")
-        self.resize(860, 620)
+        self.resize(860, 500)  # logical; physical = x GUI_SCALE (~1032x600)
 
 
 def run_gui() -> int:
