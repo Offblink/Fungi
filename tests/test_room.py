@@ -194,6 +194,42 @@ def test_confirm_notifies_only_when_webui_idle(server_room):
     assert len(calls) == 1, "notification fired while the WebUI was clearly open"
 
 
+def test_consent_ask_notifies_only_when_webui_idle(server_room):
+    """Out-of-band consent cards toast the user so an unattended request is
+    not missed — but only while nobody has the WebUI open: the card is in
+    the asks banner, and a toast over a visible card is just noise."""
+    from types import SimpleNamespace
+
+    room = server_room
+    room.hub.relay.register_local("alpha:comm-selftest")
+    calls: list[tuple] = []
+    room.notifier = SimpleNamespace(ask=lambda src, text: calls.append((src, text)))
+    body = {
+        "question": "write homes/alpha/notes.md?",
+        "action": "write",
+        "path": "homes/alpha/notes.md",
+        "from": "alpha:comm-selftest",
+    }
+
+    # no WebUI runtime registered (never opened): notification fires
+    _send_ask(room.hub, "alpha:comm-selftest", "alpha:local", body)
+    assert _wait(lambda: bool(calls)), "unattended consent ask never notified"
+    calls.clear()
+
+    # WebUI open and polling (fresh touch): card lands in the banner, no toast
+    runtime = room.webui_runtime()
+    room._webui_runtime = runtime
+    runtime.touch()
+    _send_ask(room.hub, "alpha:comm-selftest", "alpha:local", body)
+    assert _wait(lambda: room.cards.pending()), "consent ask never became a card"
+    assert not calls, "notification fired while the WebUI was clearly open"
+
+    # stale last_seen (browser closed a while ago): toasts again
+    runtime.last_seen = time.monotonic() - 10_000
+    _send_ask(room.hub, "alpha:comm-selftest", "alpha:local", body)
+    assert _wait(lambda: bool(calls)), "stale WebUI never re-enabled notifications"
+
+
 def test_server_allow_mode_silently_answers(server_room):
     room = server_room
     room.rules.set_mode("alpha", "allow")

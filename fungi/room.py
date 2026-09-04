@@ -135,6 +135,10 @@ class RoomBase:
         self._webui_guard = threading.Lock()
         # Per-peer comm clone transcripts (friend view); set by subclasses.
         self._comm_store: SessionStore | None = None
+        # The live WebUI runtime (set in open_webui): consent-card
+        # notifications consult its last_seen so a card raised while a
+        # browser is polling stays silent on screen instead of toasting.
+        self._webui_runtime: WebUIRuntime | None = None
 
     # ── clones ──
 
@@ -240,7 +244,7 @@ class RoomBase:
             return
         if not self.cards.record(env):
             return  # replay/duplicate
-        if self.notifier is not None:
+        if self.notifier is not None and self._webui_idle():
             try:
                 src_host, _role, _peer = parse_addr(src)
             except Exception:
@@ -264,7 +268,9 @@ class RoomBase:
         """Start the WebUI lazily; returns its URL."""
         with self._webui_guard:
             if self._webui is None:
-                self._webui = make_webui_server(None, self.webui_runtime())
+                rt = self.webui_runtime()
+                self._webui_runtime = rt
+                self._webui = make_webui_server(None, rt)
                 threading.Thread(
                     target=self._webui.serve_forever, name="webui", daemon=True
                 ).start()
@@ -272,6 +278,14 @@ class RoomBase:
         if open_browser:
             threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
         return url
+
+    def _webui_idle(self) -> bool:
+        """True when nobody has the WebUI open (or its last request is stale):
+        the condition for firing a system notification about a pending card."""
+        rt = self._webui_runtime
+        if rt is None:
+            return True
+        return time.monotonic() - rt.last_seen >= ASK_NOTIFY_IDLE_S
 
     def webui_runtime(self) -> WebUIRuntime:
         return RoomRuntime(self, self._sessions_backend())
@@ -295,6 +309,7 @@ class RoomBase:
             self._webui.shutdown()
             self._webui.server_close()
             self._webui = None
+            self._webui_runtime = None
 
 
 class StoreSessions:
