@@ -638,9 +638,9 @@ class JoinPage(QWidget):
         InfoBar.info("已离开", "已从房间退出", duration=2500, parent=self.window_ref)
 
     def _finish_join(self, found) -> None:
-        self.join_btn.setEnabled(True)
         token, nick, host = self._pending
         if found is None:
+            self.join_btn.setEnabled(True)  # scan failed: allow retrying
             self.status.setText(
                 "局域网内没有找到接受该 Token 的房间（端口 8899 起）。\n"
                 "请确认房主已发起、Token 正确、且在同一局域网。"
@@ -653,6 +653,7 @@ class JoinPage(QWidget):
         try:
             self.room = start_client_room(host, nick, f"http://{ip}:{port}", token)
         except Exception as exc:  # hub refused the join (left / restarted)
+            self.join_btn.setEnabled(True)  # join refused: allow retrying
             self.status.setText(f"加入失败：{exc}")
             InfoBar.error("加入失败", str(exc), duration=5000, parent=self.window_ref)
             return
