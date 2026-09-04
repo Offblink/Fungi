@@ -42,6 +42,7 @@ from .trilayer import TriLayer
 
 MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
+MAX_TRANSCRIPT_MESSAGES = 400  # friend-view transcript cap (messages per peer)
 
 
 def _summary(body: dict) -> str:
@@ -131,6 +132,8 @@ class RoomBase:
         self._stop = threading.Event()
         self._webui: ThreadingHTTPServer | None = None
         self._webui_guard = threading.Lock()
+        # Per-peer comm clone transcripts (friend view); set by subclasses.
+        self._comm_store: SessionStore | None = None
 
     # ── clones ──
 
@@ -170,23 +173,54 @@ class RoomBase:
         with self._guard:
             if peer in self._clones or self._stop.is_set():
                 return
-            clone = build_comm_clone(
-                self.host,
-                peer,
-                transport,
-                self.cfg,
-                self.sink,
-                llm=self.llm,
-                inbox_dir=Path(self.cfg.inbox_dir) if self.cfg.inbox_dir else None,
-            )
+        clone = build_comm_clone(
+            self.host,
+            peer,
+            transport,
+            self.cfg,
+            self.sink,
+            llm=self.llm,
+            inbox_dir=Path(self.cfg.inbox_dir) if self.cfg.inbox_dir else None,
+            on_turn_end=lambda env_type, messages, agent: self._record_comm_turn(
+                peer, env_type, messages, agent
+            ),
+        )
+        with self._guard:
             self._clones[peer] = clone
-        clone.start()
 
     def remove_comm_clone(self, peer: str) -> None:
         with self._guard:
             clone = self._clones.pop(peer, None)
         if clone is not None:
             clone.stop()
+
+    def _record_comm_turn(self, peer: str, env_type: str, messages: list, agent) -> None:
+        """Persist one comm clone turn for the friend view (session-style
+        rendering: markdown, tool calls, spawn blocks). Chat turns carry the
+        cumulative clone history; task turns append after it."""
+        store = self._comm_store
+        if store is None or not messages:
+            return
+        try:
+            sid = "comm-" + peer
+            prev = store.load(sid) or {}
+            if env_type == "chat":
+                msgs = list(messages)
+            else:
+                msgs = [m for m in prev.get("messages") or [] if m.get("role") != "system"]
+                msgs += [m for m in messages if m.get("role") != "system"]
+                msgs.insert(0, messages[0])
+            subs = list(prev.get("subagents") or [])
+            new_subs = getattr(agent, "subagents", None)
+            if isinstance(new_subs, dict):
+                known = {r.get("id") for r in subs}
+                subs += [r for r in new_subs.values() if r.get("id") not in known]
+            asks = list(prev.get("asks") or []) + list(getattr(agent, "asks", None) or [])
+            del msgs[:-MAX_TRANSCRIPT_MESSAGES]
+            store.save(sid, f"comm: {peer}", msgs, subagents=subs[-100:], asks=asks[-100:])
+        except Exception as exc:  # a recording failure must not kill the turn
+            self.sink.emit("error", f"comm transcript {peer}: {exc}")
+
 
     # ── incoming asks: auto-allow -> cards + notification ──
 
@@ -324,6 +358,8 @@ class RoomServer(RoomBase):
         )
         self.hub = Hub(host, token, data_root, max_file_mb=cfg.max_file_mb, port=port)
         self._monitor: threading.Thread | None = None
+        # Friend-view transcripts live next to the hub's own sessions.
+        self._comm_store = SessionStore(data_root / "comm-sessions")
         # selftest state (FUNGI_SELFTEST=1)
         self.selftest_answered: str | None = None
         self.selftest_inbox = None
@@ -394,7 +430,10 @@ class RoomClient(RoomBase):
         # Client conversations live on THIS machine only (default: the shared
         # single-host location); never staged on the hub's disk.
         self._sessions = ClientSessions(sessions_dir or SESSIONS_DIR)
-
+        # Friend-view transcripts: local disk, next to the client sessions.
+        self._comm_store = SessionStore(
+            (sessions_dir or SESSIONS_DIR).parent / "comm-sessions"
+        )
     def start(self) -> None:
         out = self.client.join()
         self._peers_known = set(out.get("peers") or [])
@@ -495,7 +534,7 @@ class RoomRuntime(WebUIRuntime):
         tools = dict(clone.tools)
         # ask_user rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).
-        tools["ask_user"] = make_ask_tool(sink)
+        tools["ask_user"] = make_ask_tool(sink, should_abort=should_abort)
         trilayer = TriLayer(
             self.room.cfg,
             sink,
@@ -568,10 +607,22 @@ class RoomRuntime(WebUIRuntime):
             return self.room.hub.roster.entries(self.room.host)
         return list(self.room._entries)  # client role: cached roster
 
-    def comm_log(self, host: str) -> list[dict]:
+    def comm_log(self, host: str) -> dict:
+        """Friend view payload: the comm clone's transcript (session-style
+        messages + subagent/ask records) plus hub-side envelope events."""
+        out: dict = {"messages": [], "subagents": [], "asks": [], "events": []}
+        store = self.room._comm_store
+        if store is not None:
+            data = store.load("comm-" + host)
+            if data:
+                out["messages"] = data.get("messages") or []
+                out["subagents"] = data.get("subagents") or []
+                out["asks"] = data.get("asks") or []
         if getattr(self.room, "hub", None) is not None:  # server role: direct
-            return self.room.hub.commlog.read(self.room.host, host)
-        return self.room.client.comm_log(host)  # client role: hub API
+            out["events"] = self.room.hub.commlog.read(self.room.host, host)
+        else:
+            out["events"] = self.room.client.comm_log(host)  # client role: hub API
+        return out
 
 
 # ── selftest hook (FUNGI_SELFTEST=1, server role) ──

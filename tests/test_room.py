@@ -352,3 +352,62 @@ def test_client_sessions_stay_off_the_hub_disk(client_room):
     backend.save("s1", "t", [{"role": "user", "content": "private"}])
     assert backend.load("s1")["messages"][0]["content"] == "private"
     assert hub.store.sessions.list_sessions() == []
+
+
+def test_comm_turn_transcript_recorded_for_friend_view(server_room):
+    """_record_comm_turn persists per-peer transcripts; comm_log returns them
+    (session-style payload for the friend view)."""
+    room = server_room
+
+    class FakeAgent:
+        subagents = {
+            "s1": {
+                "id": "s1",
+                "call_id": "c1",
+                "layer": 2,
+                "goal": "g",
+                "reply_format": "",
+                "status": "done",
+                "events": [],
+            }
+        }
+        asks = [{"id": "a1", "questions": [], "answers": ["x"], "status": "answered"}]
+
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[beta:comm-alpha] hi"},
+        {"role": "assistant", "content": "hello", "reasoning": "r"},
+    ]
+    room._record_comm_turn("beta", "chat", msgs, FakeAgent)
+    runtime = room.webui_runtime()
+    d = runtime.comm_log("beta")
+    assert d["messages"] == msgs
+    assert d["subagents"][0]["id"] == "s1"
+    assert d["asks"][0]["id"] == "a1"
+    assert isinstance(d["events"], list)
+
+
+def test_comm_task_turn_appends_after_chat_transcript(server_room):
+    room = server_room
+
+    class NoState:
+        subagents = {}
+        asks: list = []
+
+    chat = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[beta] hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    room._record_comm_turn("beta", "chat", chat, NoState)
+    task = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[TASK from beta]\nGoal: g"},
+        {"role": "assistant", "content": "done"},
+    ]
+    room._record_comm_turn("beta", "task", task, NoState)
+    d = server_room.webui_runtime().comm_log("beta")
+    roles = [m["role"] for m in d["messages"]]
+    assert roles[0] == "system"
+    assert d["messages"][3]["content"].startswith("[TASK from beta]")
+    assert d["messages"][-1]["content"] == "done"

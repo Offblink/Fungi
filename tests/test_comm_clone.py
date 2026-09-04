@@ -212,3 +212,34 @@ def test_consent_flow_wakes_blocked_write(room):
     comm_tools = clone.tools["ask_consent"].fn.__self__
     record = hub.asks.get(comm_tools.consent_id)
     assert record is not None and record["status"] == "answered"
+
+def test_turn_end_hook_receives_transcript(room):
+    """The room's recorder gets the full turn transcript (system + history +
+    new turn) for the friend view."""
+    _hub, clients = _joined_room(room)
+    fake = ScriptedLLM([LLMResult(content="reply text")])
+    seen: list[tuple[str, list[dict]]] = []
+    clone = build_comm_clone(
+        "beta",
+        "alpha",
+        RemoteTransport(clients["beta"]),
+        CFG,
+        NullSink(),
+        llm=fake,
+        on_turn_end=lambda env_type, messages, agent: seen.append((env_type, list(messages))),
+    )
+    chat = Envelope(
+        src="alpha:comm-beta",
+        dst="beta:comm-alpha",
+        type="chat",
+        body={"text": "hello"},
+    )
+    clients["alpha"].send(chat)
+    messages, _cursor = clients["beta"].poll_env("beta")
+    clone.run_turn(messages[0])
+    assert seen and seen[0][0] == "chat"
+    transcript = seen[0][1]
+    assert transcript[0]["role"] == "system"
+    assert "[alpha:comm-beta]" in transcript[-2]["content"]
+    assert transcript[-1]["content"] == "reply text"
+    assert transcript[-1]["role"] == "assistant"

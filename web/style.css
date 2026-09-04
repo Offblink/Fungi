@@ -182,8 +182,6 @@ html,body{font-family:var(--font);font-size:14.5px;line-height:1.6;color:var(--t
 .friend-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;box-shadow:0 0 6px rgba(34,197,94,0.5)}
 .friend-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #friends-empty{padding:10px 16px 14px;color:var(--dim);font-size:11.5px;display:none}
-#friend-back{background:var(--surface2);border:1px solid var(--border);color:var(--text2);border-radius:var(--radius-xs);padding:4px 10px;font-family:var(--font);font-size:0.76rem;cursor:pointer;transition:all 0.2s}
-#friend-back:hover{color:var(--text);border-color:var(--accent)}
 #friend-title{color:var(--accent2);font-weight:500}
 .msg.friend-msg{max-width:76%}
 .msg.friend-msg.own{align-self:flex-start;background:var(--surface);border:1px solid var(--border-light);box-shadow:var(--shadow-card)}

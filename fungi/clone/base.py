@@ -127,6 +127,7 @@ class Clone:
         on_ask=None,
         on_transfer=None,
         on_chat_end=None,
+        on_turn_end=None,
         pending: PendingAsks | None = None,
         tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
         child_tool_names: frozenset[str] | None = None,
@@ -158,6 +159,9 @@ class Clone:
         # chat turns: called with (env, final_text) after the turn — comm
         # clones use it to auto-send an undelivered reply (no send_peer call).
         self.on_chat_end = on_chat_end
+        # called with (env_type, messages, agent) after every chat/task turn —
+        # the room records per-peer transcripts for the friend view.
+        self.on_turn_end = on_turn_end
         # `is not None` (not `or`): an empty PendingAsks is falsy via __len__
         self.pending = pending if pending is not None else PendingAsks()
         self.history: list[dict] = []  # chat exchanges kept locally (no-reply stays)
@@ -266,6 +270,8 @@ class Clone:
         else:
             messages = [{"role": "user", "content": self.render_input(env)}]
         result = agent.run(messages)
+        if self.on_turn_end is not None:
+            self.on_turn_end(env.type, messages, agent)
         reply = (result.content or "").strip()
         if env.type == "chat":
             # spec 6.x: the Orchestrator decides whether to reply — via an

@@ -140,9 +140,16 @@ async function switchSession(id) {
 
 function renderMessages(s) {
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
+  renderTranscript(rawMessages, s.asks || []);
+  if (turn && turn.sessionId === currentSessionId) renderTurnLive();
+}
+
+/* Session-style rendering shared by local sessions and friend transcripts:
+   markdown text, reasoning details, tool blocks, answered ask cards. */
+function renderTranscript(messages, asks) {
   let toolBlocks = {};
-  const askQueue = (s.asks || []).slice(); // replayed in order at their ask_user call site
-  for (const m of rawMessages) {
+  const askQueue = (asks || []).slice(); // replayed in order at their ask_user call site
+  for (const m of messages || []) {
     if (m.role === 'user') addDiv('user', marked.parse(m.content || ''));
     else if (m.role === 'assistant') {
       if (m.reasoning) {
@@ -178,7 +185,6 @@ function renderMessages(s) {
     }
   }
   askQueue.forEach(renderArchivedAsk); // leftovers (e.g. turn died mid-ask)
-  if (turn && turn.sessionId === currentSessionId) renderTurnLive();
 }
 async function newSession() {
   leaveFriendView();
@@ -456,6 +462,12 @@ async function pumpStream(url, body) {
     else status.textContent = 'Error: ' + e.message;
     turn = null;
   }
+  if (turn) {
+    // Stream ended without a done event (server died mid-turn): the UI used
+    // to stay stuck on "Writing..." with a phantom live turn.
+    status.textContent = 'Connection lost. Press Alt+R to retry.';
+    turn = null;
+  }
   processing = false; btn.disabled = false;
 }
 
@@ -564,7 +576,7 @@ function updateLastReasoning() {
 }
 
 function renderTurnLive() {
-  if (!turn || turn.sessionId !== currentSessionId) return;
+  if (!turn || turn.sessionId !== currentSessionId || friendView) return;
   const saved = saveAskCardState();
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText) {
@@ -684,15 +696,9 @@ function buildActiveAskCard(a, saved) {
       const qi = btn.dataset.q;
       card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
-      const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-      if (inp) inp.value = '';
     });
   });
   card.querySelectorAll('.ask-input').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const qi = inp.dataset.q;
-      card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-    });
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') collectAskAnswers(card); });
   });
   card.querySelector('#ask-submit').addEventListener('click', () => collectAskAnswers(card));
@@ -713,7 +719,7 @@ function buildAnsweredAskCard(rec) {
       + (o.description ? '<br><span class="ask-desc">' + escapeHtml(o.description) + '</span>' : '') + '</button>').join('');
     let row = '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
       + '<div class="ask-options">' + opts + '</div>';
-    if (rec.status === 'timeout') row += '<div class="ask-a">\u23F3 No answer</div>';
+    if (rec.status && rec.status !== 'answered') row += '<div class="ask-a">\u23F3 No answer</div>';
     else if (isCustom || !labels.length) row += '<div class="ask-a">\u2705 ' + escapeHtml(a) + '</div>';
     return '<div class="ask-block">' + row + '</div>';
   }).join('');
@@ -726,7 +732,11 @@ function collectAskAnswers(card) {
   for (let qi = 0; qi < qs.length; qi++) {
     const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
     const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-    const v = sel ? sel.querySelector('b').textContent : (inp ? inp.value.trim() : '');
+    const label = sel ? sel.querySelector('b').textContent : '';
+    const note = inp ? inp.value.trim() : '';
+    // Selected option + typed note compose ("Label: note"); either alone
+    // stands as-is. No silent wiping in either direction.
+    const v = label && note ? label + ': ' + note : (label || note);
     if (!v) { if (inp) { inp.focus(); inp.placeholder = 'Required'; } return; }
     vals.push(v);
   }
@@ -754,18 +764,18 @@ function buildPendingAskCard(a) {
   if (a.kind === 'consent') {
     const q = a.questions[0] || { question: '(consent request)' };
     card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + ' \u00b7 consent</div>'
-      + '<div class="ask-block">' + askQuestionHtml(q, 0).replace('<div class="ask-options"></div>', '') + '</div>'
-      + '<div class="ask-consent-actions"><input placeholder="Custom answer... (optional)">'
+      + '<div class="ask-block"><div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div></div>'
+      + '<div class="ask-consent-actions"><input placeholder="自定义回复（可选，留空直接点允许/禁止）">'
       + '<button class="ask-allow">允许</button>'
       + '<button class="ask-deny">禁止</button><button class="ask-send">Send</button></div>'
       + '<div class="ask-hint">· 需要长期放行？在好友会话顶部把滑块拨到「允许」</div>';
     const inp = card.querySelector('input');
     const send = v => answerPendingAsk(a, card, v);
-    card.querySelector('.ask-allow').addEventListener('click', () => send('yes'));
-    card.querySelector('.ask-deny').addEventListener('click', () => send('no'));
+    card.querySelector('.ask-allow').addEventListener('click', () => send(inp.value.trim() ? 'yes: ' + inp.value.trim() : 'yes'));
+    card.querySelector('.ask-deny').addEventListener('click', () => send(inp.value.trim() ? 'no: ' + inp.value.trim() : 'no'));
     const custom = () => { if (inp.value.trim()) send(inp.value.trim()); else inp.focus(); };
+    card.querySelector('.ask-consent-actions input').addEventListener('keydown', e => { if (e.key === 'Enter') custom(); });
     card.querySelector('.ask-send').addEventListener('click', custom);
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') custom(); });
   } else {
     card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + '</div>'
       + a.questions.map((q, qi) => '<div class="ask-block">' + askQuestionHtml(q, qi) + '</div>').join('')
@@ -855,6 +865,7 @@ pollPendingAsks();
 /* ---------- friends: room members + read-only comm clone conversations ---------- */
 let friendView = null; // host name while viewing a friend conversation (wire identity)
 let allPeers = []; // [{name, display}] — display is the nickname, "" falls back to name
+let lastFriendPayload = null; // rendered /comm-log JSON: skip no-change repaints
 
 function peerName(p) { return typeof p === 'string' ? p : (p && p.name) || ''; }
 function peerDisplay(p) { return typeof p === 'string' ? p : ((p && p.display) || peerName(p)); }
@@ -866,16 +877,16 @@ function displayOf(host) {
 function leaveFriendView() {
   const wasViewing = friendView !== null;
   friendView = null;
+  lastFriendPayload = null;
   document.getElementById('input-area').style.display = '';
-  document.getElementById('friend-back').style.display = 'none';
   document.getElementById('friend-title').textContent = '';
   document.getElementById('friend-bar').classList.remove('visible');
   renderFriendList();
   if (wasViewing) {
-    // Returning from a friend conversation: openFriendChat wiped the message
-    // area without touching session state, so re-render what was on screen.
+    // openFriendChat wiped the message area without touching session state:
+    // drop the friend rows, then re-render the session that was on screen.
+    msgs.innerHTML = ''; tray.innerHTML = '';
     if (currentSessionId) reloadSessionFromServer();
-    else { msgs.innerHTML = ''; tray.innerHTML = ''; }
   }
 }
 
@@ -910,10 +921,10 @@ function renderFriendList() {
 
 async function openFriendChat(host) {
   friendView = host;
+  lastFriendPayload = null;
   msgs.innerHTML = '';
   tray.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
-  document.getElementById('friend-back').style.display = '';
   document.getElementById('friend-title').textContent = ' \u2014 @' + displayOf(host) + ' \u00b7 clone conversation (read-only)';
   document.getElementById('friend-bar').classList.add('visible');
   renderFriendList();
@@ -949,38 +960,40 @@ function initConsentSlider() {
 }
 
 async function refreshFriendChat() {
-  if (!friendView) return;
+  const host = friendView;
+  if (!host) return;
   try {
-    const r = await fetch('/comm-log?host=' + encodeURIComponent(friendView));
+    const r = await fetch('/comm-log?host=' + encodeURIComponent(host));
     if (!r.ok) return;
     const d = await r.json();
-    renderFriendChat(d.messages || []);
+    if (friendView !== host) return; // raced a switch away: never paint here
+    const payload = JSON.stringify(d);
+    if (payload === lastFriendPayload) return; // unchanged: no flicker
+    lastFriendPayload = payload;
+    renderFriendChat(d);
   } catch (e) {}
 }
 
-function renderFriendChat(rows) {
+/* Friend view renders the comm clone's transcript exactly like a local
+   session (markdown, tool blocks, spawn clickables), plus file-transfer
+   envelope events that never produce agent turns. */
+function renderFriendChat(d) {
   msgs.innerHTML = '';
-  if (!rows.length) {
+  tray.innerHTML = '';
+  registerArchived(d.subagents || []);
+  const messages = d.messages || [];
+  const events = d.events || [];
+  if (!messages.length && !events.length) {
     addDiv('friend-empty', '<i>No clone-to-clone conversation with this host yet.</i>');
     return;
   }
-  rows.forEach(row => {
-    const srcHost = String(row.src || '').split(':')[0];
-    const srcLabel = displayOf(srcHost);
-    if (row.kind === 'chat') {
-      const cls = srcHost === friendView ? 'msg friend-msg peer' : 'msg friend-msg own';
-      addDiv(cls, '<div class="friend-msg-src">' + escapeHtml(srcLabel) + '</div>' + marked.parse(row.text || ''));
-    } else if (row.kind === 'task') {
-      addDiv('msg friend-event task', '&#x1F4E5 Task delegated to ' + escapeHtml(srcHost) + ': ' + escapeHtml(row.text || ''));
-    } else if (row.kind === 'transfer') {
+  renderTranscript(messages, d.asks || []);
+  events.forEach(row => {
+    if (row.kind === 'transfer')
       addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
-    } else if (row.kind === 'result') {
-      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(srcLabel) + ': ' + escapeHtml(String(row.text || '').slice(0, 200)));
-    }
   });
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-document.getElementById('friend-back').addEventListener('click', leaveFriendView);
 setInterval(loadPeers, 5000);
 loadPeers();
