@@ -539,9 +539,6 @@ class RoomRuntime(WebUIRuntime):
         if delegate_tools is not None:
             delegate_tools.abort_fn = should_abort
         tools = dict(clone.tools)
-        # ask_user rides the turn sink so its card streams in the NDJSON flow;
-        # resolution stays on the module-global registry (/answer in-process).
-        tools["ask_user"] = make_ask_tool(sink, should_abort=should_abort)
         trilayer = TriLayer(
             self.room.cfg,
             sink,
@@ -550,6 +547,14 @@ class RoomRuntime(WebUIRuntime):
             child_tool_names=clone.child_tool_names,
             child_extra_tools=clone.child_extra_tools,
             skill_save=clone.skill_save,
+        )
+        # ask_user rides the turn sink so its card streams in the NDJSON flow;
+        # resolution stays on the module-global registry (/answer in-process).
+        # on_answer persists completed asks on the turn agent so sessions
+        # replay answered cards after reload — room mode lost this wiring,
+        # leaving every session's asks bucket permanently empty.
+        tools["ask_user"] = make_ask_tool(
+            sink, on_answer=trilayer.asks.append, should_abort=should_abort
         )
         return trilayer.build_clone_agent(
             sink,

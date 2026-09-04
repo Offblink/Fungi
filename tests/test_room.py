@@ -113,6 +113,41 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
     assert room.hub.asks.get(ask.id)["status"] == "answered"
 
 
+def test_room_turn_persists_answered_asks(server_room):
+    """Room-mode turns must record completed ask_user calls on the agent:
+    the WebUI turn runner saves that bucket, and sessions replay answered
+    cards from it. Room mode lost the on_answer wiring — asks stayed [] on
+    every session file."""
+    import threading
+
+    from fungi.events import FnSink
+
+    room = server_room
+    runtime = room.webui_runtime()
+    events: list[tuple] = []
+    agent = runtime.build_agent(FnSink(lambda t, c: events.append((t, c))), lambda: False)
+
+    out: dict = {}
+    th = threading.Thread(
+        target=lambda: out.update(
+            reply=agent.extra_tools["ask_user"].fn({"question": "proceed?"})
+        ),
+        daemon=True,
+    )
+    th.start()
+
+    def ask_id():
+        asks = [c for t, c in events if t == "ask"]
+        return asks[-1]["id"] if asks else None
+
+    assert _wait(lambda: ask_id() is not None), "ask event never surfaced on the turn sink"
+    assert runtime.route_answer(ask_id(), "yes") is True
+    th.join(timeout=5.0)
+    assert out["reply"].startswith("USER:"), f"ask tool never woke: {out}"
+    assert [a["status"] for a in agent.asks] == ["answered"]
+    assert agent.asks[0]["answers"] == "yes"
+
+
 def test_server_allow_mode_silently_answers(server_room):
     room = server_room
     room.rules.set_mode("alpha", "allow")
