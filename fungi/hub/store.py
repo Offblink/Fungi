@@ -61,6 +61,17 @@ class Store:
             raise GuardError(f"consent required: {host} -> homes/{owner}/")
         if owner == host and mutating and not self._consent_ok(consent_id):
             raise GuardError(f"consent required for own-home write: {host} -> homes/{host}/")
+        # Authoring knowledge bases under public/docs/ is not free: clones
+        # self-authoring skill-like manuals unannounced was judged an
+        # overreach (2026-09-05). Writes there ride a consent card like
+        # home writes; reads stay free so shared manuals remain reachable.
+        if (
+            mutating
+            and pure.parts[0] == "public"
+            and pure.parts[1:2] == ("docs",)
+            and not self._consent_ok(consent_id)
+        ):
+            raise GuardError(f"consent required for public/docs write: {rel!r}")
         resolved = (self.root / pure).resolve()
         if resolved != self.root and self.root not in resolved.parents:
             raise GuardError(f"path escapes data root: {rel!r}")

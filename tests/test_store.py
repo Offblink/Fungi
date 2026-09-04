@@ -23,6 +23,22 @@ def test_public_free_for_any_host(store):
     assert store.read(store.resolve("beta", "public/x.txt")) == "hello"
 
 
+def test_public_docs_write_needs_consent_read_free(store):
+    # Clones self-authoring knowledge bases unannounced was judged an
+    # overreach: writes under public/docs/ ride a consent card, reads stay free.
+    with pytest.raises(GuardError):
+        store.resolve("alpha", "public/docs/manual.md", mutating=True)
+    ask = store.asks.open("alpha", {"action": "write", "path": "public/docs/manual.md"})
+    store.asks.resolve(ask["ask_id"], value="yes")
+    p = store.resolve(
+        "alpha", "public/docs/manual.md", consent_id=ask["ask_id"], mutating=True
+    )
+    store.write(p, "v1")
+    assert store.read(store.resolve("beta", "public/docs/manual.md")) == "v1"
+    # plain public/ files stay free for the transfer protocol
+    store.write(store.resolve("alpha", "public/blob.bin"), "raw")
+
+
 def test_own_home_read_free_write_needs_consent(store):
     p = store.resolve("alpha", "homes/alpha/notes/a.md")
     store.write(p, "# notes")  # direct store.write bypasses the guard
