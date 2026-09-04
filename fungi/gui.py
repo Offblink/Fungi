@@ -21,22 +21,14 @@ import urllib.request
 
 from PyQt5.QtCore import QSettings, Qt, pyqtSignal
 from PyQt5.QtGui import QGuiApplication, QKeySequence
-from PyQt5.QtWidgets import (
-    QApplication,
-    QHBoxLayout,
-    QMainWindow,
-    QShortcut,
-    QStackedWidget,
-    QVBoxLayout,
-    QWidget,
-)
+from PyQt5.QtWidgets import QApplication, QHBoxLayout, QShortcut, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     EditableComboBox,
     FluentIcon,
+    FluentWindow,
     InfoBar,
     LineEdit,
-    Pivot,
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
@@ -464,35 +456,17 @@ class ConfigPage(QWidget):
         )
 
 
-class FungiGui(QMainWindow):
+class FungiGui(FluentWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Fungi")
-        self.resize(860, 500)  # logical; physical = x GUI_SCALE
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        self.pivot = Pivot(central)
-        self.stack = QStackedWidget(central)
         self.host_page = HostPage(self)
         self.join_page = JoinPage(self)
         self.cfg_page = ConfigPage(self)
-        for page, key, text in (
-            (self.host_page, "host", "发起房间"),
-            (self.join_page, "join", "加入房间"),
-            (self.cfg_page, "config", "模型配置"),
-        ):
-            self.stack.addWidget(page)
-            self.pivot.addItem(
-                routeKey=key, text=text, onClick=lambda p=page: self.stack.setCurrentWidget(p)
-            )
-        self.pivot.setCurrentItem("host")
-        title_row = QHBoxLayout()
-        title_row.addWidget(SubtitleLabel("Fungi"), 0, Qt.AlignLeft)
-        title_row.addWidget(self.pivot, 0, Qt.AlignHCenter)
-        title_row.addStretch(1)
-        root.addLayout(title_row)
-        root.addWidget(self.stack, 1)
+        self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
+        self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
+        self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
+        self.setWindowTitle("Fungi")
+        self.resize(900, 560)  # sidebar layout needs a little width for the nav
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         for page in (self.host_page, self.join_page):
