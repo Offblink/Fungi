@@ -149,7 +149,7 @@ function renderMessages(s) {
    markdown text, reasoning details, tool blocks, answered ask cards. */
 function renderTranscript(messages, asks) {
   let toolBlocks = {};
-  const askQueue = (asks || []).slice(); // replayed in order at their ask_user call site
+  const askQueue = (asks || []).slice(); // replayed in order at their confirm call site (legacy ask_user too)
   for (const m of messages || []) {
     if (m.role === 'user') addDiv('user', marked.parse(m.content || ''));
     else if (m.role === 'assistant') {
@@ -173,7 +173,7 @@ function renderTranscript(messages, asks) {
         d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(tc.function?.name || 'tool') + argsHtml + '</div><div class="tool-result"></div>';
         msgs.appendChild(d);
         if (tc.function?.name === 'spawn') makeSpawnBlockClickable(d, tc.id);
-        if (tc.function?.name === 'ask_user') {
+        if (tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
           const rec = askQueue.shift();
           if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
         }

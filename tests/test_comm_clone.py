@@ -47,7 +47,7 @@ def test_comm_clone_tool_surface():
         "send_peer",
         "send_file",
         "ask_consent",
-        "ask_user",
+        "confirm",
         "read_file",
         "write_file",
         "edit_file",

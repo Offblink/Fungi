@@ -4,7 +4,7 @@ Host-local policy, persisted at ~/.fungi/consent_rules.json (path injectable
 for tests). The local clone checks the rules in on_ask: a consent-shaped ask
 from a host whose mode is "allow" is answered with an answer envelope
 (value=yes) immediately — no notification, no card. Mode "ask" (the default)
-raises a card. Generic ask_user never auto-allows.
+raises a card. Generic confirm never auto-allows.
 
 Modes are visible and reversible from the WebUI friend view (slider). Legacy
 "always_allow" address lists from earlier versions migrate to host modes so

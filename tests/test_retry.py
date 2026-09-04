@@ -110,7 +110,7 @@ def test_repair_closes_gap_before_next_user_message() -> None:
     msgs = [
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "checking", "tool_calls": [
-            {"id": "t1", "function": {"name": "ask_user"}},
+            {"id": "t1", "function": {"name": "confirm"}},
         ]},
         {"role": "user", "content": "hello?"},
     ]

@@ -21,7 +21,7 @@ Rules:
 be a file or a FOLDER (folders are zipped automatically); the receiving user must accept it. \
 Never ask the peer's clone how to transfer files; send_file is the way.
 - The shared store (`public/` for friend-shared files, `homes/<host>/` per host) {store_hint}
-- ask_user questions surface as system notifications with a WebUI card.
+- confirm questions surface as system notifications with a WebUI card.
 """
 
 STORE_LOCAL = (
@@ -49,7 +49,7 @@ def build_local_clone(
 ) -> Clone:
     addr = f"{host}:local"
     pending = PendingAsks()
-    tools = {"ask_user": make_ask_tool(sink)}
+    tools = {"confirm": make_ask_tool(sink)}
     delegate_tools = None
     if peers_fn is not None:
         delegate_tools = DelegateTools(addr, transport, pending, peers_fn, ask_timeout_s)

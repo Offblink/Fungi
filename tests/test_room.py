@@ -114,7 +114,7 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
 
 
 def test_room_turn_persists_answered_asks(server_room):
-    """Room-mode turns must record completed ask_user calls on the agent:
+    """Room-mode turns must record completed confirm calls on the agent:
     the WebUI turn runner saves that bucket, and sessions replay answered
     cards from it. Room mode lost the on_answer wiring — asks stayed [] on
     every session file."""
@@ -130,7 +130,7 @@ def test_room_turn_persists_answered_asks(server_room):
     out: dict = {}
     th = threading.Thread(
         target=lambda: out.update(
-            reply=agent.extra_tools["ask_user"].fn({"question": "proceed?"})
+            reply=agent.extra_tools["confirm"].fn({"question": "proceed?"})
         ),
         daemon=True,
     )
@@ -146,6 +146,52 @@ def test_room_turn_persists_answered_asks(server_room):
     assert out["reply"].startswith("USER:"), f"ask tool never woke: {out}"
     assert [a["status"] for a in agent.asks] == ["answered"]
     assert agent.asks[0]["answers"] == "yes"
+
+
+def test_confirm_notifies_only_when_webui_idle(server_room):
+    """The in-turn ask card lives in the NDJSON turn stream: without an open
+    WebUI it is invisible while the turn blocks up to 15 minutes. A system
+    notification must fire exactly when nobody is looking (no recent HTTP
+    activity) and stay quiet while a browser is polling."""
+    import threading
+    from types import SimpleNamespace
+
+    from fungi.events import FnSink
+
+    room = server_room
+    runtime = room.webui_runtime()
+    calls: list[tuple] = []
+    room.notifier = SimpleNamespace(ask=lambda src, text: calls.append((src, text)))
+
+    events: list[tuple] = []
+    agent = runtime.build_agent(FnSink(lambda t, c: events.append((t, c))), lambda: False)
+    tool = agent.extra_tools["confirm"]
+
+    def ask_id(n: int) -> object:
+        ids = [c["id"] for t, c in events if t == "ask"]
+        return ids[n - 1] if len(ids) >= n else None
+
+    def run_ask() -> threading.Thread:
+        th = threading.Thread(
+            target=lambda: tool.fn({"question": "proceed?"}), daemon=True
+        )
+        th.start()
+        return th
+
+    # nobody watching: stale last_seen -> notification fires
+    th = run_ask()
+    assert _wait(lambda: ask_id(1) is not None), "first ask never surfaced"
+    assert runtime.route_answer(ask_id(1), "yes") is True
+    th.join(timeout=5.0)
+    assert calls and calls[0][1] == "proceed?"
+
+    # a browser is polling (fresh touch): the card is on screen, no toast
+    runtime.touch()
+    th = run_ask()
+    assert _wait(lambda: ask_id(2) is not None), "second ask never surfaced"
+    assert runtime.route_answer(ask_id(2), "yes") is True
+    th.join(timeout=5.0)
+    assert len(calls) == 1, "notification fired while the WebUI was clearly open"
 
 
 def test_server_allow_mode_silently_answers(server_room):
@@ -298,7 +344,7 @@ def test_slider_keys_on_logical_requester_not_envelope_src(server_room):
     assert room.cards.pending() == []
 
 
-def test_slider_does_not_auto_allow_generic_ask_user(server_room):
+def test_slider_does_not_auto_allow_generic_confirm(server_room):
     room = server_room
     room.rules.set_mode("alpha", "allow")
     requester_inbox = room.hub.relay.register_local("alpha:comm-beta")
@@ -310,7 +356,7 @@ def test_slider_does_not_auto_allow_generic_ask_user(server_room):
     )
     time.sleep(0.3)
     assert not any(m.type == "answer" for m in _all_msgs(requester_inbox))
-    assert room.cards.pending(), "generic ask_user must still raise a card"
+    assert room.cards.pending(), "generic confirm must still raise a card"
 
 
 # ── client role ──
@@ -422,6 +468,46 @@ def test_comm_turn_transcript_recorded_for_friend_view(server_room):
     assert d["subagents"][0]["id"] == "s1"
     assert d["asks"][0]["id"] == "a1"
     assert isinstance(d["events"], list)
+
+
+def test_comm_log_http_route_returns_full_payload(server_room):
+    """Regression: the /comm-log route re-wrapped the already-dict payload as
+    {"messages": {messages, events, ...}} — the frontend iterated an object
+    as an array, threw into its swallowed catch, and the friend view stayed
+    blank forever. The route must return comm_log's payload unchanged."""
+    import json
+    import threading
+    import urllib.request
+
+    from fungi.server import make_webui_server
+
+    room = server_room
+
+    class NoState:
+        subagents = {}
+        asks: list = []
+
+    room._record_comm_turn(
+        "beta",
+        "chat",
+        [{"role": "assistant", "content": "hello"}],
+        NoState,
+    )
+
+    server = make_webui_server(0, room.webui_runtime())
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        host, port = server.server_address[:2]
+        with urllib.request.urlopen(
+            f"http://{host}:{port}/comm-log?host=beta", timeout=5.0
+        ) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert isinstance(payload["messages"], list)
+    assert payload["messages"][-1]["content"] == "hello"
+    assert isinstance(payload["events"], list)
 
 
 def test_comm_task_turn_appends_after_chat_transcript(server_room):

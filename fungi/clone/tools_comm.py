@@ -173,7 +173,7 @@ class CommTools:
             self.consent_id = ask_id
         return text
 
-    def ask_user(self, args: dict) -> str:
+    def confirm(self, args: dict) -> str:
         questions = _normalize_questions(args)
         if not questions:
             return "ERROR: Missing required argument: question"
@@ -227,7 +227,7 @@ class CommTools:
             "send_peer": BoundTool(schema=_SCHEMA_SEND_PEER, fn=self.send_peer),
             "send_file": BoundTool(schema=_SCHEMA_SEND_FILE, fn=self.send_file),
             "ask_consent": BoundTool(schema=_SCHEMA_ASK_CONSENT, fn=self.ask_consent),
-            "ask_user": BoundTool(schema=_SCHEMA_ASK_USER, fn=self.ask_user),
+            "confirm": BoundTool(schema=_SCHEMA_CONFIRM, fn=self.confirm),
             "read_file": BoundTool(schema=_SCHEMA_READ, fn=self.read_file),
             "write_file": BoundTool(schema=_SCHEMA_WRITE, fn=self.write_file),
             "edit_file": BoundTool(schema=_SCHEMA_EDIT, fn=self.edit_file),
@@ -288,9 +288,9 @@ _SCHEMA_ASK_CONSENT = _obj_schema(
     },
     ["host", "action", "path"],
 )
-_SCHEMA_ASK_USER = _obj_schema(
+_SCHEMA_CONFIRM = _obj_schema(
     {
-        "__name": "ask_user",
+        "__name": "confirm",
         "__desc": "Ask your own host's user a question via system notification + WebUI card. Blocks until answered.",
         "question": _str_schema("question", "the question", required=False),
         "options": {"type": "array", "description": "optional answer options"},

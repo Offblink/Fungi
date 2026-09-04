@@ -1,7 +1,7 @@
 """Reusable blocking ask with dual wake sources.
 
 A clone registers an ask id and blocks in wait(); the wake arrives either from
-an in-process resolve (local clone's ask_user via HTTP /answer) or from an
+an in-process resolve (local clone's confirm via HTTP /answer) or from an
 answer envelope pulled off the message plane (comm clones' ask/consent).
 Timeout and heartbeat are per-wait parameters so callers keep control.
 """

@@ -65,7 +65,7 @@ hub 内存态：名册、各 clone inbox、pending-ask 注册表（ask_id → �
 ask 是普通消息，不需要独立协调设施：
 
 ```
-请求方 clone 调 ask_consent / ask_user
+请求方 clone 调 ask_consent / confirm
   → 发 ask envelope（to=目标 host:local）
   → PendingAsk 注册表登记，threading.Event 阻塞（复用 YESIR tools/ask.py 机制）
   → relay 投到目标 host 的本机 clone → 弹系统通知
@@ -82,18 +82,18 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.1 通讯 clone
 
-- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`ask_consent(host, action, path, reason)`、`ask_user(...)`、spawn。
+- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`ask_consent(host, action, path, reason)`、`confirm(...)`、spawn。
 - 路径守卫：`public/` 自由；`homes/<owner>/` 非属主需 consent（ask_consent 发往属主 host 的 local clone）；`homes/<own>/` 与自身会话目录需自身用户 consent；`sessions/` 拒绝。
 - 自主交流：对位通讯 clone 之间 chat/task 自由往来，无需用户参与；涉及 `public/` 之外的文件操作才触发 consent。
 
 ### 6.2 本机 clone
 
-- 工具：YESIR 原生全套（shell/web/ask_user…）+ `delegate(host, goal, reply_format)` + `peers()`。
+- 工具：YESIR 原生全套（shell/web/confirm…）+ `delegate(host, goal, reply_format)` + `peers()`。
 - 用户仅与本机 clone 对话（核心洞见 2）；delegate 内部把 task envelope 发给对应通讯 clone 并阻塞等 result。
 
 ### 6.3 ask 汇聚
 
-所有 ask（含通讯 clone 的 ask_user / ask_consent）统一为 ask envelope 落到目标 host 的本机 clone → 系统通知 → WebUI 卡片。本机 clone 自己的 ask_user 是同一机制的同进程特例（直连 PendingAsk，不过网络）。
+所有 ask（含通讯 clone 的 confirm / ask_consent）统一为 ask envelope 落到目标 host 的本机 clone → 系统通知 → WebUI 卡片。本机 clone 自己的 confirm 是同一机制的同进程特例（直连 PendingAsk，不过网络）。
 
 ## 7. WebUI 与托盘
 
@@ -136,7 +136,7 @@ ask 是普通消息，不需要独立协调设施：
   可见可逆开关（WebUI 好友会话顶部滑块，左=允许，右=询问），存于 `~/.fungi/consent_rules.json`
   的 `modes`（host → allow|ask，默认 ask）；旧版 `always_allow` 地址列表自动迁移为 host 模式。
   判定键为 ask body 的 `from`（逻辑请求方）——传输回执的 envelope src 是接收方自己的
-  comm clone，按 src 键控会错挂到自家 host。ask_user（通用提问）永不自动放行。
+  comm clone，按 src 键控会错挂到自家 host。confirm（通用提问）永不自动放行。
 - **display-name 层（2026-09-04）**：wire 身份仍是 ASCII 安全的 host 名（envelope 地址、
   URL、文件名——主机名强校验的理由不变），昵称只走展示层。`Member.display` 随 join 携带、
   re-join 刷新（UI 改名无需重启）；`/api/peers` 与 join/heartbeat 的 `roster` 字段返回

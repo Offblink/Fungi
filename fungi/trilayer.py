@@ -39,7 +39,7 @@ context. Trivial one-step actions (a single read or a single command) are
 better done directly with your own tools.
 
 ## Asking the user
-You are the only layer that can ask the user a question. Use `ask_user` when
+You are the only layer that can ask the user a question. Use `confirm` when
 a decision genuinely needs the user's input (choosing between approaches,
 confirming something hard to undo). Offer clear `options` when possible; the
 user can also type a free-form answer. Asking blocks the turn until they
@@ -172,7 +172,7 @@ class TriLayer:
         self._lock = threading.Lock()
         # spec_id -> {id, call_id, layer, goal, reply_format, status, events: [...]}
         self.subagents: dict[str, dict] = {}
-        self.asks: list[dict] = []  # completed ask_user records (for persistence)
+        self.asks: list[dict] = []  # completed confirm records (for persistence)
 
     def bound_spawn(self, parent_layer: int) -> BoundTool:
         """The spawn tool bound to a parent layer: L1 spawns L2, L2 spawns L3."""
@@ -191,7 +191,7 @@ class TriLayer:
             system_prompt=SYSTEM_PROMPT + L1_ADDENDUM + skills.section(),
             extra_tools={
                 "spawn": self.bound_spawn(1),
-                "ask_user": make_ask_tool(
+                "confirm": make_ask_tool(
                     sink, on_answer=self.asks.append, should_abort=self._should_abort
                 ),
                 **mcp_extra_tools(self.cfg.mcp_servers),
@@ -203,7 +203,7 @@ class TriLayer:
             should_abort=self._should_abort,
         )
         # Persisted by the WebUI turn runner (server.py / room.py): spawn
-        # records + completed ask_user records for session replay.
+        # records + completed confirm records for session replay.
         agent.subagents = self.subagents
         agent.asks = self.asks
         return agent
