@@ -97,6 +97,14 @@ async function reloadSessionFromServer() {
 }
 async function closeCurrentSession() {
   if (!currentSessionId) return;
+  if (processing && turn && turn.sessionId === currentSessionId) {
+    // A turn is running in this session: never delete or save over it. The
+    // server persists the whole turn on its own at turn end — just detach.
+    // (2026-09-04: switching sessions before the first token arrived deleted
+    // the session out from under the running turn — the response vanished.)
+    currentSessionId = null;
+    return;
+  }
   if (!sessionDirty) { currentSessionId = null; return; }
   const list = rawMessages;
   if (!list || list.length <= 1) {
@@ -530,6 +538,7 @@ function handleTurnEvent(obj) {
       status.textContent = t.aborted ? 'Aborted. Press Alt+R to continue.'
         : (failed ? 'Turn failed. Press Alt+R to retry.' : '');
       if (viewing) reloadSessionFromServer();
+      else loadSessions(); // the finished turn landed in a background session
       break;
     }
   }
