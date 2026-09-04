@@ -50,15 +50,17 @@ def build_local_clone(
     addr = f"{host}:local"
     pending = PendingAsks()
     tools = {"ask_user": make_ask_tool(sink)}
+    delegate_tools = None
     if peers_fn is not None:
-        tools.update(DelegateTools(addr, transport, pending, peers_fn, ask_timeout_s).bound())
+        delegate_tools = DelegateTools(addr, transport, pending, peers_fn, ask_timeout_s)
+        tools.update(delegate_tools.bound())
     # MCP servers from config.json reach the user-facing clone in room mode too
     # (room.py used to drop them entirely — "single-host concern" was wrong).
     tools.update(mcp_extra_tools(cfg.mcp_servers))
     prompt = system_prompt or LOCAL_SYSTEM_PROMPT.format(
         host=host, store_hint=STORE_LOCAL if local_store else STORE_REMOTE
     )
-    return Clone(
+    clone = Clone(
         addr,
         transport,
         cfg,
@@ -74,3 +76,7 @@ def build_local_clone(
         child_tool_names=BASE_TOOL_NAMES,
         skill_save=True,
     )
+    # Room runtime injects the per-turn abort predicate here (room.py) so a
+    # stopped turn wakes a blocked delegate/send_file wait.
+    clone.delegate_tools = delegate_tools
+    return clone

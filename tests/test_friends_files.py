@@ -426,3 +426,68 @@ def test_local_send_file_rejects_unknown_peer():
     )
     out = tools.send_file({"host": "ghost", "path": "x.txt"})
     assert "unknown or offline peer" in out
+
+
+def test_local_delegate_rejects_unknown_peer():
+    tools = DelegateTools(
+        "alpha:local",
+        RemoteTransport(None),  # guard rejects before any transport use
+        PendingAsks(),
+        lambda: [],
+        timeout_s=5,
+    )
+    out = tools.delegate({"host": "ghost", "goal": "g"})
+    assert "unknown or offline peer" in out
+
+
+def test_local_delegate_missing_args_lists_received_keys():
+    tools = DelegateTools(
+        "alpha:local", RemoteTransport(None), PendingAsks(), lambda: [], timeout_s=5
+    )
+    out = tools.delegate({"goal": "g", "context": "c"})
+    assert "host" in out
+    assert "['context', 'goal']" in out
+
+
+def test_local_delegate_fails_fast_on_bounce():
+    class BounceTransport:
+        def send(self, _env):
+            return {"ok": False, "status": "bounced"}
+
+    tools = DelegateTools(
+        "alpha:local", BounceTransport(), PendingAsks(), lambda: ["beta"], timeout_s=30
+    )
+    t0 = time.monotonic()
+    out = tools.delegate({"host": "beta", "goal": "g"})
+    assert "not reachable" in out
+    assert time.monotonic() - t0 < 2
+
+
+def test_local_delegate_wakes_on_abort():
+    class OkTransport:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, env):
+            self.sent.append(env)
+            return {"ok": True, "status": "delivered"}
+
+    transport = OkTransport()
+    stop = threading.Event()
+    tools = DelegateTools(
+        "alpha:local", transport, PendingAsks(), lambda: ["beta"], timeout_s=60
+    )
+    tools.abort_fn = stop.is_set
+    out: list[str] = []
+
+    def run():
+        out.append(tools.delegate({"host": "beta", "goal": "g"}))
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    time.sleep(0.3)
+    stop.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert transport.sent, "envelope never sent"
+    assert "stopped" in out[0]

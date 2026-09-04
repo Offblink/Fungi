@@ -2,6 +2,7 @@
 remote hosts."""
 
 import tempfile
+import time
 import uuid
 import zipfile
 from pathlib import Path
@@ -26,26 +27,60 @@ class DelegateTools:
         self.pending = pending
         self.peers_fn = peers_fn
         self.timeout_s = timeout_s
+        # Per-turn abort predicate, wired by the room runtime (room.py).
+        self.abort_fn = None
+
+    def _send_and_wait(self, env: Envelope) -> tuple[str, object]:
+        """Register, send, and block for the result envelope. Fails fast on a
+        bounced delivery or a stopped turn (the old code held the turn for up
+        to timeout_s against an offline peer — the user saw an endless
+        'Writing...' with no way out)."""
+        self.pending.register(env.id)
+        deadline = time.monotonic() + self.timeout_s
+        try:
+            sent = self.transport.send(env)
+            if isinstance(sent, dict) and sent.get("status") == "bounced":
+                return "bounced", None
+            while True:
+                if self.abort_fn is not None and self.abort_fn():
+                    return "aborted", None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout", None
+                answered, value = self.pending.wait(env.id, timeout_s=min(1.0, remaining))
+                if answered:
+                    return "answered", value
+        finally:
+            self.pending.discard(env.id)
 
     def delegate(self, args: dict) -> str:
         host = str(args.get("host") or "").strip()
         goal = str(args.get("goal") or "").strip()
         reply_format = str(args.get("reply_format") or "").strip()
-        if not host or not goal:
-            return "ERROR: Required arguments: host, goal"
+        missing = [k for k, v in (("host", host), ("goal", goal)) if not v]
+        if missing:
+            return (
+                "ERROR: missing required argument(s): " + ", ".join(missing)
+                + f" (received keys: {sorted(args) or 'none'})"
+                + " — re-issue the tool call with the complete JSON arguments."
+            )
+        if host == self.host:
+            return "ERROR: host must be a peer, not yourself"
+        known = self.peers_fn() or []
+        if host not in known:
+            return f"ERROR: unknown or offline peer: {host} (peers: {', '.join(known) or 'none'})"
         env = Envelope(
             src=self.addr,
             dst=f"{host}:comm-{self.host}",
             type="task",
             body={"goal": goal, "reply_format": reply_format, "context": args.get("context")},
         )
-        self.pending.register(env.id)
-        self.transport.send(env)
-        try:
-            answered, body = self.pending.wait(env.id, timeout_s=self.timeout_s)
-        finally:
-            self.pending.discard(env.id)
-        if not answered:
+        status, body = self._send_and_wait(env)
+        if status == "bounced":
+            return f"FAIL: {host} is not reachable in the room right now"
+        if status == "aborted":
+            return "FAIL: turn was stopped while waiting for the remote result"
+        if status == "timeout":
             return "FAIL: no response from remote host (timeout)"
         if not isinstance(body, dict) or not body.get("ok"):
             return f"FAIL: {body}"
@@ -105,13 +140,12 @@ class DelegateTools:
                 "from": self.addr,
             },
         )
-        self.pending.register(env.id)
-        self.transport.send(env)
-        try:
-            answered, value = self.pending.wait(env.id, timeout_s=self.timeout_s)
-        finally:
-            self.pending.discard(env.id)
-        if not answered:
+        status, value = self._send_and_wait(env)
+        if status == "bounced":
+            return f"FAIL: {host} is not reachable in the room right now"
+        if status == "aborted":
+            return "FAIL: turn was stopped while waiting for the transfer receipt"
+        if status == "timeout":
             return "FAIL: no response from remote host (timeout)"
         if not isinstance(value, dict):
             return "ERROR: malformed transfer result"

@@ -531,6 +531,9 @@ class RoomRuntime(WebUIRuntime):
     # ── turns ──
     def build_agent(self, sink, should_abort) -> Agent:
         clone = self.room.local
+        delegate_tools = getattr(clone, "delegate_tools", None)
+        if delegate_tools is not None:
+            delegate_tools.abort_fn = should_abort
         tools = dict(clone.tools)
         # ask_user rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).
