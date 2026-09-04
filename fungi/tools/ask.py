@@ -14,7 +14,7 @@ from fungi.agent import BoundTool
 from fungi.events import Sink
 from fungi.pending import PendingAsks
 
-ASK_TIMEOUT_S = 300
+ASK_TIMEOUT_S = 900
 HEARTBEAT_S = 15
 
 ASK_SCHEMA = {

@@ -29,6 +29,9 @@ class Config:
     inbox_dir: str = ""  # empty -> PROJECT_ROOT / "inbox"
     # Presentation nickname shown to friends; never used on the wire.
     display: str = ""
+    # >0: send max_tokens on every completion (0 = provider default). Rationale:
+    # reasoning-heavy turns can die at the provider's output cap with an empty reply.
+    max_tokens: int = 0
 
     @property
     def configured(self) -> bool:
@@ -69,6 +72,8 @@ def load_config(path: Path | None = None) -> Config:
             cfg.inbox_dir = str(data["inbox_dir"])
         if data.get("display"):
             cfg.display = str(data["display"])
+        if data.get("max_tokens"):
+            cfg.max_tokens = int(data["max_tokens"])
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -78,11 +83,13 @@ def load_config(path: Path | None = None) -> Config:
 def save_config(cfg: Config, path: Path | None = None) -> None:
     """Persist api_key/endpoint/model (and system_prompt when set) to JSON."""
     target = path if path is not None else CONFIG_PATH
-    data: dict[str, str] = {
+    data: dict[str, str | int] = {
         "api_key": cfg.api_key,
         "endpoint": cfg.endpoint,
         "model": cfg.model,
     }
+    if cfg.max_tokens:
+        data["max_tokens"] = cfg.max_tokens
     if cfg.layer_models:
         data["models"] = {str(k): cfg.layer_models[k] for k in sorted(cfg.layer_models)}
     if cfg.system_prompt:

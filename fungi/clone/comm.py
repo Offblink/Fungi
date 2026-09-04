@@ -34,7 +34,7 @@ def build_comm_clone(
     cfg: Config,
     sink: Sink,
     llm=None,
-    ask_timeout_s: float = 600.0,
+    ask_timeout_s: float = 1800.0,
     poll_timeout: float = 5.0,
     system_prompt: str | None = None,
     inbox_dir: Path | None = None,

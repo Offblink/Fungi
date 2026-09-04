@@ -60,12 +60,14 @@ def stream_chat(
     tools: list[dict],
     on_delta: DeltaCallback | None = None,
     should_abort: Callable[[], bool] | None = None,
+    max_tokens: int | None = None,
 ) -> LLMResult:
     """One streaming completion; raises LLMError on failure, LLMAbortedError
     (carrying the partial result) when `should_abort` fires mid-stream."""
-    body = json.dumps(
-        {"model": model, "messages": messages, "tools": tools, "stream": True}
-    ).encode("utf-8")
+    payload: dict = {"model": model, "messages": messages, "tools": tools, "stream": True}
+    if max_tokens:
+        payload["max_tokens"] = max_tokens
+    body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
         endpoint,
         data=body,
@@ -82,6 +84,8 @@ def stream_chat(
 
     result = LLMResult()
     tool_acc: dict[int, dict] = {}
+    finish_reason: str | None = None
+    saw_done = False
 
     def _aborted() -> bool:
         return should_abort is not None and should_abort()
@@ -98,6 +102,7 @@ def stream_chat(
                     continue
                 payload = line[len("data: ") :]
                 if payload == "[DONE]":
+                    saw_done = True
                     break
                 try:
                     chunk = json.loads(payload)
@@ -106,6 +111,9 @@ def stream_chat(
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = fr
                 delta = choices[0].get("delta") or {}
                 reasoning = delta.get("reasoning_content")
                 if reasoning:
@@ -122,5 +130,15 @@ def stream_chat(
     except OSError as exc:
         raise LLMError(f"Stream interrupted: {exc}") from exc
 
+    if finish_reason == "length" and not result.content and not result.tool_calls:
+        raise LLMError(
+            "Output token cap hit (finish_reason=length): the model's reasoning consumed "
+            'the budget before producing a reply. Set "max_tokens" in config.json to raise it.'
+        )
+    if finish_reason is None and not saw_done:
+        raise LLMError(
+            "Stream ended without a finish signal: the connection closed before the model "
+            "finished generating (partial output only)."
+        )
     result.tool_calls = [tool_acc[i] for i in sorted(tool_acc)]
     return result

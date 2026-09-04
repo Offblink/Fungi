@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from fungi.llm import LLMAbortedError, LLMResult, _apply_delta, stream_chat
+from fungi.llm import LLMAbortedError, LLMError, LLMResult, _apply_delta, stream_chat
 
 
 def test_tool_call_single_complete():
@@ -110,5 +110,71 @@ def test_stream_chat_abort_mid_stream_carries_partial():
                 should_abort=should_abort,
             )
         assert excinfo.value.partial.content == "one"
+    finally:
+        server.shutdown()
+
+
+def test_stream_chat_length_cap_with_empty_reply_raises():
+    """finish_reason=length with no content/tool_calls -> LLMError naming the fix;
+    max_tokens is forwarded into the request body when set."""
+    lines = [
+        b'data: {"choices": [{"delta": {"reasoning_content": "thinking"}, "finish_reason": null}]}\n\n',
+        b'data: {"choices": [{"delta": {}, "finish_reason": "length"}]}\n\n',
+        b"data: [DONE]\n\n",
+    ]
+    bodies: list[bytes] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            bodies.append(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for line in lines:
+                self.wfile.write(line)
+                self.wfile.flush()
+
+        def log_message(self, fmt, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        with pytest.raises(LLMError) as excinfo:
+            stream_chat("m", url, "k", [{"role": "user", "content": "hi"}], [], max_tokens=123)
+        assert "max_tokens" in str(excinfo.value)
+        assert b'"max_tokens": 123' in bodies[0]
+    finally:
+        server.shutdown()
+
+
+def test_stream_chat_early_close_without_finish_signal_raises():
+    """Server closing mid-generation (no finish_reason, no [DONE]) -> LLMError,
+    never a silent empty reply."""
+    lines = [
+        b'data: {"choices": [{"delta": {"reasoning_content": "partial thought"}}]}\n\n',
+    ]
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for line in lines:
+                self.wfile.write(line)
+                self.wfile.flush()
+            # no [DONE], no finish_reason: socket just closes
+
+        def log_message(self, fmt, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        with pytest.raises(LLMError) as excinfo:
+            stream_chat("m", url, "k", [{"role": "user", "content": "hi"}], [])
+        assert "finish signal" in str(excinfo.value)
     finally:
         server.shutdown()

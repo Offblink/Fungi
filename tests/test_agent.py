@@ -138,7 +138,7 @@ def test_llm_error_reported_not_raised():
 
 def test_max_rounds_guard():
     endless = LLMResult(tool_calls=[tool_call("bash", '{"command": "echo x"}', call_id="loop")])
-    agent, _fake, events = make_agent([endless] * 25)
+    agent, _fake, events = make_agent([endless] * fungi_agent.MAX_TOOL_ROUNDS)
     messages = [{"role": "user", "content": "go"}]
     agent.run(messages)
 
@@ -226,7 +226,14 @@ def test_should_abort_passed_to_stream_chat(monkeypatch):
     """Default LLM path forwards the abort predicate to stream_chat."""
 
     def fake_stream(
-        _model, _endpoint, _api_key, _messages, _tool_defs, _on_delta=None, should_abort=None
+        _model,
+        _endpoint,
+        _api_key,
+        _messages,
+        _tool_defs,
+        _on_delta=None,
+        should_abort=None,
+        max_tokens=None,  # noqa: ARG001 (fake must accept stream_chat kwarg names)
     ):
         seen.append(should_abort)
         return LLMResult(content="ok")

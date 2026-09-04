@@ -10,7 +10,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-BASH_TIMEOUT = 120
+BASH_TIMEOUT = 600
 TRUNCATE_BASH = 8000
 
 

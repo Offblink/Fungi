@@ -23,7 +23,7 @@ from ..protocol import Envelope, parse_addr
 from ..trilayer import TriLayer
 
 TURN_TYPES = ("chat", "task", "transfer")
-MAX_CHAT_HISTORY = 40  # chat messages kept per clone; older entries are dropped
+MAX_CHAT_HISTORY = 200  # chat messages kept per clone; older entries are dropped
 
 
 class LocalTransport:

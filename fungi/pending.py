@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-DEFAULT_TIMEOUT_S = 600.0
+DEFAULT_TIMEOUT_S = 1800.0
 DEFAULT_HEARTBEAT_S = 15.0
 
 

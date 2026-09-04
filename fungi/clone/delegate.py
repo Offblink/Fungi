@@ -12,7 +12,7 @@ class DelegateTools:
         transport,
         pending: PendingAsks,
         peers_fn,
-        timeout_s: float = 600.0,
+        timeout_s: float = 1800.0,
     ):
         self.addr = addr
         self.host, self.role, self.peer = parse_addr(addr)

@@ -23,7 +23,7 @@ class CommTools:
         addr: str,
         transport,
         pending: PendingAsks,
-        ask_timeout_s: float = 600.0,
+        ask_timeout_s: float = 1800.0,
         inbox_dir: Path | None = None,
     ):
         self.addr = addr

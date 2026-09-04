@@ -27,7 +27,7 @@ def build_local_clone(
     sink: Sink,
     llm=None,
     peers_fn=None,
-    ask_timeout_s: float = 600.0,
+    ask_timeout_s: float = 1800.0,
     poll_timeout: float = 5.0,
     on_ask=None,
     system_prompt: str | None = None,

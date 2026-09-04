@@ -10,8 +10,8 @@ from fungi.config import Config
 from fungi.events import EmitFn, Sink
 from fungi.llm import LLMAbortedError, LLMError, LLMResult, stream_chat
 
-MAX_TOOL_ROUNDS = 25
-TRUNCATE_TOOL_RESULT = 8000
+MAX_TOOL_ROUNDS = 100
+TRUNCATE_TOOL_RESULT = 16000
 
 SYSTEM_PROMPT = """\
 You are a coding assistant. You have tools to read, write, edit files, run
@@ -29,7 +29,7 @@ shell commands, search code, and access the web. Core rules:
 - When you need up-to-date information, use `web_search` to find sources,
   then `web` to read the full pages you need.
 
-- Tool output is truncated at ~8000 chars. Plan reads accordingly.
+- Tool output is truncated at ~16000 chars. Plan reads accordingly.
 - After completing a task, summarize what you did.
 - NEVER fabricate file contents or command output.
 - If a tool returns no results or an error, try a different approach —
@@ -115,6 +115,7 @@ class Agent:
             tool_defs,
             on_delta,
             should_abort=self._aborted,
+            max_tokens=self.cfg.max_tokens or None,
         )
         # Reasoning-only turns (pure tool calls) never see a text delta.
         if state["started"] and not state["ended"]:
