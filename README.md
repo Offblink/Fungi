@@ -44,8 +44,7 @@ pip install ruff pytest  # 仅开发
 # 模型配置（config.json，同目录；不入库）
 # { "api_key": "...", "endpoint": "https://api.z.ai/api/paas/v4/chat/completions", "model": "glm-5.3-flash" }
 
-# 主机 A：起房（托盘常驻，默认端口 8765，start.bat 等价于下面第一条）
-start.bat
+# 主机 A：起房（图形启动器 python start.py，或托盘模式直接：
 python -m fungi --server [--name alpha] [--token T] [--port P] [--data DIR]
 
 # 主机 B / C：加入（join 命令与真实 LAN IP 由 server 启动时打印）

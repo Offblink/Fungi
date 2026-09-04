@@ -1,11 +1,16 @@
 """Fungi GUI launcher: three pages — 发起房间 / 加入房间 / 模型配置.
 
-Replaces start.bat. Wire identity stays the machine host name; the nickname is
-the display layer (--display). The hub binds the fixed anchor port 8899 (Face
-convention) so a joiner only types the host's IP + token. Each launch spawns
-the room process (tray + WebUI) in its own console window.
+Entry: ``python start.py`` (or ``python -m fungi --gui``). Wire identity stays
+the machine host name; the nickname is the display layer (--display). The hub
+binds the fixed anchor port 8899 (Face convention) so a joiner only types the
+host's IP + token. Each launch spawns the room process (tray + WebUI) in its
+own console window.
+
+The whole UI scales proportionally (fonts and window together) via
+QT_SCALE_FACTOR — set FUNGI_GUI_SCALE to override (default 1.4).
 """
 
+import os
 import secrets
 import socket
 import subprocess
@@ -14,7 +19,7 @@ import sys
 # The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
 # not installed and its import name would clobber this one), so the GUI rides
 # PyQt5; the fluent components are the same library Face uses (same look).
-from PyQt5.QtCore import QSettings
+from PyQt5.QtCore import QSettings, Qt
 from PyQt5.QtGui import QGuiApplication, QKeySequence
 from PyQt5.QtWidgets import QApplication, QHBoxLayout, QShortcut, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -35,6 +40,7 @@ from .protocol import BAD_NAME_MSG, valid_host_name
 GUI_PORT = 8899  # fixed anchor port: join pages only ever ask for an IP
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
+GUI_SCALE = float(os.environ.get("FUNGI_GUI_SCALE", "1.4"))  # fonts + window, uniform
 
 
 def lan_ip() -> str:
@@ -131,7 +137,10 @@ class HostPage(QWidget):
 
         root.addStretch(1)
 
-        self.status = BodyLabel("尚未发起。房间将绑定固定端口 8899，加入方只需填写 IP 和 Token。")
+        self.status = BodyLabel(
+            "尚未发起。房间绑定固定端口 8899，加入方只需填写 IP 和 Token；"
+            "请确认加入方与本机在同一局域网（同一路由器）。"
+        )
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
@@ -342,6 +351,10 @@ class FungiGui(FluentWindow):
 
 
 def run_gui() -> int:
+    # QT_SCALE_FACTOR grows fonts, widgets and the window together (must be set
+    # before QApplication exists); AA_EnableHighDpiScaling lets Qt5 honor it.
+    os.environ.setdefault("QT_SCALE_FACTOR", str(GUI_SCALE))
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     app = QApplication(sys.argv)
     win = FungiGui()
     win.show()
