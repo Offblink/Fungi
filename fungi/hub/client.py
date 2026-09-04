@@ -124,7 +124,9 @@ class HubClient:
     # ── file transfers (bytes live on the hub; only metadata is exchanged) ──
 
     def create_transfer(self, path: str, name: str, to_host: str) -> dict:
-        return self._request("POST", "/api/transfer", {"path": path, "name": name, "to": to_host})
+        return self._request(
+            "POST", "/api/transfer", {"host": self.host, "path": path, "name": name, "to": to_host}
+        )
 
     def download_transfer(self, transfer_id: str, dest) -> None:
         """Stream a staged transfer to a local file path."""
