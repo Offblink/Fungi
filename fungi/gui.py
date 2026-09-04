@@ -393,6 +393,12 @@ class JoinPage(QWidget):
         root.addLayout(btn_row)
         self.leave_btn.setVisible(False)
 
+        self.webui_btn = PushButton(FluentIcon.GLOBE, "打开 WebUI")
+        self.webui_btn.clicked.connect(self._open_webui)
+        self.webui_row = _row("WebUI", self.webui_btn)
+        root.addWidget(self.webui_row)
+        self.webui_row.setVisible(False)
+
         root.addStretch(1)
 
         self.status = BodyLabel("加入后房间在本窗口内运行，关闭窗口即离开。")
@@ -452,12 +458,17 @@ class JoinPage(QWidget):
         threading.Thread(target=scan, name="port-probe", daemon=True).start()
         self._pending = (ip, token, nick, host)
 
+    def _open_webui(self) -> None:
+        if self.room is not None:
+            self.room.open_webui()
+
     def _leave(self) -> None:
         if self.room is None:
             return
         self.room.stop()  # sends leave to the hub
         self.room = None
         self.leave_btn.setVisible(False)
+        self.webui_row.setVisible(False)
         self.join_btn.setEnabled(True)
         self.status.setText("已离开房间。")
         InfoBar.info("已离开", "已从房间退出", duration=2500, parent=self.window_ref)
@@ -481,12 +492,13 @@ class JoinPage(QWidget):
             InfoBar.error("加入失败", str(exc), duration=5000, parent=self.window_ref)
             return
         self.leave_btn.setVisible(True)
+        self.webui_row.setVisible(True)
         self.settings.setValue("last_ip", ip)
         self.settings.setValue("last_token", token)
         self.settings.setValue("last_nick", nick)
         self.status.setText(
             f"已加入 {ip}:{port}（昵称 {nick or host}）。\n"
-            "房间在本窗口内运行，关闭窗口即离开；WebUI 请让房主打开或从托盘查看。"
+            "房间在本窗口内运行，关闭窗口即离开；点上方「打开 WebUI」进入你自己的聊天界面。"
         )
         InfoBar.success(
             "已加入房间", f"{host} → {ip}:{port}", duration=3000, parent=self.window_ref

@@ -185,6 +185,31 @@ def test_join_page_scans_and_joins_in_process(window, monkeypatch):
         page.settings.remove(key)
 
 
+def test_join_page_webui_button_lifecycle(window, monkeypatch):
+    page = window.join_page
+    rooms = []
+
+    def fake_client(host, display, url, token):
+        rooms.append(FakeRoom())
+        return rooms[-1]
+
+    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)
+    monkeypatch.setattr(gui, "start_client_room", fake_client)
+    page.ip_combo.setText("192.168.1.20")
+    page.token_edit.setText("tok")
+    page._join()
+    for _ in range(200):
+        QApplication.processEvents()
+        if rooms:
+            break
+    assert page.webui_row.isVisibleTo(page)  # joined: own WebUI is openable
+    page._leave()
+    assert rooms[0].stopped
+    assert not page.webui_row.isVisibleTo(page)
+    for key in ("last_ip", "last_token", "last_nick"):  # don't leak into user QSettings
+        page.settings.remove(key)
+
+
 def test_join_page_reports_scan_miss(window, monkeypatch):
     monkeypatch.setattr(gui, "probe_room_port", lambda *_a, **_k: None)
     monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
