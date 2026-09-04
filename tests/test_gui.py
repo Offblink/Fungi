@@ -147,42 +147,102 @@ def test_join_page_leave_stops_room(window):
     assert page.join_btn.isEnabled() and not page.leave_btn.isVisibleTo(page)
 
 
-def test_join_page_validation(window):
+def test_join_page_requires_token(window):
     page = window.join_page
-    page.ip_combo.setText("")
     page.token_edit.setText("")
-    before = page.settings.value("last_ip", "")
-    page._join()  # empty IP: warns and returns without spawning
-    assert page.settings.value("last_ip", "") == before
+    before = page.settings.value("last_token", "")
+    page._join()  # empty token: warns and returns without spawning
+    assert page.settings.value("last_token", "") == before
 
 
-def test_join_page_scans_and_joins_in_process(window, monkeypatch):
+def test_join_page_discovers_and_joins_in_process(window, monkeypatch):
+    joined = []
+
+    def fake_discover(token):
+        assert token == "tok"
+        return ("192.168.1.20", gui.GUI_PORT + 3)
+
+    def fake_client(host, display, url, token):
+        joined.append((host, display, url, token))
+        return FakeRoom()
+
+    monkeypatch.setattr(gui, "discover_room", fake_discover)
+    monkeypatch.setattr(gui, "start_client_room", fake_client)
+    page = window.join_page
+    page.token_edit.setText("tok")  # IP left empty: auto-discovery fills it
+    page.nick_edit.setText("🌸花酱")
+    page.name_edit.setText("pc-alpha")
+    page._join()  # discovery runs on a thread; results arrive via signals
+    for _ in range(200):
+        QApplication.processEvents()
+        if joined:
+            break
+    assert page.ip_edit.text() == "192.168.1.20"  # discovered IP visible in the field
+    assert joined == [("pc-alpha", "🌸花酱", f"http://192.168.1.20:{gui.GUI_PORT + 3}", "tok")]
+    assert page.settings.value("last_token") == "tok"
+    for key in ("last_ip", "last_token", "last_nick"):  # don't leak into user QSettings
+        page.settings.remove(key)
+
+
+def test_join_page_uses_typed_ip(window, monkeypatch):
     joined = []
 
     def fake_probe(ip, token, start=gui.GUI_PORT, limit=gui.PORT_SCAN_LIMIT):  # noqa: ARG001
         assert ip == "192.168.1.20" and token == "tok"
-        return gui.GUI_PORT + 3  # found on an upward-scanned port
+        return gui.GUI_PORT + 3
 
     def fake_client(host, display, url, token):
         joined.append((host, display, url, token))
-        return object()
+        return FakeRoom()
 
     monkeypatch.setattr(gui, "probe_room_port", fake_probe)
     monkeypatch.setattr(gui, "start_client_room", fake_client)
     page = window.join_page
-    page.ip_combo.setText("192.168.1.20")
+    page.ip_edit.setText("192.168.1.20")  # typed/refilled IP: no subnet sweep
     page.token_edit.setText("tok")
     page.nick_edit.setText("🌸花酱")
     page.name_edit.setText("pc-alpha")
-    page._join()  # scan runs on a thread; result arrives via join_done signal
+    page._join()
     for _ in range(200):
         QApplication.processEvents()
         if joined:
             break
     assert joined == [("pc-alpha", "🌸花酱", "http://192.168.1.20:8902", "tok")]
-    assert page.settings.value("last_ip") == "192.168.1.20"
-    for key in ("last_ip", "last_token", "last_nick"):  # don't leak into user QSettings
+    for key in ("last_ip", "last_token", "last_nick"):
         page.settings.remove(key)
+
+
+def test_local_subnet_hosts_covers_self(monkeypatch):
+    monkeypatch.setattr(gui, "lan_ip", lambda: "192.168.0.104")
+    hosts = gui.local_subnet_hosts()
+    assert len(hosts) == 254 and hosts[0] == "192.168.0.1" and "192.168.0.104" in hosts
+
+
+def test_discover_room_finds_matching_host(monkeypatch):
+    monkeypatch.setattr(gui, "local_subnet_hosts", lambda: ["10.0.0.1", "10.0.0.2"])
+    monkeypatch.setattr(
+        gui,
+        "_port_open",
+        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: (  # noqa: ARG005
+            (ip, port) == ("10.0.0.2", gui.GUI_PORT)
+        ),
+    )
+    monkeypatch.setattr(
+        gui,
+        "_room_accepts",
+        lambda ip, port, token: (ip, port) == ("10.0.0.2", gui.GUI_PORT),  # noqa: ARG005
+    )
+    assert gui.discover_room("tok") == ("10.0.0.2", gui.GUI_PORT)
+
+
+def test_discover_room_returns_none_when_absent(monkeypatch):
+    monkeypatch.setattr(gui, "local_subnet_hosts", lambda: ["10.0.0.1"])
+    monkeypatch.setattr(
+        gui,
+        "_port_open",
+        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: False,  # noqa: ARG005
+    )
+    assert gui.discover_room("tok") is None
 
 
 def test_join_page_webui_button_lifecycle(window, monkeypatch):
@@ -195,7 +255,7 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
 
     monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)  # noqa: ARG005
     monkeypatch.setattr(gui, "start_client_room", fake_client)
-    page.ip_combo.setText("192.168.1.20")
+    page.ip_edit.setText("192.168.1.20")
     page.token_edit.setText("tok")
     page._join()
     for _ in range(200):
@@ -211,11 +271,11 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
 
 
 def test_join_page_reports_scan_miss(window, monkeypatch):
-    monkeypatch.setattr(gui, "probe_room_port", lambda *_a, **_k: None)
+    monkeypatch.setattr(gui, "discover_room", lambda *_a, **_k: None)
     monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
     page = window.join_page
-    page.ip_combo.setText("10.9.9.9")
-    page.token_edit.setText("tok")
+    page.ip_edit.clear()  # module-scoped window: drop any leftover from other tests
+    page.token_edit.setText("tok")  # empty IP: full subnet discovery
     page.name_edit.setText("pc-alpha")
     page._join()
     for _ in range(200):
@@ -223,7 +283,21 @@ def test_join_page_reports_scan_miss(window, monkeypatch):
         if page.join_btn.isEnabled():
             break
     assert page.room is None
-    assert "未找到" in page.status.text()
+    assert page.ip_edit.text() == ""  # nothing discovered, nothing filled
+    assert "没有找到" in page.status.text()
+
+
+def test_join_page_refresh_fills_ip(window, monkeypatch):
+    page = window.join_page
+    monkeypatch.setattr(gui, "discover_room", lambda *_a, **_k: ("10.0.0.9", gui.GUI_PORT))
+    page.token_edit.setText("tok")
+    page._refresh_ip()
+    for _ in range(200):
+        QApplication.processEvents()
+        if page.ip_edit.text() == "10.0.0.9":
+            break
+    assert page.ip_edit.text() == "10.0.0.9"
+    assert page.ip_refresh_btn.isEnabled()
 
 
 def test_close_parks_room_to_tray(window):

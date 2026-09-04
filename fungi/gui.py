@@ -19,6 +19,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from PyQt5.QtCore import QSettings, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap
@@ -33,7 +34,6 @@ from PyQt5.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
-    EditableComboBox,
     FluentIcon,
     FluentWindow,
     InfoBar,
@@ -52,7 +52,7 @@ from .protocol import valid_host_name
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
 PORT_SCAN_LIMIT = 32
-SWEEP_TIMEOUT = 0.35  # TCP connect sweep: LAN refusals are instant, only dead IPs wait
+SWEEP_TIMEOUT = 0.2  # TCP connect sweep: LAN answers are ms-fast, dead IPs wait it out
 PROBE_TIMEOUT = 1.5
 SETTINGS_ORG = "Offblink"
 SETTINGS_APP = "FungiGUI"
@@ -114,6 +114,42 @@ def _port_open(ip: str, port: int, timeout: float = SWEEP_TIMEOUT) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         return sock.connect_ex((ip, port)) == 0
+
+
+def local_subnet_hosts() -> list[str]:
+    """All /24 neighbors of the current LAN IP (own IP included: same-machine
+    rooms are reachable through the LAN address too)."""
+    prefix = lan_ip().rsplit(".", 1)[0]
+    return [f"{prefix}.{i}" for i in range(1, 255)]
+
+
+def _room_accepts(ip: str, port: int, token: str) -> bool:
+    url = f"http://{ip}:{port}/api/peers?token={urllib.request.quote(token)}&host=probe"
+    try:
+        with urllib.request.urlopen(url, timeout=PROBE_TIMEOUT) as resp:
+            return resp.status == 200  # valid token and "probe" listed: our room
+    except urllib.error.HTTPError as exc:
+        return exc.code == 404  # token OK, host unknown: our room
+    except (urllib.error.URLError, OSError, TimeoutError):
+        return False
+
+
+def discover_room(token: str) -> tuple[str, int] | None:
+    """Find the LAN room that accepts `token` — no IP input needed.
+
+    Same subnet is a LAN given, so sweep the /24 one port at a time across all
+    hosts (parallel): the common case (room at the 8899 anchor) lands in the
+    first round instead of walking a 32-port window per host."""
+    hosts = local_subnet_hosts()
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        for offset in range(PORT_SCAN_LIMIT):
+            port = GUI_PORT + offset
+            for ip, ok in zip(
+                hosts, pool.map(lambda h, p=port: _port_open(h, p), hosts), strict=True
+            ):
+                if ok and _room_accepts(ip, port, token):
+                    return ip, port
+    return None
 
 
 def probe_room_port(ip: str, token: str, start: int = GUI_PORT, limit: int = PORT_SCAN_LIMIT):
@@ -352,7 +388,7 @@ class HostPage(QWidget):
 
     _idle_status = (
         "尚未发起。\n"
-        "· 端口从 8899 起自动向上寻找，加入方只需填写 IP 和 Token\n"
+        "· 端口从 8899 起自动向上寻找，加入方无需填 IP（同网段自动发现），只需 Token\n"
         "· 请确认加入方与本机在同一局域网（同一路由器）"
     )
 
@@ -401,7 +437,7 @@ class HostPage(QWidget):
         self.window_ref.update_tray()
         self.status.setText(
             "房间运行中：关闭窗口会转入托盘后台，房间不会停。\n"
-            f"· 端口 {port}（自动向上寻找）· 把 IP + Token 发给好友即可加入\n"
+            f"· 端口 {port}（自动向上寻找）· 把 Token 发给好友即可加入（同网段自动发现）\n"
             "· Ctrl+C 复制房间 IP · 退出房间请点「离开房间」"
         )
         InfoBar.success(
@@ -410,9 +446,10 @@ class HostPage(QWidget):
 
 
 class JoinPage(QWidget):
-    """加入房间：IP + Token + 昵称（端口从 8899 起自动向上探测）。"""
+    """加入房间：房间 IP 自动发现（全网段扫描），无需手填；Token 即身份。"""
 
-    join_done = pyqtSignal(object)  # port (int) or None; emitted from scan thread
+    join_done = pyqtSignal(object)  # (ip, port) tuple or None; emitted from scan thread
+    discover_done = pyqtSignal(object)  # (ip, port) tuple or None; refresh/autofill path
 
     def __init__(self, window):
         super().__init__()
@@ -421,6 +458,7 @@ class JoinPage(QWidget):
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
         self.room = None
         self.join_done.connect(self._finish_join)
+        self.discover_done.connect(self._fill_ip)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(48, 32, 48, 32)
@@ -429,10 +467,19 @@ class JoinPage(QWidget):
         title = SubtitleLabel("加入房间")
         root.addWidget(title)
 
-        self.ip_combo = EditableComboBox()
-        self.ip_combo.setPlaceholderText("房主 IP，如 192.168.1.20（无需端口）")
-        self.ip_combo.setFixedWidth(360)
-        root.addWidget(_row("房主 IP", self.ip_combo))
+        self.ip_edit = LineEdit()
+        self.ip_edit.setPlaceholderText("留空 = 自动扫描局域网（无需手填）")
+        self.ip_edit.setFixedWidth(360)
+        self.ip_refresh_btn = ToolButton(FluentIcon.SYNC)
+        self.ip_refresh_btn.setToolTip("重新扫描局域网，自动填入房间 IP（网络变化后使用）")
+        self.ip_refresh_btn.clicked.connect(self._refresh_ip)
+        ip_buttons = QWidget()
+        ip_box = QHBoxLayout(ip_buttons)
+        ip_box.setContentsMargins(0, 0, 0, 0)
+        ip_box.setSpacing(4)
+        ip_box.addWidget(self.ip_refresh_btn)
+        self.ip_row = _row("房主 IP", self.ip_edit, ip_buttons)
+        root.addWidget(self.ip_row)
 
         self.token_edit = LineEdit()
         self.token_edit.setFixedWidth(360)
@@ -482,7 +529,7 @@ class JoinPage(QWidget):
         last_token = self.settings.value("last_token", "")
         last_nick = self.settings.value("last_nick", "")
         if last_ip:
-            self.ip_combo.setText(str(last_ip))
+            self.ip_edit.setText(str(last_ip))
         if last_token:
             self.token_edit.setText(str(last_token))
         if last_nick:
@@ -491,15 +538,10 @@ class JoinPage(QWidget):
     def _join(self) -> None:
         if self.room is not None:
             return
-        ip = self.ip_combo.currentText().strip()
+        ip = self.ip_edit.text().strip()
         token = self.token_edit.text().strip()
         nick = self.nick_edit.text().strip()
         host = self.name_edit.text().strip()
-        if not ip:
-            InfoBar.warning(
-                "缺少 IP", "请填写房主的局域网 IP", duration=3000, parent=self.window_ref
-            )
-            return
         if not token:
             InfoBar.warning(
                 "缺少 Token", "请向房主索要房间 Token", duration=3000, parent=self.window_ref
@@ -517,17 +559,66 @@ class JoinPage(QWidget):
             )
             host = wire
         self.join_btn.setEnabled(False)
-        self.status.setText(f"正在扫描 {ip} 的房间端口（8899 起）…")
+        self.status.setText(
+            f"正在扫描局域网（{lan_ip().rsplit('.', 1)[0]}.*，房间端口 8899 起）…"
+            if not ip
+            else f"正在扫描 {ip} 的房间端口（8899 起）…"
+        )
 
         def scan():
             try:
-                port = probe_room_port(ip, token)
+                if not ip:
+                    found = discover_room(token)
+                    if found is None:
+                        self.join_done.emit(None)
+                        return
+                    auto_ip, port = found
+                    self.discover_done.emit((auto_ip, port))  # visible autofill
+                else:
+                    port = probe_room_port(ip, token)
             except Exception:  # network hiccup: report as "not found"
-                port = None
-            self.join_done.emit(port)
+                self.join_done.emit(None)
+                return
+            self.join_done.emit((ip or auto_ip, port))
 
-        threading.Thread(target=scan, name="port-probe", daemon=True).start()
-        self._pending = (ip, token, nick, host)
+        threading.Thread(target=scan, name="room-discovery", daemon=True).start()
+        self._pending = (token, nick, host)
+
+    def _refresh_ip(self) -> None:
+        """Re-run subnet discovery and auto-fill the room IP (networks change)."""
+        token = self.token_edit.text().strip()
+        if not token:
+            InfoBar.warning(
+                "缺少 Token", "自动发现需要房间 Token", duration=3000, parent=self.window_ref
+            )
+            return
+        self.ip_refresh_btn.setEnabled(False)
+        self.status.setText(f"正在扫描局域网（{lan_ip().rsplit('.', 1)[0]}.*，房间端口 8899 起）…")
+
+        def scan():
+            try:
+                found = discover_room(token)
+            except Exception:  # network hiccup: report as "not found"
+                found = None
+            self.discover_done.emit(found)
+
+        threading.Thread(target=scan, name="ip-discovery", daemon=True).start()
+
+    def _fill_ip(self, found) -> None:
+        self.ip_refresh_btn.setEnabled(True)
+        if found is None:
+            self.status.setText(
+                "局域网内没有找到接受该 Token 的房间（端口 8899 起）。\n"
+                "请确认房主已发起、Token 正确、且在同一局域网。"
+            )
+            InfoBar.error(
+                "未发现房间", "扫描范围内没有匹配的房间", duration=4000, parent=self.window_ref
+            )
+            return
+        ip, _port = found
+        self.ip_edit.setText(ip)
+        self.status.setText("已自动填入房间 IP，点「加入房间」即可。")
+        InfoBar.success("已自动发现房间", f"房间 IP：{ip}", duration=3000, parent=self.window_ref)
 
     def _open_webui(self) -> None:
         if self.room is not None:
@@ -545,18 +636,19 @@ class JoinPage(QWidget):
         self.status.setText("已离开房间。")
         InfoBar.info("已离开", "已从房间退出", duration=2500, parent=self.window_ref)
 
-    def _finish_join(self, port) -> None:
+    def _finish_join(self, found) -> None:
         self.join_btn.setEnabled(True)
-        ip, token, nick, host = self._pending
-        if port is None:
+        token, nick, host = self._pending
+        if found is None:
             self.status.setText(
-                f"在 {ip} 的 8899–{GUI_PORT + PORT_SCAN_LIMIT - 1} 未找到接受该 Token 的房间。\n"
+                "局域网内没有找到接受该 Token 的房间（端口 8899 起）。\n"
                 "请确认房主已发起、Token 正确、且在同一局域网。"
             )
             InfoBar.error(
                 "未找到房间", "扫描范围内没有匹配的房间", duration=4000, parent=self.window_ref
             )
             return
+        ip, port = found
         try:
             self.room = start_client_room(host, nick, f"http://{ip}:{port}", token)
         except Exception as exc:  # hub refused the join (left / restarted)
