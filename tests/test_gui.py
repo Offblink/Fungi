@@ -23,6 +23,14 @@ def window():
     del app
 
 
+class FakeRoom:
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
 @pytest.fixture(autouse=True)
 def _fresh_pages(window):
     """Module-scoped window: reset mutable page state between tests."""
@@ -33,6 +41,7 @@ def _fresh_pages(window):
     window.host_page._set_started(False)
     window.join_page.room = None
     window.join_page.join_btn.setEnabled(True)
+    window.join_page.leave_btn.setVisible(False)
 
 
 def test_three_pages_present(window):
@@ -73,6 +82,31 @@ def test_host_page_rejects_bad_host_name(window, monkeypatch):
     page.name_edit.setText("不合法/名字")
     page._start()
     assert page.ip_edit.text() == ""  # status card never populated
+
+
+def test_host_page_leave_stops_room(window):
+    page = window.host_page
+    room = FakeRoom()
+    page.room = room
+    page._set_started(True)
+    page._leave()
+    assert room.stopped and page.room is None
+    assert page.start_btn.isEnabled() and not page.leave_btn.isVisibleTo(page)
+    assert page.ip_edit.text() == ""  # status card reset
+
+
+def test_host_page_leave_without_room_is_noop(window):
+    window.host_page._leave()  # must not raise
+
+
+def test_join_page_leave_stops_room(window):
+    page = window.join_page
+    room = FakeRoom()
+    page.room = room
+    page.leave_btn.setVisible(True)
+    page._leave()  # stop() sends leave to the hub
+    assert room.stopped and page.room is None
+    assert page.join_btn.isEnabled() and not page.leave_btn.isVisibleTo(page)
 
 
 def test_join_page_validation(window):

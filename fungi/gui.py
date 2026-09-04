@@ -188,9 +188,14 @@ class HostPage(QWidget):
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
         root.addWidget(_row("昵称", self.nick_edit))
 
+        btn_row = QHBoxLayout()
         self.start_btn = PrimaryPushButton(FluentIcon.SHARE, "发起房间")
         self.start_btn.clicked.connect(self._start)
-        root.addWidget(self.start_btn)
+        self.leave_btn = PushButton(FluentIcon.CLOSE, "离开房间")
+        self.leave_btn.clicked.connect(self._leave)
+        btn_row.addWidget(self.start_btn, 1)
+        btn_row.addWidget(self.leave_btn, 1)
+        root.addLayout(btn_row)
 
         # -- status card (populated after launch) --
         self.ip_edit = LineEdit()
@@ -214,11 +219,7 @@ class HostPage(QWidget):
 
         root.addStretch(1)
 
-        self.status = BodyLabel(
-            "尚未发起。\n"
-            "· 端口从 8899 起自动向上寻找，加入方只需填写 IP 和 Token\n"
-            "· 请确认加入方与本机在同一局域网（同一路由器）"
-        )
+        self.status = BodyLabel(self._idle_status)
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
@@ -232,6 +233,24 @@ class HostPage(QWidget):
         for row in (self.ip_row, self.token_row, self.webui_row):
             row.setVisible(started)
         self.start_btn.setEnabled(not started)
+        self.leave_btn.setVisible(started)
+
+    _idle_status = (
+        "尚未发起。\n"
+        "· 端口从 8899 起自动向上寻找，加入方只需填写 IP 和 Token\n"
+        "· 请确认加入方与本机在同一局域网（同一路由器）"
+    )
+
+    def _leave(self) -> None:
+        if self.room is None:
+            return
+        self.room.stop()
+        self.room = None
+        self._set_started(False)
+        self.ip_edit.clear()
+        self.token_edit.clear()
+        self.status.setText(self._idle_status)
+        InfoBar.info("已离开", "房间已停止", duration=2500, parent=self.window_ref)
 
     def _open_webui(self) -> None:
         if self.room is not None:
@@ -308,9 +327,15 @@ class JoinPage(QWidget):
         self.name_edit.setPlaceholderText("本机主机名（wire 身份，一般不用改）")
         root.addWidget(_row("主机名", self.name_edit))
 
+        btn_row = QHBoxLayout()
         self.join_btn = PrimaryPushButton(FluentIcon.CONNECT, "加入房间")
         self.join_btn.clicked.connect(self._join)
-        root.addWidget(self.join_btn)
+        self.leave_btn = PushButton(FluentIcon.CLOSE, "离开房间")
+        self.leave_btn.clicked.connect(self._leave)
+        btn_row.addWidget(self.join_btn, 1)
+        btn_row.addWidget(self.leave_btn, 1)
+        root.addLayout(btn_row)
+        self.leave_btn.setVisible(False)
 
         root.addStretch(1)
 
@@ -363,6 +388,16 @@ class JoinPage(QWidget):
         threading.Thread(target=scan, name="port-probe", daemon=True).start()
         self._pending = (ip, token, nick, host)
 
+    def _leave(self) -> None:
+        if self.room is None:
+            return
+        self.room.stop()  # sends leave to the hub
+        self.room = None
+        self.leave_btn.setVisible(False)
+        self.join_btn.setEnabled(True)
+        self.status.setText("已离开房间。")
+        InfoBar.info("已离开", "已从房间退出", duration=2500, parent=self.window_ref)
+
     def _finish_join(self, port) -> None:
         self.join_btn.setEnabled(True)
         ip, token, nick, host = self._pending
@@ -381,6 +416,7 @@ class JoinPage(QWidget):
             self.status.setText(f"加入失败：{exc}")
             InfoBar.error("加入失败", str(exc), duration=5000, parent=self.window_ref)
             return
+        self.leave_btn.setVisible(True)
         self.settings.setValue("last_ip", ip)
         self.settings.setValue("last_token", token)
         self.settings.setValue("last_nick", nick)
