@@ -1,15 +1,17 @@
-"""System tray: runtime-drawn mushroom icon, menu, and notifications.
+"""System tray: runtime-drawn mushroom icon, fluent menu, and notifications.
 
-Menu: open WebUI / open data directory / quit. Double-click and message-click
-both open the WebUI.
+Menu: open WebUI / open data directory / quit (qfluentwidgets SystemTrayMenu —
+same fluent look and animations as the GUI; no extra dependency). Double-click
+and message-click both open the WebUI; right-click pops the fluent menu.
 """
 
 import webbrowser
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
+from PyQt5.QtWidgets import QApplication, QSystemTrayIcon
+from qfluentwidgets import Action, SystemTrayMenu
 
 _ACCENT = "#e07a5f"
 
@@ -47,19 +49,23 @@ def make_icon(size: int = 64) -> QIcon:
 
 
 class TrayController(QSystemTrayIcon):
-    """托盘控制器：图标 + 菜单 + 通知；动作回调由 room 装配层注入。"""
+    """托盘控制器：图标 + fluent 菜单 + 通知；动作回调由 room 装配层注入。
+
+    PyQt5 end-to-end: the global qfluentwidgets install is the PyQt5 build
+    (same binding gui.py rides), and mixing Qt bindings in one process crashes.
+    """
 
     def __init__(self, on_open_webui=None, data_root: Path | None = None):
         super().__init__(make_icon())
         self._on_open_webui = on_open_webui or (lambda: None)
         self._data_root = data_root
         self.setToolTip("Fungi")
-        menu = QMenu()
-        menu.addAction("打开 WebUI", self._on_open_webui)
-        menu.addAction("打开数据目录", self._open_data_dir)
+        menu = SystemTrayMenu(title="Fungi")
+        menu.addAction(Action("打开 WebUI", triggered=self._on_open_webui))
+        menu.addAction(Action("打开数据目录", triggered=self._open_data_dir))
         menu.addSeparator()
-        menu.addAction("退出", QApplication.quit)
-        self.setContextMenu(menu)
+        menu.addAction(Action("退出", triggered=QApplication.quit))
+        self._menu = menu  # keep referenced: the tray does not own it
         self.activated.connect(self._on_activated)
         # Qt delivers toast clicks via a dedicated signal, not an activation reason
         self.messageClicked.connect(self._on_open_webui)
@@ -69,12 +75,11 @@ class TrayController(QSystemTrayIcon):
             webbrowser.open(self._data_root.as_uri())
 
     def _on_activated(self, reason) -> None:
-        if reason in (
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.DoubleClick,
-        ):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._on_open_webui()
+        elif reason == QSystemTrayIcon.Context:
+            self._menu.exec_(QCursor.pos())
 
     # ── 通知 ──
     def notify(self, title: str, body: str) -> None:
-        self.showMessage(title, body, QSystemTrayIcon.MessageIcon.Information, 8000)
+        self.showMessage(title, body, QSystemTrayIcon.Information, 8000)

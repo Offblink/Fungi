@@ -626,7 +626,7 @@ class RoomRuntime(WebUIRuntime):
 def run_selftest(room: RoomServer, quit_fn, fail_fn) -> None:
     """Acceptance loop, no human input: start WebUI -> simulated comm clone
     sends an ask -> notification fires -> POST /answer yes -> blocker wakes."""
-    from PyQt6.QtCore import QTimer  # noqa: PLC0415 (Qt only in tray mode)
+    from PyQt5.QtCore import QTimer  # noqa: PLC0415 (Qt only in tray mode)
 
     url = room.open_webui(open_browser=False)
 

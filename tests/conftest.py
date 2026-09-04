@@ -105,3 +105,20 @@ def room(tmp_path):
     clients = {n: Client(f"http://127.0.0.1:{hub.port}", "room-token", n) for n in names}
     yield hub, clients
     hub.stop()
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """One QApplication for the whole pytest session.
+
+    A module-scoped app gets released when its module's fixtures finalize;
+    destroying a QApplication mid-run takes qfluentwidgets' qconfig singleton
+    with it and the next module that builds fluent widgets dies with
+    "wrapped C/C++ object of type QConfig has been deleted" (or crashes).
+    """
+    import os  # noqa: PLC0415 (test helper)
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication  # noqa: PLC0415
+
+    return QApplication.instance() or QApplication([])

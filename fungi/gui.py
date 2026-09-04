@@ -22,11 +22,10 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from PyQt5.QtCore import QSettings, QSharedMemory, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPixmap
+from PyQt5.QtGui import QCursor, QGuiApplication, QKeySequence
 from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
-    QMenu,
     QMessageBox,
     QScrollArea,
     QShortcut,
@@ -35,6 +34,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     FluentIcon,
     FluentWindow,
@@ -43,6 +43,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    SystemTrayMenu,
     TitleLabel,
     ToolButton,
 )
@@ -52,6 +53,7 @@ from qfluentwidgets import (
 # PyQt5; the fluent components are the same library Face uses (same look).
 from .config import DEFAULT_ENDPOINT, PROJECT_ROOT, load_config, save_config
 from .protocol import valid_host_name
+from .tray import make_icon
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
 PORT_SCAN_LIMIT = 32
@@ -285,52 +287,25 @@ class HelpPage(QScrollArea):
         self.setWidget(body)
 
 
-def _mushroom_icon(size: int = 64) -> QIcon:
-    """运行时绘制蘑菇图标（tray.py 是 PyQt6 版；GUI 全程 PyQt5，混绑会崩）。"""
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor(_ACCENT))
-    painter.drawPie(
-        int(size * 0.10), int(size * 0.12), int(size * 0.80), int(size * 0.80), 0, 180 * 16
-    )
-    painter.drawRoundedRect(
-        int(size * 0.40),
-        int(size * 0.48),
-        int(size * 0.20),
-        int(size * 0.40),
-        int(size * 0.08),
-        int(size * 0.08),
-    )
-    painter.setBrush(QColor("#ffffff"))
-    for cx, cy, r in ((0.32, 0.30, 0.06), (0.52, 0.22, 0.05), (0.66, 0.34, 0.055)):
-        painter.drawEllipse(
-            int(size * (cx - r)), int(size * (cy - r)), int(size * r * 2), int(size * r * 2)
-        )
-    painter.end()
-    return QIcon(pixmap)
-
-
 class _Tray(QSystemTrayIcon):
-    """托盘：房间后台驻留期间提供 显示主界面 / 打开 WebUI / 退出。"""
+    """托盘：房间后台驻留期间提供 显示主界面 / 打开 WebUI / 退出（fluent 菜单）。"""
 
     def __init__(self, window: "FungiGui"):
-        super().__init__(_mushroom_icon())
+        super().__init__(make_icon())
         self._window = window
         self.setToolTip("Fungi")
-        self._menu = QMenu()  # keep referenced: setContextMenu does not own it
-        self._menu.addAction("显示主界面", window.show_and_raise)
-        self._menu.addAction("打开 WebUI", window.open_webui_from_tray)
+        self._menu = SystemTrayMenu(title="Fungi")  # keep referenced: the tray does not own it
+        self._menu.addAction(Action("显示主界面", triggered=window.show_and_raise))
+        self._menu.addAction(Action("打开 WebUI", triggered=window.open_webui_from_tray))
         self._menu.addSeparator()
-        self._menu.addAction("退出", window.quit_from_tray)
-        self.setContextMenu(self._menu)
+        self._menu.addAction(Action("退出", triggered=window.quit_from_tray))
         self.activated.connect(self._on_activated)
 
     def _on_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._window.show_and_raise()
+        elif reason == QSystemTrayIcon.Context:
+            self._menu.exec_(QCursor.pos())
 
     def notify(self, title: str, body: str) -> None:
         self.showMessage(title, body, QSystemTrayIcon.Information, 8000)

@@ -6,7 +6,7 @@ Room mode:    python -m fungi --server [--name N] [--token T] [--port P] [--data
               python -m fungi --join URL --token T [--name N]
 GUI launcher: python -m fungi --gui   (host / join / model config)
 
-Room mode starts tray-only (PyQt6); the WebUI opens from the tray.
+Room mode starts tray-only (PyQt5); the WebUI opens from the tray.
 """
 
 import argparse
@@ -79,8 +79,8 @@ def _lan_ip() -> str:
 
 
 def run_room(args: argparse.Namespace) -> int:
-    from PyQt6.QtCore import QSharedMemory, Qt  # noqa: PLC0415 (Qt only in tray mode)
-    from PyQt6.QtWidgets import QApplication  # noqa: PLC0415
+    from PyQt5.QtCore import QSharedMemory, Qt  # noqa: PLC0415 (Qt only in tray mode)
+    from PyQt5.QtWidgets import QApplication  # noqa: PLC0415
 
     from fungi.config import load_config  # noqa: PLC0415
     from fungi.events import ConsoleSink  # noqa: PLC0415

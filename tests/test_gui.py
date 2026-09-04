@@ -16,12 +16,10 @@ from fungi.gui import FungiGui, valid_host_name
 
 
 @pytest.fixture(scope="module")
-def window():
-    app = QApplication.instance() or QApplication([])
+def window(qapp):  # noqa: ARG001 (Qt app fixture)
     win = FungiGui()
     yield win
     win.close()
-    del app
 
 
 class FakeRoom:
