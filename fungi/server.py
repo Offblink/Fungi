@@ -181,6 +181,11 @@ _SESSION_LOCKS_GUARD = threading.Lock()
 # exit-path save must not resurrect the file the user just deleted.
 _TURN_DELETED: set[str] = set()
 
+# Per-turn event tapes: the WebSink records every event it emits so a client
+# that reloads mid-turn can reattach via /events and replay what it missed.
+# A tape lives until its turn's done marker is consumed / grace-popped.
+_TURN_TAPES: dict[str, list[dict]] = {}
+
 
 def _session_lock(session_id: str) -> threading.Lock:
     with _SESSION_LOCKS_GUARD:
@@ -190,11 +195,19 @@ def _session_lock(session_id: str) -> threading.Lock:
 class WebSink:
     """Thread-safe NDJSON writer over the /chat response stream."""
 
-    def __init__(self, handler: "YesSirHandler"):
+    def __init__(self, handler: "YesSirHandler", session_id: str | None = None):
         self.handler = handler
+        self.session_id = session_id
         self.closed = False
 
     def emit(self, kind: str, content) -> None:
+        if self.session_id is not None and kind != "done":
+            # Record for /events reattach; the done marker is appended by the
+            # turn's exit path so replay consumers never miss tail events.
+            with _TURNS_LOCK:
+                tape = _TURN_TAPES.get(self.session_id)
+                if tape is not None:
+                    tape.append({"type": kind, "content": content})
         if self.closed:
             return
         try:
@@ -264,7 +277,14 @@ class YesSirHandler(BaseHTTPRequestHandler):
         elif route == "/asks":
             self._send_json({"asks": self.runtime.pending_asks()})
         elif route == "/sessions":
-            self._send_json({"sessions": self.runtime.sessions_list()})
+            sessions = self.runtime.sessions_list()
+            with _TURNS_LOCK:
+                for s in sessions:
+                    tape = _TURN_TAPES.get(str(s.get("id")))
+                    s["running"] = tape is not None and not any(
+                        ev.get("type") == "done" for ev in tape
+                    )
+            self._send_json({"sessions": sessions})
         elif route == "/session":
             session_id = (parse_qs(url.query).get("id") or [None])[0]
             data = self.runtime.sessions_load(session_id) if session_id else None
@@ -291,6 +311,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 # an array, and the render threw into the swallowed catch —
                 # the friend view stayed blank forever.
                 self._send_json(self.runtime.comm_log(host))
+        elif route == "/events":
+            self._handle_events((parse_qs(url.query).get("sessionId") or [None])[0])
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -412,7 +434,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
         abort_event = threading.Event()
         with _TURNS_LOCK:
             _ACTIVE_TURNS.setdefault(session_id, set()).add(abort_event)
-        sink = WebSink(self)
+        sink = WebSink(self, session_id)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Connection", "close")
@@ -449,6 +471,10 @@ class YesSirHandler(BaseHTTPRequestHandler):
                     subagents=prior,
                     asks=prior_asks,
                 )
+                # Start recording after the queue wait: a queued turn must not
+                # clobber the still-running turn's tape for the same session.
+                with _TURNS_LOCK:
+                    _TURN_TAPES[session_id] = []
                 agent = self.runtime.build_agent(sink, abort_event.is_set)
                 try:
                     agent.run(messages)
@@ -476,6 +502,15 @@ class YesSirHandler(BaseHTTPRequestHandler):
             sink.emit("error", str(exc))
             sink.emit("done", None)
         finally:
+            # Seal the tape with a done marker (replay consumers close on it)
+            # and pop it after a grace window so late reattach still sees it.
+            with _TURNS_LOCK:
+                tape = _TURN_TAPES.get(session_id)
+                if tape is not None:
+                    tape.append({"type": "done", "content": None})
+            seal = threading.Timer(60.0, _TURN_TAPES.pop, args=(session_id, None))
+            seal.daemon = True
+            seal.start()
             with _TURNS_LOCK:
                 events = _ACTIVE_TURNS.get(session_id)
                 if events is not None:
@@ -483,6 +518,44 @@ class YesSirHandler(BaseHTTPRequestHandler):
                     if not events:
                         _ACTIVE_TURNS.pop(session_id, None)
             self.wfile.flush()
+
+    def _handle_events(self, session_id: str | None) -> None:
+        """Reattach to a (recently) running turn: replay its recorded events,
+        then live-stream new ones until the tape's done marker. A missing tape
+        means nothing is running — answer with a bare done so the client
+        simply reloads from disk."""
+        if not session_id:
+            self._send_json({"error": "need sessionId"}, status=400)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Connection", "close")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.close_connection = True
+        idx = 0
+        try:
+            while True:
+                with _TURNS_LOCK:
+                    tape = _TURN_TAPES.get(session_id)
+                    fresh = tape[idx:] if tape is not None else []
+                    idx += len(fresh)
+                try:
+                    for ev in fresh:
+                        self.wfile.write((json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8"))
+                    if fresh:
+                        self.wfile.flush()
+                        if any(ev.get("type") == "done" for ev in fresh):
+                            return
+                    elif tape is None:
+                        self.wfile.write(b'{"type": "done", "content": null}\n')
+                        self.wfile.flush()
+                        return
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    return
+                time.sleep(0.2)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def _handle_pickfile(self) -> None:
         try:

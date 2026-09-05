@@ -7,6 +7,11 @@ let processing = false, currentSessionId = null, allSessions = [], sessionDirty 
 let _liveCount = 0; // live-node count at last streaming render (motion: animate only fresh nodes)
 let rawMessages = [];
 
+function setCurrentSession(id) {
+  currentSessionId = id;
+  try { if (id) localStorage.setItem('fungi-session', id); else localStorage.removeItem('fungi-session'); } catch (e) {}
+}
+
 /* ---------- helpers ---------- */
 function escapeHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -105,14 +110,14 @@ async function closeCurrentSession() {
     // server persists the whole turn on its own at turn end — just detach.
     // (2026-09-04: switching sessions before the first token arrived deleted
     // the session out from under the running turn — the response vanished.)
-    currentSessionId = null;
+    setCurrentSession(null);
     return;
   }
-  if (!sessionDirty) { currentSessionId = null; return; }
+  if (!sessionDirty) { setCurrentSession(null); return; }
   const list = rawMessages;
   if (!list || list.length <= 1) {
     try { await fetch('/session?id=' + encodeURIComponent(currentSessionId), { method: 'DELETE' }); } catch (e) {}
-    currentSessionId = null;
+    setCurrentSession(null);
   } else {
     const title = getSessionTitle(list);
     try {
@@ -131,7 +136,7 @@ async function switchSession(id) {
     const r = await fetch('/session?id=' + encodeURIComponent(id));
     if (!r.ok) throw new Error(r.status);
     const s = await r.json();
-    currentSessionId = s.id;
+    setCurrentSession(s.id);
     rawMessages = s.messages || [];
     msgs.innerHTML = '';
     tray.innerHTML = '';
@@ -139,6 +144,7 @@ async function switchSession(id) {
     renderMessages(s);
     msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); // a freshly opened session starts at the latest message
     renderSessionList(); loadSessions();
+    reattachIfRunning(s.id);
   } catch (e) { console.error('switchSession:', e); }
 }
 
@@ -205,7 +211,7 @@ async function newSession() {
     const r = await fetch('/new', { method: 'POST' });
     if (!r.ok) throw new Error(r.status);
     const { id } = await r.json();
-    currentSessionId = id; rawMessages = []; msgs.innerHTML = ''; tray.innerHTML = '';
+    setCurrentSession(id); rawMessages = []; msgs.innerHTML = ''; tray.innerHTML = '';
     sessionDirty = false;
     await loadSessions();
   } catch (e) { console.error('newSession:', e); }
@@ -213,7 +219,7 @@ async function newSession() {
 async function deleteSession(id) {
   try {
     await fetch('/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
-    if (id === currentSessionId) { currentSessionId = null; msgs.innerHTML = ''; tray.innerHTML = ''; }
+    if (id === currentSessionId) { setCurrentSession(null); msgs.innerHTML = ''; tray.innerHTML = ''; }
     document.getElementById('session-filter').value = '';
     await loadSessions();
   } catch (e) {}
@@ -236,7 +242,7 @@ function renderSessionList() {
         const titleEl = row.querySelector('.session-row-title');
         if (titleEl && !row.querySelector('.rename-input') && titleEl.textContent !== (s.title || 'Untitled'))
           titleEl.textContent = s.title || 'Untitled';
-        row.querySelector('.session-row-meta').textContent = fmtDate(s.created);
+        row.querySelector('.session-row-meta').textContent = fmtDate(s.created) + (s.running ? ' \u25cf' : '');
         row.classList.toggle('active', s.id === currentSessionId);
         list.appendChild(row); // moves the row into filtered order
       } else {
@@ -244,7 +250,7 @@ function renderSessionList() {
         row.dataset.sid = s.id;
         row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
         row.innerHTML = '<span class="session-row-title">' + escapeHtml(s.title || 'Untitled') + '</span>'
-          + '<span class="session-row-meta">' + fmtDate(s.created) + '</span>'
+          + '<span class="session-row-meta">' + fmtDate(s.created) + (s.running ? ' \u25cf' : '') + '</span>'
           + '<span class="session-row-actions"><button class="session-row-act" title="Rename">&#9998;</button>'
           + '<button class="session-row-act del" title="Delete">&#10005;</button></span>';
         row.querySelector('.session-row-act.del').addEventListener('click', e => {
@@ -433,7 +439,7 @@ async function send() {
     try {
       const r = await fetch('/new', { method: 'POST', signal: abortCtrl.signal });
       const { id } = await r.json();
-      currentSessionId = id; loadSessions();
+      setCurrentSession(id); loadSessions();
     } catch (e) {}
   }
   const sid = currentSessionId;
@@ -465,10 +471,29 @@ async function retryTurn() {
   if (currentSessionId === sid) input.focus();
 }
 
-async function pumpStream(url, body) {
+
+/* A session's turn may still be running server-side (the client reloaded or
+   switched away): /events replays what was missed, then streams live. */
+function reattachIfRunning(sid) {
+  if (processing || turn || !sid) return;
+  const s = allSessions.find(x => x.id === sid);
+  if (!s || !s.running) return;
+  processing = true;
+  abortCtrl = new AbortController(); stopRequested = false;
+  turn = { sessionId: sid, entries: [] };
+  btn.disabled = true; status.textContent = 'Turn still running on the server...';
+  _liveCount = 0; window.fungiMotion?.waveOn?.(status);
+  renderTurnLive();
+  pumpStream('/events?sessionId=' + encodeURIComponent(sid), null, 'GET');
+}
+async function pumpStream(url, body, method = 'POST') {
   try {
-    const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body), signal: abortCtrl.signal });
+    const opts = { method, signal: abortCtrl.signal };
+    if (body !== null) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(url, opts);
     if (!resp.ok) { status.textContent = 'Error: ' + resp.status; turn = null; return; }
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
@@ -701,7 +726,13 @@ document.getElementById('btn-browse').addEventListener('click', async () => {
   } catch (e) {}
 });
 fetch('/model').then(r => r.json()).then(d => { document.getElementById('model-name').textContent = ' \u2014 ' + d.model; });
-loadSessions();
+loadSessions().then(() => {
+  // Reload keeps the current session: restore it and reattach if its turn
+  // is still running server-side (the /events tape replays what was missed).
+  let saved = null;
+  try { saved = localStorage.getItem('fungi-session'); } catch (e) {}
+  if (saved && allSessions.some(s => s.id === saved)) switchSession(saved);
+});
 
 /* ---------- ask card (Inquire) ---------- */
 function saveAskCardState() {

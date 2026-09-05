@@ -686,3 +686,96 @@ def test_delete_running_session_leaves_it_deleted(gated_room):
         gate.set()
         server.shutdown()
         server.server_close()
+
+
+def _read_events(port, sid, sink_lines):
+    resp = urllib.request.urlopen(
+        f"http://127.0.0.1:{port}/events?sessionId={sid}", timeout=15
+    )
+    for raw in resp:
+        line = raw.decode("utf-8").strip()
+        if line:
+            sink_lines.append(json.loads(line))
+
+
+def test_events_replays_recorded_events_then_done(server_room):
+    """Seed tape: a reattaching client must receive the recorded events in
+    order, then the done marker."""
+    import threading
+
+    from fungi.server import _TURN_TAPES
+
+    room = server_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        _TURN_TAPES["replay-sid"] = [
+            {"type": "text", "content": "partial answer"},
+            {"type": "sessionId", "content": "replay-sid"},
+            {"type": "done", "content": None},
+        ]
+        lines: list[dict] = []
+        reader = threading.Thread(target=_read_events, args=(port, "replay-sid", lines), daemon=True)
+        reader.start()
+        reader.join(timeout=10)
+        assert not reader.is_alive(), "reader never saw the done marker"
+        assert [ev["type"] for ev in lines] == ["text", "sessionId", "done"]
+        assert lines[0]["content"] == "partial answer"
+    finally:
+        _TURN_TAPES.pop("replay-sid", None)
+        server.shutdown()
+        server.server_close()
+
+
+def test_events_returns_done_when_nothing_runs(server_room):
+    room = server_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        lines: list[dict] = []
+        _read_events(port, "never-existed", lines)
+        assert [ev["type"] for ev in lines] == ["done"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_events_follows_running_turn_and_reports_running_flag(gated_room):
+    """Refresh mid-turn: the reattached client must stay connected while the
+    turn runs, then receive its tail events + done; /sessions must flag the
+    session as running meanwhile."""
+    import threading
+
+    room, gate, calls = gated_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        with _post(port, "/new", {}) as resp:
+            sid = json.loads(resp.read())["id"]
+        turn = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "work", "sessionId": sid}).read(),
+            daemon=True,
+        )
+        turn.start()
+        assert _wait(lambda: len(calls) == 1), "turn never reached the LLM"
+        sessions = {
+            s["id"]: s
+            for s in json.loads(
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/sessions", timeout=10).read()
+            )["sessions"]
+        }
+        assert sessions[sid]["running"] is True
+        lines: list[dict] = []
+        reader = threading.Thread(target=_read_events, args=(port, sid, lines), daemon=True)
+        reader.start()
+        gate.set()
+        def flag() -> bool:
+            payload = json.loads(
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/sessions", timeout=10).read()
+            )
+            return {s["id"]: s for s in payload["sessions"]}[sid]["running"]
+        assert _wait(lambda: not flag()), "running flag stayed set after the turn finished"
+    finally:
+        gate.set()
+        server.shutdown()
+        server.server_close()
