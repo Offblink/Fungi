@@ -150,6 +150,11 @@ async function switchSession(id) {
 
 function renderMessages(s) {
   _liveCount = 0; // full re-render: transcript replay is CSS-static, live nodes re-baseline
+  // Full re-render must actually replace: renderTranscript only appends, so
+  // without this clear every reload (done/ESC/retry) stacked a second copy of
+  // the whole transcript below the live nodes. Clearing here makes the
+  // reload path byte-for-byte the same render a page refresh does.
+  msgs.innerHTML = '';
   renderTranscript(rawMessages, s.asks || []);
   if (turn && turn.sessionId === currentSessionId) renderTurnLive();
   placeAskCards(); // friend-view inline cards move back to the banner here
