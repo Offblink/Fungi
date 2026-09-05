@@ -21,8 +21,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install pytest
-        run: python -m pip install pytest
+      - name: Install build dependencies
+        run: python -m pip install pytest PyQt5 PyQt-Fluent-Widgets pyinstaller
 
       # Same gate as CI (pytest only — see ci.yml for the ruff drift note).
       - name: Run tests
@@ -37,9 +37,24 @@ jobs:
           name="fungi-${GITHUB_REF_NAME}-source.zip"
           git archive --format=zip --prefix="fungi-${GITHUB_REF_NAME#v}/" -o "$name" HEAD
           echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+      # GUI exe (PyInstaller, onedir): web/ static assets ride along via
+      # --add-data; fungi/config.py resolves user data next to the exe when
+      # frozen. Foreign Qt bindings are excluded so hooks never collide.
+      - name: Build Windows exe
+        run: >
+          python -m PyInstaller --noconfirm --noconsole --name Fungi start.py
+          --add-data "web;web" --collect-all qfluentwidgets
+          --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6
+          --exclude-module shiboken2 --exclude-module shiboken6
+
+      - name: Zip exe bundle
+        shell: pwsh
+        run: Compress-Archive -Path dist/Fungi -DestinationPath "fungi-$($env:GITHUB_REF_NAME)-windows-x64.zip"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ARCHIVE }}
+          files: |
+            ${{ env.ARCHIVE }}
+            fungi-v*-windows-x64.zip
           generate_release_notes: true
