@@ -892,6 +892,7 @@ async function pollPendingAsks() {
       if (pendingAskIds.has(a.id)) return;
       pendingAskIds.add(a.id);
       const el = buildPendingAskCard(a);
+      pendingAskCards.set(a.id, { rec: a, el });
       if (friendView && a.conv === friendView) {
         msgs.appendChild(el);
         window.fungiMotion?.askCardIn?.(el);
