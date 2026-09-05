@@ -881,7 +881,6 @@ function answerPendingAsk(a, card, value) {
   if (M && !M.reduced && M.askResolved) {
     const ok = value !== 'no';
     M.askResolved(card, ok);
-    if (ok) M.spores(card);
     setTimeout(finish, 1000); // let the stamp read before collapsing
   } else finish();
 }

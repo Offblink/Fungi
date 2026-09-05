@@ -75,6 +75,8 @@ day-night（GSAP 插值 `--bg/--surface/--text/--accent` 四核心变量，其�
 **Acceptance:** `FUNGI_SELFTEST=1` 全链路 + 浏览器实测 allow/ask/no 三路径动画完整、
 连点不炸（动画期间按钮仍可点，无队列堆积）。
 **Depends on:** Task 2
+> **v0.1.1 后记**：应答时的孢子粒子已移除（用户裁决——允许/拒绝只保留翻转落章）；
+`spores()` 仅保留给好友视图 transfer 落盘成功使用。
 
 ### Task 4: 列表 + 托盘 + 空状态（commit 4）
 **Files:** `web/motion.js`、`web/app.js`（`renderSessionList:220`、`renderFriendList:927`、
