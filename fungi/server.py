@@ -12,18 +12,17 @@ import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fungi import session
 from fungi.agent import SYSTEM_PROMPT, Agent
-from fungi.config import load_config, save_config
+from fungi.config import RESOURCE_ROOT, load_config, save_config
 from fungi.events import Sink
 from fungi.tools.ask import resolve_ask
 from fungi.tools.mcp import mcp_extra_tools
 from fungi.trilayer import TriLayer
 
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_DIR = RESOURCE_ROOT / "web"
 
 _mime = {
     ".html": "text/html; charset=utf-8",
@@ -81,19 +80,23 @@ def repair_tool_gaps(messages: list[dict]) -> list[dict]:
         if unanswered and role in ("user", "assistant"):
             # History gap: answer the dangling calls before moving on.
             for call_id, name in unanswered.items():
-                out.append({
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "content": f"ERROR: turn was interrupted before {name} could run.",
-                })
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": f"ERROR: turn was interrupted before {name} could run.",
+                    }
+                )
             unanswered = {}
         out.append(m)
     for call_id, name in unanswered.items():
-        out.append({
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": f"ERROR: turn was interrupted before {name} could run.",
-        })
+        out.append(
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": f"ERROR: turn was interrupted before {name} could run.",
+            }
+        )
     return out
 
 
@@ -246,8 +249,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_static("index.html")
         elif route in ("/app.js", "/style.css", "/motion.js"):
             self._send_static(route.lstrip("/"))
-        elif (route.startswith("/vendor/") and "/" not in route[8:]
-              and ".." not in route):  # flat vendor dir; no traversal
+        elif (
+            route.startswith("/vendor/") and "/" not in route[8:] and ".." not in route
+        ):  # flat vendor dir; no traversal
             self._send_static(route[1:])  # web/vendor/<file> — keep the dir prefix
         elif route == "/model":
             self._send_json({"model": load_config().model})

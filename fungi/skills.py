@@ -21,10 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fungi.config import PROJECT_ROOT
+
 if TYPE_CHECKING:
     from fungi.agent import BoundTool
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = PROJECT_ROOT / "data" / "skills"
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_BODY = 32768
@@ -96,6 +97,7 @@ def _seed() -> None:
                 doc.write_text(WRITING_SKILLS, encoding="utf-8")
                 if legacy.is_file():
                     legacy.unlink()  # superseded by the directory version
+
 
 def _parse(path: Path, name: str | None = None) -> Skill:
     text = path.read_text(encoding="utf-8-sig")
@@ -202,8 +204,6 @@ def section() -> str:
     )
 
 
-
-
 def _companion_files(skill_dir: Path) -> list[Path]:
     """Every file in a directory skill except SKILL.md itself."""
     root = skill_dir.resolve()
@@ -235,6 +235,8 @@ def _read_companion(name: str, rel: str) -> str:
     if len(text) > MAX_BODY:
         text = text[:MAX_BODY] + "\n…(truncated)"
     return f"# {name}/{rel}\n\n{text}"
+
+
 def skill_tool(args: dict, readonly: bool = False) -> str:
     action = str(args.get("action") or "")
     if action == "list":

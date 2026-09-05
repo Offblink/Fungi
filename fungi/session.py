@@ -9,7 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from fungi.config import PROJECT_ROOT
+
 SESSIONS_DIR = PROJECT_ROOT / "sessions"
 
 

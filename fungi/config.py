@@ -2,11 +2,18 @@
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# User-data base: next to the exe when frozen (PyInstaller), repo root in dev.
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = PROJECT_ROOT / "config.json"
+# Bundled read-only resources (web/); PyInstaller unpacks them to _MEIPASS.
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
 
 DEFAULT_API_KEY = "sk-your-key-here"
 DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
