@@ -177,6 +177,10 @@ _TURNS_LOCK = threading.Lock()
 _SESSION_LOCKS: dict[str, threading.Lock] = {}
 _SESSION_LOCKS_GUARD = threading.Lock()
 
+# Tombstones for sessions deleted while a turn was still running: the turn's
+# exit-path save must not resurrect the file the user just deleted.
+_TURN_DELETED: set[str] = set()
+
 
 def _session_lock(session_id: str) -> threading.Lock:
     with _SESSION_LOCKS_GUARD:
@@ -368,6 +372,15 @@ class YesSirHandler(BaseHTTPRequestHandler):
         if url.path == "/session":
             session_id = (parse_qs(url.query).get("id") or [None])[0]
             if session_id:
+                with _TURNS_LOCK:
+                    events = _ACTIVE_TURNS.pop(session_id, set())
+                    if events:
+                        # A turn still runs in this session: abort it and
+                        # tombstone the id so its exit-path save cannot
+                        # resurrect the file the user just deleted.
+                        _TURN_DELETED.add(session_id)
+                for event in events:
+                    event.set()
                 self.runtime.sessions_delete(session_id)
             self._send_json({"ok": True})
         else:
@@ -393,18 +406,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
         self._run_turn(session_id, user_msg=None, messages=messages)
 
     def _run_turn(self, session_id: str | None, user_msg: str | None, messages=None) -> None:
-        stored = self.runtime.sessions_load(session_id) if session_id else None
-        if messages is None:
-            if stored:
-                messages = list(stored["messages"])
-            else:
-                if not session_id:
-                    session_id = self.runtime.new_session_id()
-                messages = [{"role": "system", "content": self.runtime.new_session_prompt()}]
-            if user_msg is not None:
-                messages.append({"role": "user", "content": user_msg})
-        messages = repair_tool_gaps(messages)
-
+        if messages is None and not session_id:
+            # Generate before registering: /stop keys on the real session id.
+            session_id = self.runtime.new_session_id()
         abort_event = threading.Event()
         with _TURNS_LOCK:
             _ACTIVE_TURNS.setdefault(session_id, set()).add(abort_event)
@@ -416,25 +420,56 @@ class YesSirHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
         try:
+            if _session_lock(session_id).locked():
+                # A queued turn must not look dead: say why nothing streams yet.
+                sink.emit("status", "Waiting for the still-running turn in this session...")
             with _session_lock(session_id):
+                # Load context inside the lock: a queued turn must continue
+                # from the previous turn's persisted reply, not a snapshot
+                # taken before the wait (which dropped that reply on save).
+                stored = self.runtime.sessions_load(session_id) if session_id else None
+                if messages is None:
+                    if stored:
+                        messages = list(stored["messages"])
+                    else:
+                        messages = [{"role": "system", "content": self.runtime.new_session_prompt()}]
+                    if user_msg is not None:
+                        messages.append({"role": "user", "content": user_msg})
+                messages = repair_tool_gaps(messages)
+
+                # Persist at turn start: the user message must be on disk while
+                # the turn streams. Otherwise a refresh mid-turn shows an empty
+                # session and invites chatting into / deleting one that is busy.
+                prior = (stored or {}).get("subagents", []) if isinstance(stored, dict) else []
+                prior_asks = (stored or {}).get("asks", []) if isinstance(stored, dict) else []
+                self.runtime.sessions_save(
+                    session_id,
+                    session.get_session_title(messages),
+                    messages,
+                    subagents=prior,
+                    asks=prior_asks,
+                )
                 agent = self.runtime.build_agent(sink, abort_event.is_set)
                 try:
                     agent.run(messages)
                 finally:
                     # Persist on every exit path (success, abort, crash): a
                     # turn that never saves is a turn whose context is lost.
-                    prior = (stored or {}).get("subagents", []) if isinstance(stored, dict) else []
-                    prior_asks = (stored or {}).get("asks", []) if isinstance(stored, dict) else []
                     subs = getattr(agent, "subagents", None)
                     new_subs = list(subs.values()) if isinstance(subs, dict) else []
                     new_asks = list(getattr(agent, "asks", None) or [])
-                    self.runtime.sessions_save(
-                        session_id,
-                        session.get_session_title(messages),
-                        messages,
-                        subagents=prior + new_subs,
-                        asks=prior_asks + new_asks,
-                    )
+                    with _TURNS_LOCK:
+                        resurrects = session_id in _TURN_DELETED
+                        if resurrects:
+                            _TURN_DELETED.discard(session_id)
+                    if not resurrects:
+                        self.runtime.sessions_save(
+                            session_id,
+                            session.get_session_title(messages),
+                            messages,
+                            subagents=prior + new_subs,
+                            asks=prior_asks + new_asks,
+                        )
             sink.emit("sessionId", session_id)
             sink.emit("done", None)
         except Exception as exc:

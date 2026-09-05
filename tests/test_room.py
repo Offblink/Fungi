@@ -537,3 +537,152 @@ def test_delegate_roundtrip_between_server_and_client(tmp_path):
             client.stop()
     finally:
         server.stop()
+
+
+# ── turn persistence vs refresh/delete races ──
+
+
+@pytest.fixture()
+def gated_room(tmp_path):
+    """Room whose WebUI turns block inside the LLM until the test releases them."""
+    import threading
+
+    from fungi.llm import LLMResult
+
+    gate = threading.Event()
+    calls: list[list] = []
+
+    def slow_llm(messages, _tools):
+        calls.append(list(messages))
+        gate.wait(timeout=10)
+        return LLMResult(content=f"reply-{len(calls)}")
+
+    room = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "data",
+        llm=slow_llm, rules_path=tmp_path / "rules.json",
+    )
+    room.start()
+    yield room, gate, calls
+    room.stop()
+
+
+def _webui_server(room):
+    import threading
+
+    from fungi.server import make_webui_server
+
+    server = make_webui_server(0, room.webui_runtime())
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+def _post(port, path, payload):
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    return urllib.request.urlopen(req, timeout=10)
+
+
+def test_turn_persists_user_message_while_streaming(gated_room):
+    """Regression: mid-turn the session existed only in the client's memory —
+    a refresh showed an empty list entry (or nothing) while the turn ran on.
+    The user message must be on disk from the moment the turn starts."""
+    import threading
+
+    room, gate, _calls = gated_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        thread = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "hello there", "sessionId": None}).read(),
+            daemon=True,
+        )
+        thread.start()
+        assert _wait(
+            lambda: any(s["title"] == "hello there" for s in room.webui_runtime().sessions_list())
+        ), "session never appeared on disk while the turn was running"
+        sid = room.webui_runtime().sessions_list()[0]["id"]
+        stored = room.webui_runtime().sessions_load(sid)
+        assert stored["messages"][-1] == {"role": "user", "content": "hello there"}
+    finally:
+        gate.set()
+        server.shutdown()
+        server.server_close()
+
+
+def test_queued_turn_gets_status_line_and_keeps_prior_reply(gated_room):
+    """Regression: a second /chat into a busy session silently blocked on the
+    session lock (looked dead) and its pre-lock context snapshot dropped the
+    running turn's reply on save. It must announce the wait, then continue
+    from the full prior context."""
+    import threading
+
+    room, gate, calls = gated_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        with _post(port, "/new", {}) as resp:
+            sid = json.loads(resp.read())["id"]
+        turn1 = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "first", "sessionId": sid}).read(),
+            daemon=True,
+        )
+        turn1.start()
+        assert _wait(lambda: len(calls) == 1), "first turn never reached the LLM"
+
+        resp2 = _post(port, "/chat", {"message": "second", "sessionId": sid})
+        first_line = json.loads(resp2.readline().decode("utf-8"))
+        assert first_line["type"] == "status", f"no queue feedback, got {first_line}"
+        gate.set()
+        turn1.join(timeout=10)
+        rest = resp2.read().decode("utf-8")
+        assert '"done"' in rest, "queued turn never finished"
+
+        messages = room.webui_runtime().sessions_load(sid)["messages"]
+        roles = [m["role"] for m in messages]
+        assert roles == ["system", "user", "assistant", "user", "assistant"]
+        assert messages[2]["content"] == "reply-1", "prior turn's reply lost from context"
+        assert messages[4]["content"] == "reply-2"
+    finally:
+        gate.set()
+        server.shutdown()
+        server.server_close()
+
+
+def test_delete_running_session_leaves_it_deleted(gated_room):
+    """Regression: deleting a mid-turn session unlinked the file, but the
+    turn's exit-path save resurrected it — a ghost entry reappeared in the
+    list when the run finished. Deleting must abort the turn and stay deleted."""
+
+    import threading
+
+    room, gate, _calls = gated_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        with _post(port, "/new", {}) as resp:
+            sid = json.loads(resp.read())["id"]
+        turn = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "work", "sessionId": sid}).read(),
+            daemon=True,
+        )
+        turn.start()
+        assert _wait(
+            lambda: len((room.webui_runtime().sessions_load(sid) or {}).get("messages", [])) >= 2
+        ), "user message never reached disk while the turn ran"
+        urllib.request.urlopen(
+            urllib.request.Request(f"http://127.0.0.1:{port}/session?id={sid}", method="DELETE"),
+            timeout=10,
+        ).read()
+        assert room.webui_runtime().sessions_load(sid) is None
+        gate.set()
+        turn.join(timeout=10)
+        assert not turn.is_alive()
+        assert room.webui_runtime().sessions_load(sid) is None, "deleted session resurrected"
+    finally:
+        gate.set()
+        server.shutdown()
+        server.server_close()

@@ -564,6 +564,10 @@ function handleTurnEvent(obj) {
       t.entries.push({ kind: 'ask', id: obj.content.id, questions: obj.content.questions || [], answers: null, active: true });
       if (visible) renderTurnLive();
       break;
+    case 'status':
+      // Server-side progress notes (e.g. "queued behind a still-running turn").
+      if (visible) status.textContent = obj.content;
+      break;
     case 'error':
       if (obj.content === 'Aborted by user') t.aborted = true;
       t.entries.push({ kind: 'error', content: obj.content });
