@@ -14,6 +14,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 | [Psi](https://github.com/Offblink/Psi) | PowerShell 单文件 harness（~900 行） | **哲学**——harness 的核心可以小到一个下午读完；零依赖传统；WebUI 视觉语言（配色、版式、模态框）的源头 |
 | [YESIR](https://github.com/Offblink/YESIR) | AIOS 构思的第一块实体：TriLayer + Inquire + MCP | **骨架**——`agent.py / llm.py / trilayer.py / session.py / events.py / tools/` 直接移植；spawn 派发、MCP 客户端、分层模型、`Alt+R` 重试原样保留 |
 | [Face](https://github.com/Offblink/Face) | 纯局域网 PySide6 视频聊天 | **产品形态**——房主创建 / 加入 / 心跳名册 / 自动发现 / 托盘驻留的房间体验；端口约定（8899 起向上扫描）；GUI 内置帮助页的样式 |
+| [Around](https://github.com/Offblink/Around) | 局域网聊天 + 文件传输（网页版 TypeScript） | **先例与教训**——乐观渲染（消息的临时/正式属性）、局域网传输体验；PyQt 重构版因过度设计弃坑，所以 Fungi 先写 `docs/spec` 再动手、坚持"消息即 envelope、无协调设施"的克制 |
 | [Gasp-Design](https://github.com/Offblink/Gasp-Design) | GSAP 3.12 + Three.js 的 37 个自包含动效组件 | **动效语言**——WebUI 动效层 `web/motion.js` 的编排母本：会话/好友列表 Flip 重排（`flip-drag-reorder` 技法）、consent 卡 3D 翻转落章、主题切换（`day-night-cycle`）、light-trail 指示条、floating-orbs 孢子落地（真菌身份梗）、number-counter。GSAP core + Flip 已 vendor 到 `web/vendor/`（LAN joiner 常无外网），`motion.js` 是唯一 GSAP 入口，删整文件即回退纯 CSS |
 
 串起来读：**MnemeNet 给了为什么（agent 要延续、要沉淀），Psi 给了多小才够（一晚上读完），YESIR 给了骨架（TriLayer 编排），Face 给了房间长什么样，Around 提醒了别做什么（过度设计），Gasp-Design 给了这一切怎么动。** Fungi 把这些放进一张 LAN 网络：让每台主机上的 Orchestrator 拥有记忆、技能和彼此。
