@@ -109,11 +109,11 @@ def test_kaomoji_disabled_skips_the_call(tmp_path):
         server.server_close()
 
 
-def test_kaomoji_call_guards_length_and_empty():
+def test_kaomoji_call_rejects_empty():
+    """No length cap — the prompt constrains shape; only empty is unusable."""
     cfg = Config(api_key="k", endpoint="e", model="m")
     assert _kaomoji_call(cfg, lambda _m, _t: LLMResult(content="(=^･ω･^=)"), "hi", None) == "(=^･ω･^=)"
-    assert _kaomoji_call(cfg, lambda _m, _t: LLMResult(content="x" * 64), "hi", None) is None
-    assert _kaomoji_call(cfg, lambda _m, _t: LLMResult(content=""), "hi", None) is None
+    assert _kaomoji_call(cfg, lambda _m, _t: LLMResult(content="   "), "hi", None) is None
 
 
 def test_late_kaomoji_is_fetchable_after_done(tmp_path):

@@ -207,7 +207,6 @@ KAOMOJI_PROMPT = (
     "it yourself; do not pick from a list. No words, no explanation, 2-12 "
     "characters, single line."
 )
-KAOMOJI_MAX_CHARS = 24
 # The mood call runs in parallel and often finishes after the /chat stream
 # closed; a done client polls /kaomoji with this wait budget instead of
 # losing the decoration on every short turn.
@@ -223,12 +222,12 @@ def _kaomoji_call(cfg, llm, user_msg: str, last_reply: str | None) -> str | None
     if llm is not None:
         result = llm(messages, [])
     else:
-        # Reasoning models spend thinking tokens out of this budget before
-        # any content — a tight cap trips finish_reason=length with empty
-        # content. Give it room; the len() check below rejects rambling.
-        result = stream_chat(cfg.model, cfg.endpoint, cfg.api_key, messages, [], max_tokens=1024)
+        # No max_tokens cap: the prompt alone constrains the reply to one
+        # short kaomoji, and reasoning models spend budget on thinking first
+        # — a tight cap trips finish_reason=length with empty content.
+        result = stream_chat(cfg.model, cfg.endpoint, cfg.api_key, messages, [])
     text = (result.content or "").strip()
-    return text if text and len(text) <= KAOMOJI_MAX_CHARS else None
+    return text or None
 
 
 def _kaomoji_worker(sink: "WebSink", runtime, messages: list[dict]) -> None:
