@@ -596,15 +596,7 @@ function handleTurnEvent(obj) {
       agentBubble(obj.content.id);
       break;
     case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
-    case 'kaomoji': {
-      // The agent's mood this turn, shown where the brand name was.
-      const brand = document.getElementById('brand');
-      if (brand && obj.content) {
-        brand.textContent = obj.content;
-        try { localStorage.setItem('fungi-kaomoji', obj.content); } catch (e) {}
-      }
-      break;
-    }
+    case 'kaomoji': applyKaomoji(obj.content); break;
     case 'agent_event': {
       const aid = obj.content.id, ev = obj.content.event;
       if (agents[aid]) agents[aid].history.push(ev);
@@ -635,12 +627,31 @@ function handleTurnEvent(obj) {
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
       status.textContent = t.aborted ? 'Aborted. Press Alt+R to continue.'
         : (failed ? 'Turn failed. Press Alt+R to retry.' : '');
+      if (t.sessionId) fetchLatestKaomoji(t.sessionId);
       if (viewing) reloadSessionFromServer();
       else loadSessions(); // the finished turn landed in a background session
       break;
     }
   }
   if (visible && currentSessionId === t.sessionId) { if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
+}
+
+function applyKaomoji(text) {
+  // The agent's mood this turn, shown where the brand name was.
+  const brand = document.getElementById('brand');
+  if (brand && text) {
+    brand.textContent = text;
+    try { localStorage.setItem('fungi-kaomoji', text); } catch (e) {}
+  }
+}
+
+function fetchLatestKaomoji(sessionId) {
+  // The parallel mood call often lands after the /chat stream closed —
+  // poll the server tape so short turns still show the mood.
+  fetch('/kaomoji?sessionId=' + encodeURIComponent(sessionId || ''))
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => { if (d && d.kaomoji) applyKaomoji(d.kaomoji); })
+    .catch(() => {});
 }
 
 function updateLastText() {

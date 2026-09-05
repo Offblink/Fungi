@@ -208,6 +208,10 @@ KAOMOJI_PROMPT = (
     "characters, single line."
 )
 KAOMOJI_MAX_CHARS = 24
+# The mood call runs in parallel and often finishes after the /chat stream
+# closed; a done client polls /kaomoji with this wait budget instead of
+# losing the decoration on every short turn.
+KAOMOJI_FETCH_WAIT_S = 10
 
 
 def _kaomoji_call(cfg, llm, user_msg: str, last_reply: str | None) -> str | None:
@@ -219,7 +223,10 @@ def _kaomoji_call(cfg, llm, user_msg: str, last_reply: str | None) -> str | None
     if llm is not None:
         result = llm(messages, [])
     else:
-        result = stream_chat(cfg.model, cfg.endpoint, cfg.api_key, messages, [], max_tokens=32)
+        # Reasoning models spend thinking tokens out of this budget before
+        # any content — a tight cap trips finish_reason=length with empty
+        # content. Give it room; the len() check below rejects rambling.
+        result = stream_chat(cfg.model, cfg.endpoint, cfg.api_key, messages, [], max_tokens=1024)
     text = (result.content or "").strip()
     return text if text and len(text) <= KAOMOJI_MAX_CHARS else None
 
@@ -366,8 +373,27 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self._send_json(self.runtime.comm_log(host))
         elif route == "/events":
             self._handle_events((parse_qs(url.query).get("sessionId") or [None])[0])
+        elif route == "/kaomoji":
+            self._handle_kaomoji((parse_qs(url.query).get("sessionId") or [None])[0])
         else:
             self._send_json({"error": "not found"}, status=404)
+
+    def _handle_kaomoji(self, session_id: str | None) -> None:
+        """Latest mood kaomoji for a session, waiting briefly for a late one."""
+        if not session_id:
+            self._send_json({"kaomoji": None})
+            return
+        deadline = time.monotonic() + KAOMOJI_FETCH_WAIT_S
+        while True:
+            tape = _TURN_TAPES.get(session_id) or []
+            for ev in reversed(tape):
+                if ev.get("type") == "kaomoji" and ev.get("content"):
+                    self._send_json({"kaomoji": ev["content"]})
+                    return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+        self._send_json({"kaomoji": None})
 
     # ---- POST -------------------------------------------------------------
     def do_POST(self):

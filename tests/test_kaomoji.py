@@ -116,6 +116,63 @@ def test_kaomoji_call_guards_length_and_empty():
     assert _kaomoji_call(cfg, lambda _m, _t: LLMResult(content=""), "hi", None) is None
 
 
+def test_late_kaomoji_is_fetchable_after_done(tmp_path):
+    """The mood call often finishes after the /chat stream closed (short
+    turn, slow reasoning model): GET /kaomoji must still serve it."""
+    def slow_mood_llm(messages, _tools):
+        calls.append(list(messages))
+        if (
+            messages
+            and messages[0].get("role") == "system"
+            and "kaomoji" in messages[0]["content"].lower()
+        ):
+            time.sleep(1.5)  # mood lands well after the main turn is done
+            return LLMResult(content="(˶ᵔᵕᵔ˶)")
+        return LLMResult(content="reply")
+
+    calls: list[list] = []
+    cfg = Config(api_key="k", endpoint="e", model="m", kaomoji=True)
+    room = RoomServer(
+        "alpha", cfg, NullSink(), "tok", tmp_path / "data",
+        llm=slow_mood_llm, rules_path=tmp_path / "rules.json",
+    )
+    room.start()
+    server = _serve(room)
+    try:
+        port = server.server_address[1]
+        with _post(port, "/chat", {"message": "quick hello", "sessionId": None}) as resp:
+            body = resp.read().decode("utf-8")
+        assert '"type": "done"' in body or '"type":"done"' in body
+        sid = room.webui_runtime().sessions_list()[0]["id"]
+        tape_types = [ev.get("type") for ev in _TURN_TAPES.get(sid, [])]
+        assert "kaomoji" not in tape_types, "mood unexpectedly beat the turn"
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/kaomoji?sessionId={sid}", timeout=15
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        assert data["kaomoji"] == "(˶ᵔᵕᵔ˶)"
+    finally:
+        room.stop()
+        server.shutdown()
+        server.server_close()
+
+
+def test_kaomoji_endpoint_without_session_returns_null(tmp_path):
+    """No session id: the endpoint answers immediately instead of waiting."""
+    room = _build_room(tmp_path, [], kaomoji=False)
+    server = _serve(room)
+    try:
+        port = server.server_address[1]
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/kaomoji", timeout=5
+        ) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        assert data == {"kaomoji": None}
+    finally:
+        room.stop()
+        server.shutdown()
+
+
 def test_config_roundtrip(tmp_path):
     """The toggle persists: default on, off survives save/load."""
     from fungi.config import load_config, save_config
