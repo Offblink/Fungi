@@ -596,7 +596,6 @@ function handleTurnEvent(obj) {
       agentBubble(obj.content.id);
       break;
     case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
-    case 'kaomoji': applyKaomoji(obj.content); break;
     case 'agent_event': {
       const aid = obj.content.id, ev = obj.content.event;
       if (agents[aid]) agents[aid].history.push(ev);
@@ -627,31 +626,12 @@ function handleTurnEvent(obj) {
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
       status.textContent = t.aborted ? 'Aborted. Press Alt+R to continue.'
         : (failed ? 'Turn failed. Press Alt+R to retry.' : '');
-      if (t.sessionId) fetchLatestKaomoji(t.sessionId);
       if (viewing) reloadSessionFromServer();
       else loadSessions(); // the finished turn landed in a background session
       break;
     }
   }
   if (visible && currentSessionId === t.sessionId) { if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
-}
-
-function applyKaomoji(text) {
-  // The agent's mood this turn, shown where the brand name was.
-  const brand = document.getElementById('brand');
-  if (brand && text) {
-    brand.textContent = text;
-    try { localStorage.setItem('fungi-kaomoji', text); } catch (e) {}
-  }
-}
-
-function fetchLatestKaomoji(sessionId) {
-  // The parallel mood call often lands after the /chat stream closed —
-  // poll the server tape so short turns still show the mood.
-  fetch('/kaomoji?sessionId=' + encodeURIComponent(sessionId || ''))
-    .then(r => (r.ok ? r.json() : null))
-    .then(d => { if (d && d.kaomoji) applyKaomoji(d.kaomoji); })
-    .catch(() => {});
 }
 
 function updateLastText() {
@@ -1171,8 +1151,6 @@ function applyTheme(t) {
   try { localStorage.setItem('fungi-theme', t); } catch (e) {}
 }
 try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
-// Last turn's mood kaomoji survives a reload; the next turn replaces it.
-try { var _kaomoji = localStorage.getItem('fungi-kaomoji'); if (_kaomoji) document.getElementById('brand').textContent = _kaomoji; } catch (e) {}
 document.getElementById('theme-switch').addEventListener('click', function () {
   var next = themeRoot.dataset.theme === 'dark' ? 'light' : 'dark';
   if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.themeTo) {

@@ -44,7 +44,6 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
-    SwitchButton,
     SystemTrayMenu,
     TitleLabel,
     ToolButton,
@@ -798,10 +797,6 @@ class ConfigPage(QWidget):
         self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
         root.addWidget(_row("模型", self.model_edit))
 
-        self.kaomoji_switch = SwitchButton(self)
-        self.kaomoji_switch.setChecked(load_config().kaomoji)
-        root.addWidget(_row("心情颜文字", self.kaomoji_switch))
-
         self.save_btn = PrimaryPushButton(FluentIcon.SAVE, "保存配置")
         self.save_btn.clicked.connect(self._save)
         root.addWidget(self.save_btn)
@@ -810,10 +805,9 @@ class ConfigPage(QWidget):
         self.status = BodyLabel()
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        # reactive status line: reflect unsaved edits and the toggle live
+        # reactive status line: reflect unsaved edits live
         for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
             edit.textChanged.connect(self._refresh_status)
-        self.kaomoji_switch.checkedChanged.connect(self._refresh_status)
         self._refresh_status()
 
     def _refresh_status(self) -> None:
@@ -826,10 +820,7 @@ class ConfigPage(QWidget):
         )
         endpoint = self.endpoint_edit.text().strip() or cfg.endpoint
         model = self.model_edit.text().strip() or cfg.model
-        mood = "开" if self.kaomoji_switch.isChecked() else "关"
-        self.status.setText(
-            f"当前状态：{state} · 模型 {model} · 接口 {endpoint} · 心情颜文字 {mood}"
-        )
+        self.status.setText(f"当前状态：{state} · 模型 {model} · 接口 {endpoint}")
 
     def _save(self) -> None:
         cfg = load_config()
@@ -839,7 +830,6 @@ class ConfigPage(QWidget):
             cfg.endpoint = self.endpoint_edit.text().strip()
         if self.model_edit.text().strip():
             cfg.model = self.model_edit.text().strip()
-        cfg.kaomoji = self.kaomoji_switch.isChecked()
         save_config(cfg)
         self.key_edit.clear()
         self.endpoint_edit.clear()

@@ -39,9 +39,6 @@ class Config:
     # >0: send max_tokens on every completion (0 = provider default). Rationale:
     # reasoning-heavy turns can die at the provider's output cap with an empty reply.
     max_tokens: int = 0
-    # Mood kaomoji: before each turn a tiny parallel LLM call invents one
-    # kaomoji for the WebUI header (replaces the brand name). Default on.
-    kaomoji: bool = True
 
     @property
     def configured(self) -> bool:
@@ -84,8 +81,6 @@ def load_config(path: Path | None = None) -> Config:
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
             cfg.max_tokens = int(data["max_tokens"])
-        if "kaomoji" in data:
-            cfg.kaomoji = bool(data["kaomoji"])
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -114,6 +109,4 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["inbox_dir"] = cfg.inbox_dir
     if cfg.display:
         data["display"] = cfg.display
-    if not cfg.kaomoji:
-        data["kaomoji"] = False
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")
