@@ -53,7 +53,13 @@ from qfluentwidgets import (
 # The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
 # not installed and its import name would clobber this one), so the GUI rides
 # PyQt5; the fluent components are the same library Face uses (same look).
-from .config import DEFAULT_ENDPOINT, PROJECT_ROOT, load_config, save_config
+from .config import (
+    DEFAULT_API_KEY,
+    DEFAULT_ENDPOINT,
+    PROJECT_ROOT,
+    load_config,
+    save_config,
+)
 from .protocol import valid_host_name
 from .tray import make_icon
 
@@ -793,9 +799,8 @@ class ConfigPage(QWidget):
         root.addWidget(_row("模型", self.model_edit))
 
         self.kaomoji_switch = SwitchButton(self)
-        self.kaomoji_switch.setText("回应前显示心情颜文字（模型自由发挥）")
         self.kaomoji_switch.setChecked(load_config().kaomoji)
-        root.addWidget(self.kaomoji_switch)
+        root.addWidget(_row("心情颜文字", self.kaomoji_switch))
 
         self.save_btn = PrimaryPushButton(FluentIcon.SAVE, "保存配置")
         self.save_btn.clicked.connect(self._save)
@@ -805,14 +810,25 @@ class ConfigPage(QWidget):
         self.status = BodyLabel()
         self.status.setWordWrap(True)
         root.addWidget(self.status)
+        # reactive status line: reflect unsaved edits and the toggle live
+        for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
+            edit.textChanged.connect(self._refresh_status)
+        self.kaomoji_switch.checkedChanged.connect(self._refresh_status)
         self._refresh_status()
 
     def _refresh_status(self) -> None:
         cfg = load_config()
-        state = "已配置" if cfg.configured else "未配置（使用占位 key，无法对话）"
-        mood = "开" if cfg.kaomoji else "关"
+        key = self.key_edit.text().strip() or cfg.api_key
+        state = (
+            "已配置"
+            if key and key != DEFAULT_API_KEY
+            else "未配置（使用占位 key，无法对话）"
+        )
+        endpoint = self.endpoint_edit.text().strip() or cfg.endpoint
+        model = self.model_edit.text().strip() or cfg.model
+        mood = "开" if self.kaomoji_switch.isChecked() else "关"
         self.status.setText(
-            f"当前状态：{state} · 模型 {cfg.model} · 接口 {cfg.endpoint} · 心情颜文字 {mood}"
+            f"当前状态：{state} · 模型 {model} · 接口 {endpoint} · 心情颜文字 {mood}"
         )
 
     def _save(self) -> None:
