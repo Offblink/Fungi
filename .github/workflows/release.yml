@@ -43,6 +43,7 @@ jobs:
       - name: Build Windows exe
         run: >
           python -m PyInstaller --noconfirm --noconsole --name Fungi start.py
+          --icon assets/fungi.ico
           --add-data "web;web" --collect-all qfluentwidgets
           --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6
           --exclude-module shiboken2 --exclude-module shiboken6
