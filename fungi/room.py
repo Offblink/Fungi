@@ -35,7 +35,7 @@ from .hub.app import Hub
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
 from .protocol import Envelope, parse_addr
-from .server import WebUIRuntime, make_webui_server
+from .server import WebUIRuntime, _kaomoji_call, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
 from .trilayer import TriLayer
@@ -537,6 +537,12 @@ class RoomRuntime(WebUIRuntime):
             tool_names=clone.tool_names,
             model=clone.model,
         )
+
+    def kaomoji_reply(self, user_msg: str, last_reply: str | None) -> str | None:
+        """Room mode: same gate, but ride the injected room llm (tests/fakes)."""
+        if not self.room.cfg.kaomoji:
+            return None
+        return _kaomoji_call(self.room.cfg, self.room.llm, user_msg, last_reply)
 
     # ── answers ──
     def route_answer(self, ask_id: str, value) -> bool:

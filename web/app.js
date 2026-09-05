@@ -596,6 +596,15 @@ function handleTurnEvent(obj) {
       agentBubble(obj.content.id);
       break;
     case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
+    case 'kaomoji': {
+      // The agent's mood this turn, shown where the brand name was.
+      const brand = document.getElementById('brand');
+      if (brand && obj.content) {
+        brand.textContent = obj.content;
+        try { localStorage.setItem('fungi-kaomoji', obj.content); } catch (e) {}
+      }
+      break;
+    }
     case 'agent_event': {
       const aid = obj.content.id, ev = obj.content.event;
       if (agents[aid]) agents[aid].history.push(ev);
@@ -1151,6 +1160,8 @@ function applyTheme(t) {
   try { localStorage.setItem('fungi-theme', t); } catch (e) {}
 }
 try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
+// Last turn's mood kaomoji survives a reload; the next turn replaces it.
+try { var _kaomoji = localStorage.getItem('fungi-kaomoji'); if (_kaomoji) document.getElementById('brand').textContent = _kaomoji; } catch (e) {}
 document.getElementById('theme-switch').addEventListener('click', function () {
   var next = themeRoot.dataset.theme === 'dark' ? 'light' : 'dark';
   if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.themeTo) {

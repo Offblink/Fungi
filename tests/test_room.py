@@ -14,7 +14,7 @@ from fungi.hub.app import Hub
 from fungi.protocol import Envelope
 from fungi.room import RoomClient, RoomRuntime, RoomServer
 
-CFG = Config(api_key="k", endpoint="e", model="m")  # assembly reads max_file_mb/inbox_dir
+CFG = Config(api_key="k", endpoint="e", model="m", kaomoji=False)  # mood is covered by test_kaomoji.py; its parallel call would race these call-count assertions
 LLM = object()
 
 

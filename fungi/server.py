@@ -18,6 +18,7 @@ from fungi import session
 from fungi.agent import SYSTEM_PROMPT, Agent
 from fungi.config import RESOURCE_ROOT, load_config, save_config
 from fungi.events import Sink
+from fungi.llm import stream_chat
 from fungi.tools.ask import resolve_ask
 from fungi.tools.mcp import mcp_extra_tools
 from fungi.trilayer import TriLayer
@@ -140,6 +141,13 @@ class WebUIRuntime:
     def build_agent(self, sink: Sink, should_abort) -> Agent:
         return TriLayer(load_config(), sink, should_abort=should_abort).build_orchestrator(sink)
 
+    def kaomoji_reply(self, user_msg: str, last_reply: str | None) -> str | None:
+        """Default: the configured model, tiny call. Room mode injects its llm."""
+        cfg = load_config()
+        if not cfg.kaomoji:
+            return None
+        return _kaomoji_call(cfg, None, user_msg, last_reply)
+
     def route_answer(self, ask_id: str, value: str | list[str]) -> bool:
         """Resolve an /answer submission. Default: in-process inquire only."""
         return resolve_ask(ask_id, value)
@@ -190,6 +198,51 @@ _TURN_TAPES: dict[str, list[dict]] = {}
 def _session_lock(session_id: str) -> threading.Lock:
     with _SESSION_LOCKS_GUARD:
         return _SESSION_LOCKS.setdefault(session_id, threading.Lock())
+
+
+KAOMOJI_PROMPT = (
+    "Reply with exactly ONE kaomoji (a Japanese-style text emoticon built from "
+    "punctuation marks and symbols) that expresses your immediate gut reaction "
+    "to what the user just said — the face you make when you hear it. Invent "
+    "it yourself; do not pick from a list. No words, no explanation, 2-12 "
+    "characters, single line."
+)
+KAOMOJI_MAX_CHARS = 24
+
+
+def _kaomoji_call(cfg, llm, user_msg: str, last_reply: str | None) -> str | None:
+    """One tiny completion: the mood kaomoji, or None if the reply is unusable."""
+    messages: list[dict] = [{"role": "system", "content": KAOMOJI_PROMPT}]
+    if last_reply:
+        messages.append({"role": "assistant", "content": str(last_reply)})
+    messages.append({"role": "user", "content": str(user_msg)})
+    if llm is not None:
+        result = llm(messages, [])
+    else:
+        result = stream_chat(cfg.model, cfg.endpoint, cfg.api_key, messages, [], max_tokens=32)
+    text = (result.content or "").strip()
+    return text if text and len(text) <= KAOMOJI_MAX_CHARS else None
+
+
+def _kaomoji_worker(sink: "WebSink", runtime, messages: list[dict]) -> None:
+    """Emit the turn's mood kaomoji; a decoration must never break the turn."""
+    try:
+        last_user = ""
+        last_reply = None
+        for m in reversed(messages):
+            role = m.get("role")
+            if role == "user" and not last_user:
+                last_user = m.get("content") or ""
+            elif role == "assistant" and last_user:
+                last_reply = m.get("content")
+                break
+        if not last_user:
+            return
+        text = runtime.kaomoji_reply(last_user, last_reply)
+        if text:
+            sink.emit("kaomoji", text)
+    except Exception:
+        pass  # decoration: any failure just leaves the brand name as-is
 
 
 class WebSink:
@@ -475,6 +528,11 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 # clobber the still-running turn's tape for the same session.
                 with _TURNS_LOCK:
                     _TURN_TAPES[session_id] = []
+                # Mood kaomoji in parallel: a slow mood call must not delay
+                # the reply, and its failure must not touch the turn.
+                threading.Thread(
+                    target=_kaomoji_worker, args=(sink, self.runtime, messages), daemon=True
+                ).start()
                 agent = self.runtime.build_agent(sink, abort_event.is_set)
                 try:
                     agent.run(messages)

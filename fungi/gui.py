@@ -44,6 +44,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    SwitchButton,
     SystemTrayMenu,
     TitleLabel,
     ToolButton,
@@ -791,6 +792,11 @@ class ConfigPage(QWidget):
         self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
         root.addWidget(_row("模型", self.model_edit))
 
+        self.kaomoji_switch = SwitchButton(self)
+        self.kaomoji_switch.setText("回应前显示心情颜文字（模型自由发挥）")
+        self.kaomoji_switch.setChecked(load_config().kaomoji)
+        root.addWidget(self.kaomoji_switch)
+
         self.save_btn = PrimaryPushButton(FluentIcon.SAVE, "保存配置")
         self.save_btn.clicked.connect(self._save)
         root.addWidget(self.save_btn)
@@ -804,7 +810,10 @@ class ConfigPage(QWidget):
     def _refresh_status(self) -> None:
         cfg = load_config()
         state = "已配置" if cfg.configured else "未配置（使用占位 key，无法对话）"
-        self.status.setText(f"当前状态：{state} · 模型 {cfg.model} · 接口 {cfg.endpoint}")
+        mood = "开" if cfg.kaomoji else "关"
+        self.status.setText(
+            f"当前状态：{state} · 模型 {cfg.model} · 接口 {cfg.endpoint} · 心情颜文字 {mood}"
+        )
 
     def _save(self) -> None:
         cfg = load_config()
@@ -814,6 +823,7 @@ class ConfigPage(QWidget):
             cfg.endpoint = self.endpoint_edit.text().strip()
         if self.model_edit.text().strip():
             cfg.model = self.model_edit.text().strip()
+        cfg.kaomoji = self.kaomoji_switch.isChecked()
         save_config(cfg)
         self.key_edit.clear()
         self.endpoint_edit.clear()
