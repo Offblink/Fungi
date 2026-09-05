@@ -81,11 +81,15 @@ function closeConfirm(confirmed) {
 })();
 
 /* ---------- sessions ---------- */
+let _sessionsSeq = 0;
 async function loadSessions() {
+  const seq = ++_sessionsSeq;
   try {
     const r = await fetch('/sessions');
     if (!r.ok) throw new Error(r.status);
-    allSessions = (await r.json()).sessions || [];
+    const sessions = (await r.json()).sessions || [];
+    if (seq !== _sessionsSeq) return; // a newer fetch superseded this response
+    allSessions = sessions;
     renderSessionList();
   } catch (e) { console.error('loadSessions:', e); }
 }
@@ -156,7 +160,16 @@ function renderMessages(s) {
   // reload path byte-for-byte the same render a page refresh does.
   msgs.innerHTML = '';
   renderTranscript(rawMessages, s.asks || []);
-  if (turn && turn.sessionId === currentSessionId) renderTurnLive();
+  if (turn && turn.sessionId === currentSessionId) {
+    // The transcript just rendered comes from the disk copy, which (turn-
+    // start save) already contains the running turn's user message — the
+    // live userText bubble would draw it a second time (mid-turn switch
+    // back). Mark it rendered so renderTurnLive skips the bubble.
+    if (turn.userText && rawMessages.some(m => m.role === 'user' && m.content === turn.userText)) {
+      turn.userRendered = true;
+    }
+    renderTurnLive();
+  }
   placeAskCards(); // friend-view inline cards move back to the banner here
 }
 
@@ -206,7 +219,7 @@ async function newSession() {
   leaveFriendView();
   // Any untouched "(new session)" on disk? Focus it instead of creating
   // another one — repeated clicks and switches must not litter the list.
-  const empty = allSessions.find(s => s.title === '(new session)' && (s.msgCount || 0) <= 1);
+  const empty = allSessions.find(s => s.title === '(new session)' && (s.msgCount || 0) <= 1 && !s.running);
   if (empty) {
     if (empty.id !== currentSessionId) await switchSession(empty.id);
     return;
@@ -643,7 +656,7 @@ function renderTurnLive() {
   if (!turn || turn.sessionId !== currentSessionId || friendView) return;
   const saved = saveAskCardState();
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
-  if (turn.userText) {
+  if (turn.userText && !turn.userRendered) {
     const u = document.createElement('div');
     u.className = 'msg user live-node';
     u.innerHTML = marked.parse(turn.userText);
