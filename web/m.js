@@ -465,6 +465,7 @@ function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
   const visible = currentSessionId === t.sessionId && !friendView;
+  const stick = isNearBottom(msgs); // measure before the event mutates the DOM
   switch (obj.type) {
     case 'text': {
       const last = t.entries[t.entries.length - 1];
@@ -550,7 +551,7 @@ function handleTurnEvent(obj) {
       break;
     }
   }
-  if (visible && currentSessionId === t.sessionId && isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight;
+  if (visible && currentSessionId === t.sessionId && stick) msgs.scrollTop = msgs.scrollHeight;
 }
 
 function updateLastText() {
@@ -558,10 +559,8 @@ function updateLastText() {
   const idx = t.entries.map(x => x.kind).lastIndexOf('text');
   if (idx < 0) return renderTurnLive();
   const el = document.getElementById('live-text-' + idx);
-  if (el) {
-    el.innerHTML = marked.parse(t.entries[idx].content) + '<span class="live-cursor"></span>';
-    if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight;
-  } else renderTurnLive();
+  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(t.entries[idx].content) + '<span class="live-cursor"></span>'; if (stick) msgs.scrollTop = msgs.scrollHeight; }
+  else renderTurnLive();
 }
 function updateLastReasoning() {
   const t = turn;
@@ -574,6 +573,7 @@ function updateLastReasoning() {
 function renderTurnLive() {
   if (!turn || turn.sessionId !== currentSessionId || friendView) return;
   const saved = saveAskCardState();
+  const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText && !turn.userRendered) {
     const u = document.createElement('div');
@@ -611,7 +611,7 @@ function renderTurnLive() {
       msgs.appendChild(d);
     }
   });
-  msgs.scrollTop = msgs.scrollHeight;
+  if (stick) msgs.scrollTop = msgs.scrollHeight;
   // Animate only nodes that appeared since the previous streaming re-render —
   // re-animating all live nodes per chunk would flicker (desktop contract).
   const live = msgs.querySelectorAll('.live-node');
@@ -718,8 +718,9 @@ function placeAskCards() {
     // A pending ask belongs to the conversation that raised it: inline in the
     // open friend view, otherwise the global banner above the input.
     if (friendView && rec.conv === friendView) {
+      const stick = isNearBottom(msgs); // measure before the card changes layout
       msgs.appendChild(el);
-      msgs.scrollTop = msgs.scrollHeight; // a new card must push itself into view
+      if (stick) msgs.scrollTop = msgs.scrollHeight;
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -731,7 +732,7 @@ function placeAskCards() {
       if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
         el.remove();
         resolvedAskCards.delete(rec.id);
-      } else { msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight; }
+      } else { const stick = isNearBottom(msgs); msgs.appendChild(el); if (stick) msgs.scrollTop = msgs.scrollHeight; }
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -974,6 +975,7 @@ function renderFriendChat(d) {
     addDiv('friend-event', '<i>还没有和该好友的 clone 对话记录。</i>');
     return;
   }
+  const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   renderTranscript(messages, d.asks || []);
   events.forEach(row => {
     if (row.kind === 'transfer')
@@ -985,7 +987,8 @@ function renderFriendChat(d) {
   });
   renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint
-  msgs.scrollTop = msgs.scrollHeight;
+  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  updateScrollBtn();
 }
 
 /* ---------- agent tray (live subagent bubbles + bottom-sheet replay) ---------- */

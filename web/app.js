@@ -21,8 +21,9 @@ function addDiv(cls, html, id) {
   d.className = 'msg ' + cls;
   if (id) d.id = id;
   if (html) d.innerHTML = html;
+  const stick = isNearBottom(msgs); // measure BEFORE the node changes layout
   msgs.appendChild(d);
-  if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight;
+  if (stick) msgs.scrollTop = msgs.scrollHeight;
   updateScrollBtn();
   return d;
 }
@@ -567,6 +568,7 @@ function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
   const visible = currentSessionId === t.sessionId && !friendView;
+  const stick = isNearBottom(msgs); // measure before the event mutates the DOM
   switch (obj.type) {
     case 'text': {
       const last = t.entries[t.entries.length - 1];
@@ -648,7 +650,7 @@ function handleTurnEvent(obj) {
       break;
     }
   }
-  if (visible && currentSessionId === t.sessionId) { if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
+  if (visible && currentSessionId === t.sessionId) { if (stick) msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
 }
 
 function updateLastText() {
@@ -656,7 +658,7 @@ function updateLastText() {
   const idx = t.entries.map(x => x.kind).lastIndexOf('text');
   if (idx < 0) return renderTurnLive();
   const el = document.getElementById('live-text-' + idx);
-  if (el) { el.innerHTML = marked.parse(t.entries[idx].content); if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight; }
+  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(t.entries[idx].content); if (stick) msgs.scrollTop = msgs.scrollHeight; }
   else renderTurnLive();
 }
 
@@ -672,6 +674,7 @@ function updateLastReasoning() {
 function renderTurnLive() {
   if (!turn || turn.sessionId !== currentSessionId || friendView) return;
   const saved = saveAskCardState();
+  const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText && !turn.userRendered) {
     const u = document.createElement('div');
@@ -709,7 +712,7 @@ function renderTurnLive() {
       msgs.appendChild(d);
     }
   });
-  msgs.scrollTop = msgs.scrollHeight;
+  if (stick) msgs.scrollTop = msgs.scrollHeight;
   // Motion: animate only nodes that appeared since the previous streaming
   // re-render — every text chunk rebuilds .live-node, re-animating all of
   // them would flicker (docs/webui-ux.md contract).
@@ -879,8 +882,9 @@ function placeAskCards() {
   const banner = document.getElementById('asks-banner');
   pendingAskCards.forEach(({ rec, el }) => {
     if (friendView && rec.conv === friendView) {
+      const stick = isNearBottom(msgs); // measure before the card changes layout
       msgs.appendChild(el);
-      msgs.scrollTop = msgs.scrollHeight; // a new card must push itself into view
+      if (stick) msgs.scrollTop = msgs.scrollHeight;
       window.fungiMotion?.askCardIn?.(el);
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
@@ -892,7 +896,7 @@ function placeAskCards() {
       if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
         el.remove();
         resolvedAskCards.delete(rec.id);
-      } else { msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight; }
+      } else { const stick = isNearBottom(msgs); msgs.appendChild(el); if (stick) msgs.scrollTop = msgs.scrollHeight; }
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -982,8 +986,9 @@ async function pollPendingAsks() {
       const el = buildPendingAskCard(a);
       pendingAskCards.set(a.id, { rec: a, el });
       if (friendView && a.conv === friendView) {
+        const stick = isNearBottom(msgs);
         msgs.appendChild(el);
-        msgs.scrollTop = msgs.scrollHeight;
+        if (stick) msgs.scrollTop = msgs.scrollHeight;
         window.fungiMotion?.askCardIn?.(el);
       } else {
         document.getElementById('asks-banner').appendChild(el);
@@ -1205,6 +1210,7 @@ function renderFriendChat(d) {
     addDiv('friend-empty', '<i>No clone-to-clone conversation with this host yet.</i>');
     return;
   }
+  const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   renderTranscript(messages, d.asks || []);
   var fileNodes = [];
   events.forEach(row => {
@@ -1223,7 +1229,8 @@ function renderFriendChat(d) {
   lastTransferCount = fileNodes.length;
   renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint
-  msgs.scrollTop = msgs.scrollHeight;
+  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  updateScrollBtn();
 }
 
 setInterval(loadPeers, 5000);
