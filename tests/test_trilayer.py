@@ -307,3 +307,15 @@ def test_trilayer_propagates_should_abort():
     assert callable(orchestrator.should_abort) and orchestrator.should_abort() is False
     flag["on"] = True
     assert orchestrator.should_abort() is True
+
+
+def test_every_tool_description_is_a_plain_string():
+    """A tuple description (trailing comma inside parens) serializes to a JSON
+    array, which strict providers (GLM 1210) reject as an invalid parameter -
+    the whole turn 400s. Assert the type at the source for every schema."""
+    from fungi.tools import tool_defs
+    from fungi.trilayer import SPAWN_SCHEMA
+
+    schemas = [SPAWN_SCHEMA] + [d["schema"] for d in tool_defs()]
+    for s in schemas:
+        assert isinstance(s["function"]["description"], str), s["function"]["name"]

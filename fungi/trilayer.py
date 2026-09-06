@@ -103,7 +103,7 @@ SPAWN_SCHEMA = {
             " exact format the subagent must use for its final reply. Returns 'dispatched"
             " (id=...)' immediately — the reply does NOT come back here; the dispatcher is"
             " re-activated with the report in a later turn (synchronous fallback contracts"
-            " may return the reply directly).",
+            " may return the reply directly)."
         ),
         "parameters": {
             "type": "object",
