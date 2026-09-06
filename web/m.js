@@ -471,13 +471,15 @@ function handleTurnEvent(obj) {
     }
     case 'tool':
       t.entries.push({ kind: 'tool', id: obj.content.id, name: obj.content.name, args: obj.content.args, result: '' });
-      if (visible) renderTurnLive();
+      // A long tool used to leave a stale "Writing..." on the status bar.
+      if (visible) { status.textContent = '⚙ ' + (obj.content.name || 'tool') + '…'; renderTurnLive(); }
       break;
     case 'tool_result': {
       const rec = t.entries.find(x => x.kind === 'tool' && x.id === obj.content.id)
         || [...t.entries].reverse().find(x => x.kind === 'tool' && !x.result);
       if (rec) rec.result = obj.content.content;
       if (visible) {
+        status.textContent = 'Thinking...'; // tool done: the next LLM round starts
         const block = document.getElementById('tool-' + obj.content.id);
         if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(obj.content.content) + '</pre>';
         else renderTurnLive();
@@ -939,7 +941,6 @@ function openAgentModal(id) {
 const drawer = document.getElementById('drawer'), scrim = document.getElementById('drawer-scrim');
 const chatPage = document.getElementById('chat-page');
 let drawerOpen = false, drag = null;
-const DRAG_OPEN_EDGE = 48; // px from the left edge that starts an open-drag
 function drawerW() { return drawer.offsetWidth; }
 function setDrawer(x, scrimOp) {
   gsap.set(drawer, { x });
@@ -969,27 +970,17 @@ scrim.addEventListener('click', closeDrawer);
 document.getElementById('btn-menu').addEventListener('click', openDrawer);
 chatPage.addEventListener('touchstart', e => {
   const t = e.touches[0];
-  // TEMP X5 DIAGNOSTIC: prove whether edge touches reach the page at all and
-  // how the gesture progresses (起 started / 移 moving / 终 ended / 夺 stolen).
-  // Remove once the real-device right-swipe issue is closed.
-  if (!drawerOpen && t && t.clientX <= 120) {
-    window.__swDiag = { x0: t.clientX, dx: 0, ended: '' };
-    status.textContent = '↔起 x=' + Math.round(t.clientX) + ' y=' + Math.round(t.clientY);
-  }
   // NO "if (drag) return" guard: a gesture the webview swallows (WeChat X5's
   // native edge handling often fires no end/cancel at all) used to wedge
   // drag truthy forever and silently kill every later swipe. A new touch
-  // always supersedes stale state.
-  if (!drawerOpen && t.clientX > DRAG_OPEN_EDGE) return; // open: left-edge swipe only
+  // always supersedes stale state. The swipe may start ANYWHERE: the old 48px
+  // edge wedge never triggered in real use and fought the phone's own edge
+  // gesture; the vertical-lock in touchmove keeps normal scrolling intact.
   drag = { x0: t.clientX, y0: t.clientY, base: drawerOpen ? 0 : -drawerW(), w: drawerW(), locked: null, lastX: t.clientX, lastT: performance.now(), vx: 0 };
 }, { passive: true });
 chatPage.addEventListener('touchmove', e => {
   if (!drag) return;
   const t = e.touches[0];
-  if (window.__swDiag) {
-    window.__swDiag.dx = t.clientX - window.__swDiag.x0;
-    status.textContent = '↔移 dx=' + Math.round(window.__swDiag.dx);
-  }
   const dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
   if (drag.locked === null) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
@@ -1013,14 +1004,8 @@ function settleDrag(velSign) {
   const opened = x > -d.w / 2 || (d.vx || 0) * velSign > 0.35;
   applyDrawer(opened);
 }
-chatPage.addEventListener('touchend', () => {
-  if (window.__swDiag) { window.__swDiag.ended = 'end'; status.textContent = '↔终 dx=' + Math.round(window.__swDiag.dx); }
-  if (drag) settleDrag(1);
-}, { passive: true });
-chatPage.addEventListener('touchcancel', () => {
-  if (window.__swDiag) { window.__swDiag.ended = 'cancel'; status.textContent = '↔夺 dx=' + Math.round(window.__swDiag.dx); }
-  if (drag) settleDrag(1);
-}, { passive: true });
+chatPage.addEventListener('touchend', () => { if (drag) settleDrag(1); }, { passive: true });
+chatPage.addEventListener('touchcancel', () => { if (drag) settleDrag(1); }, { passive: true });
 // drawer-side left swipe (finger starts on the drawer itself)
 drawer.addEventListener('touchstart', e => {
   const t = e.touches[0];
