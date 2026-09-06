@@ -124,24 +124,6 @@
     });
   }
 
-  /* Agent bubble: indeterminate progress ring while running. */
-  function ring(el, on) {
-    if (!el) return;
-    var existing = el.querySelector('.motion-ring');
-    if (on && !existing) {
-      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('class', 'motion-ring');
-      svg.setAttribute('viewBox', '0 0 48 48');
-      svg.innerHTML = '<circle cx="24" cy="24" r="22" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="34 104"/>';
-      el.appendChild(svg);
-      gsap.to(svg, { rotation: 360, duration: 1.1, ease: 'none', repeat: -1,
-        transformOrigin: '50% 50%' });
-    } else if (!on && existing) {
-      gsap.to(existing, { opacity: 0, duration: 0.2,
-        onComplete: function () { existing.remove(); } });
-    }
-  }
-
   /* Number counter for badges (friends count etc.). */
   function counter(el, to) {
     if (!el) return;
@@ -210,7 +192,6 @@
     spores: spores,
     listFlip: listFlip,
     themeTo: themeTo,
-    ring: ring,
     waveOn: waveOn,
     waveOff: waveOff,
     counter: counter,

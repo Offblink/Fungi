@@ -370,7 +370,6 @@ function setAgentStatus(id, st) {
       // bubbles are transient: only visible while the subagent runs
       setTimeout(() => { b.remove(); }, 1500);
     }
-    window.fungiMotion?.ring?.(b, st === 'running');
   }
   if (a.eventsEl) {
     const label = { done: '\u2714 finished', failed: '\u2718 failed' }[st];
