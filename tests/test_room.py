@@ -779,3 +779,78 @@ def test_events_follows_running_turn_and_reports_running_flag(gated_room):
         gate.set()
         server.shutdown()
         server.server_close()
+
+
+def test_tape_grace_pop_does_not_kill_next_turns_tape(tmp_path, monkeypatch):
+    """Regression: after a turn finished, the tape's grace-pop timer fired by
+    session id alone. A NEW turn starting in the same session inside the grace
+    window had its LIVE tape deleted mid-run — a mid-turn reload then received
+    a bare done and silently lost the live view. The pop must only remove the
+    sealed generation's tape."""
+    import threading
+
+    from fungi import server as fungi_server
+    from fungi.events import NullSink
+
+    monkeypatch.setattr(fungi_server, "_TAPE_GRACE_S", 0.2)
+    turn2_gate = threading.Event()
+    calls: list[list] = []
+
+    def slow_llm(messages, _tools):
+        calls.append(list(messages))
+        if len(calls) >= 2:
+            turn2_gate.wait(timeout=10)
+        from fungi.llm import LLMResult
+
+        return LLMResult(content=f"reply-{len(calls)}")
+
+    room = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "data",
+        llm=slow_llm, rules_path=tmp_path / "rules.json",
+    )
+    room.start()
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        with _post(port, "/new", {}) as resp:
+            sid = json.loads(resp.read())["id"]
+
+        t1 = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "first", "sessionId": sid}).read(),
+            daemon=True,
+        )
+        t1.start()
+        t1.join(timeout=15)
+        assert not t1.is_alive()
+
+        # Turn 2 starts inside turn 1's grace window and stays gated mid-LLM.
+        t2 = threading.Thread(
+            target=lambda: _post(port, "/chat", {"message": "second", "sessionId": sid}).read(),
+            daemon=True,
+        )
+        t2.start()
+        assert _wait(lambda: len(calls) >= 2, timeout_s=10), "turn 2 never reached the LLM"
+        time.sleep(0.5)  # let turn 1's grace timer fire
+
+        payload = json.loads(
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/sessions", timeout=10).read()
+        )
+        rec = {s["id"]: s for s in payload["sessions"]}[sid]
+        assert rec["running"], "live turn's tape was popped by the previous turn's grace timer"
+
+        # The tape must stream (hold open or deliver events), never answer a
+        # bare done while the turn is still running.
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/events?sessionId={sid}", timeout=2.0
+        ) as resp:
+            try:
+                first = json.loads(resp.readline().decode("utf-8"))
+            except TimeoutError:  # stream held open for the live tape: correct
+                first = {"type": "text"}
+        assert first["type"] != "done", "reattach saw a bare done for a running turn"
+    finally:
+        turn2_gate.set()
+        t2.join(timeout=15)
+        server.shutdown()
+        server.server_close()
+        room.stop()

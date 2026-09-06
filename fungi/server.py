@@ -79,6 +79,8 @@ def lan_payload(port: int, loopback: bool) -> dict:
         payload["url"] = f"http://{payload['ip']}:{payload['port']}/m?t={WEBUI_TOKEN}"
     return payload
 
+_TAPE_GRACE_S = 60.0  # how long a sealed (done) tape stays for late reattach
+
 
 RETRY_STRIP_PREFIXES = ("(LLM error:", "(Hit max tool rounds", "(Aborted")
 
@@ -577,11 +579,20 @@ class YesSirHandler(BaseHTTPRequestHandler):
         finally:
             # Seal the tape with a done marker (replay consumers close on it)
             # and pop it after a grace window so late reattach still sees it.
+            # The pop must be generation-aware: a NEW turn in the same session
+            # may have installed a fresh tape within the grace window — popping
+            # by session id alone would delete a live turn's tape mid-run.
             with _TURNS_LOCK:
                 tape = _TURN_TAPES.get(session_id)
                 if tape is not None:
                     tape.append({"type": "done", "content": None})
-            seal = threading.Timer(60.0, _TURN_TAPES.pop, args=(session_id, None))
+
+            def _pop_tape_if_current(_t=tape):
+                with _TURNS_LOCK:
+                    if _TURN_TAPES.get(session_id) is _t:
+                        _TURN_TAPES.pop(session_id, None)
+
+            seal = threading.Timer(_TAPE_GRACE_S, _pop_tape_if_current)
             seal.daemon = True
             seal.start()
             with _TURNS_LOCK:
