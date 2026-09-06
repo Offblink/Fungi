@@ -25,7 +25,6 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 
 - **WebUI 视觉语言一脉相承**：Psi 的 `agent.ps1` 内嵌前端奠定，YESIR 原样复用，Fungi 继续沿用并扩展（好友视图、暗色主题、ask 卡片）。
 - **Fungi 回答了 YESIR 没回答的问题**：一个进程里的 Orchestrator 再强，也只在一台机器上。Fungi 把 Orchestrator 撒到 LAN 的每台主机上，让它们彼此成为工具。
-- **Inquire 正名**：YESIR 的主动发问机制叫 Inquire，工具却叫 `ask_user`；Fungi 把工具名改回了 **`inquire`**，并新增 **`confirm`**（consent 卡：跨主机文件操作的允许/禁止裁决）——两者统一为 ask envelope 走同一条投递链。
 
 
 ## Fungi 新增了什么
@@ -95,13 +94,6 @@ pip install ruff pytest  # 仅开发
 
 # 图形启动器（推荐）：发起 / 加入房间、WebUI、模型配置、帮助都在里面
 python start.py
-
-# 或纯托盘模式：
-# 主机 A：起房
-python -m fungi --server [--name alpha] [--token T] [--port P] [--data DIR]
-
-# 主机 B / C：加入（join 命令与真实 LAN IP 由 server 启动时打印）
-python -m fungi --join http://<server-ip>:<port> --token <token> [--name beta]
 ```
 
 server 启动后最小化到系统托盘；未决同意请求以 WebUI 卡片呈现（顶部横幅 + 聊天流），点托盘打开 WebUI。
