@@ -1255,7 +1255,7 @@ drawer.addEventListener('touchend', () => {
   // entrance shift would move the button away and swallow the click.
   if (Math.abs(sw.lastX - sw.x0) < 8 && Math.abs(sw.vx) < 0.1) return;
   const x = parseFloat(gsap.getProperty(drawer, 'x'));
-  applyDrawer(!(x < -drawerW() / 2 || sw.vx < -0.35));
+  applyDrawer(!(x < 0 || sw.vx < -0.35)); // any leftward displacement closes (was: past half width)
 }, { passive: true });
 drawer.addEventListener('touchcancel', () => { drawer._sw = null; }, { passive: true });
 
