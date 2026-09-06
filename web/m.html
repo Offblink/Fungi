@@ -40,7 +40,9 @@
     <div id="agent-tray"></div>
     <div id="status"></div>
     <div id="input-area">
+      <input type="file" id="file-input" multiple hidden>
       <textarea id="input" rows="1" placeholder="输入消息…" autocomplete="off"></textarea>
+      <button id="btn-file" title="发送文件">&#x1F4CE;</button>
       <button id="btn-send" title="发送">&#x2191;</button>
     </div>
     <div id="drawer-scrim"></div>
@@ -55,7 +57,7 @@
     <div id="friends-header">好友 <span id="friends-count"></span></div>
     <div id="friend-list"></div>
     <div id="friends-empty">房间暂无其他主机。</div>
-    <div class="drawer-foot">文件收发请在电脑端操作；子代理点聊天气泡可看详情</div>
+    <div class="drawer-foot">📎 可把手机文件上传到电脑 inbox；子代理点聊天气泡可看详情</div>
   </aside>
 </div>
 <div id="confirm-overlay"><div id="confirm-modal" role="dialog" aria-modal="true">

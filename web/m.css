@@ -70,6 +70,8 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 #btn-send:active{transform:scale(0.88)}
 #btn-send:disabled{opacity:0.35}
 #btn-send.stopping{background:#dc2626}
+#btn-file{background:var(--bg);color:var(--dim);border:1px solid var(--border);border-radius:50%;width:44px;height:44px;font-size:19px;cursor:pointer;flex-shrink:0;line-height:1;transition:transform 150ms var(--ease-spring),border-color 150ms}
+#btn-file:active{transform:scale(0.88)}
 #scroll-bottom{position:absolute;bottom:18px;right:16px;z-index:20;background:var(--accent);color:var(--on-accent);border:none;border-radius:50%;width:40px;height:40px;font-size:17px;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 4px 16px color-mix(in srgb,var(--accent) 30%,transparent)}
 #scroll-bottom.visible{display:flex}
 /* ---- drawer ---- */

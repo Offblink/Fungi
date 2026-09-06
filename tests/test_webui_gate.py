@@ -56,6 +56,17 @@ def test_vendor_traversal_is_not_exempt():
     )
 
 
+def test_upload_endpoint_is_token_gated():
+    """Files land on the PC: a LAN client must present the QR token to upload."""
+    assert YesSirHandler._authorized(_fake_handler("192.168.1.7", "/upload")) is False
+    assert (
+        YesSirHandler._authorized(
+            _fake_handler("192.168.1.7", f"/upload?t={WEBUI_TOKEN}")
+        )
+        is True
+    )
+
+
 def test_lan_payload_hides_token_from_lan_callers():
     loopback = lan_payload(8900, loopback=True)
     assert loopback["port"] == 8900

@@ -8,6 +8,7 @@ card answers back out as answer envelopes.
 """
 
 import json
+import re
 import secrets
 import socket
 import sys
@@ -19,10 +20,10 @@ from urllib.parse import parse_qs, urlparse
 
 from fungi import session
 from fungi.agent import SYSTEM_PROMPT, Agent
-from fungi.config import RESOURCE_ROOT, load_config, save_config
+from fungi.config import PROJECT_ROOT, RESOURCE_ROOT, load_config, save_config
 from fungi.events import Sink
+from fungi.hub.app import safe_name
 from fungi.tools.ask import resolve_ask
-from fungi.tools.mcp import mcp_extra_tools
 from fungi.trilayer import TriLayer
 
 WEB_DIR = RESOURCE_ROOT / "web"
@@ -86,6 +87,42 @@ _TAPE_GRACE_S = 60.0  # how long a sealed (done) tape stays for late reattach
 _STATIC_ROUTES = frozenset(
     ("/", "/m", "/app.js", "/style.css", "/motion.js", "/m.css", "/m.js")
 )
+
+
+def _extract_upload(body: bytes, boundary: bytes) -> tuple[str, bytes] | None:
+    """Pull the first file part out of a multipart/form-data body. Hand-rolled
+    because stdlib cgi is gone in 3.13. Returns (filename, content) or None."""
+    for part in body.split(b"--" + boundary):
+        if part[:2] in (b"", b"--"):
+            continue  # preamble/empty chunk, or the closing "--" terminator
+        if part.startswith(b"\r\n"):
+            part = part[2:]
+        head, sep, content = part.partition(b"\r\n\r\n")
+        if not sep or b'filename="' not in head:
+            continue
+        m = re.search(rb'filename="([^"]*)"', head)
+        if not m:
+            continue
+        if content.endswith(b"\r\n"):
+            content = content[:-2]  # the \r\n before the next delimiter is framing
+        return m.group(1).decode("utf-8", "replace"), content
+    return None
+
+
+def _inbox_save(filename: str, data: bytes) -> Path:
+    """Land an uploaded file in the configured inbox (same dir the comm-clone
+    transfer flow uses), sanitizing the name and numbering collisions."""
+    cfg = load_config()
+    inbox = Path(cfg.inbox_dir) if cfg.inbox_dir else PROJECT_ROOT / "inbox"
+    inbox.mkdir(parents=True, exist_ok=True)
+    dest = inbox / safe_name(filename)
+    stem, suffix = dest.stem, dest.suffix
+    n = 1
+    while dest.exists():
+        dest = inbox / f"{stem}-{n}{suffix}"
+        n += 1
+    dest.write_bytes(data)
+    return dest
 
 
 RETRY_STRIP_PREFIXES = ("(LLM error:", "(Hit max tool rounds", "(Aborted")
@@ -471,6 +508,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
             else:
                 self.runtime.set_consent_mode(host, mode)
                 self._send_json({"ok": True, "mode": mode})
+        elif url.path == "/upload":
+            self._handle_upload()
         elif url.path == "/pickfile":
             self._handle_pickfile()
         else:
@@ -655,6 +694,37 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 time.sleep(0.2)
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+
+    def _handle_upload(self) -> None:
+        """Phone -> PC file upload: multipart/form-data with a "file" field.
+        Lands in the configured inbox (default PROJECT_ROOT/inbox); the mobile
+        UI inserts the returned absolute path into the message box, so the
+        agent reads it like any local file."""
+        ctype = self.headers.get("Content-Type") or ""
+        match = re.search(r'boundary="?([^";]+)"?', ctype)
+        if not ctype.startswith("multipart/form-data") or not match:
+            self._send_json({"error": "need multipart/form-data"}, status=400)
+            return
+        limit = max(1, load_config().max_file_mb) * 1024 * 1024
+        length = int(self.headers.get("Content-Length") or 0)
+        if length > limit:
+            self.close_connection = True
+            drained = 0  # drain before answering: closing mid-upload RSTs the
+            while drained < length:  # socket and the client never sees the 413
+                chunk = self.rfile.read(min(65536, length - drained))
+                if not chunk:
+                    break
+                drained += len(chunk)
+            self._send_json({"error": "file too large"}, status=413)
+            return
+        part = _extract_upload(self.rfile.read(length), match.group(1).encode("latin-1"))
+        if part is None:
+            self._send_json({"error": "no file part"}, status=400)
+            return
+        name, data = part
+        path = _inbox_save(name, data)
+        self._send_json({"ok": True, "path": str(path), "name": path.name, "size": len(data)})
 
     def _handle_pickfile(self) -> None:
         try:

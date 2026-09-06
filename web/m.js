@@ -1022,6 +1022,30 @@ document.getElementById('btn-back').addEventListener('click', leaveFriendView);
 btn.addEventListener('click', send);
 function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; }
 input.addEventListener('input', autoGrow);
+/* ---------- file upload: phone picker -> PC inbox, path dropped in the box ---------- */
+const fileInput = document.getElementById('file-input');
+document.getElementById('btn-file').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const files = Array.from(fileInput.files || []);
+  fileInput.value = '';
+  for (const f of files) {
+    status.textContent = '上传中… ' + f.name;
+    try {
+      const fd = new FormData();
+      fd.append('file', f, f.name);
+      const d = await (await fetchJSON('/upload', { method: 'POST', body: fd })).json();
+      if (d.path) {
+        input.value = (input.value ? input.value + ' ' : '') + d.path;
+        autoGrow();
+      } else {
+        status.textContent = '上传失败：' + f.name;
+        return;
+      }
+    } catch (e) { return; } // 403: fetchJSON already showed the rescan overlay
+  }
+  status.textContent = '';
+  input.focus();
+});
 // Keep the transcript pinned when the mobile keyboard resizes the viewport.
 if (window.visualViewport) {
   visualViewport.addEventListener('resize', () => { if (isNearBottom(msgs)) msgs.scrollTop = msgs.scrollHeight; });
