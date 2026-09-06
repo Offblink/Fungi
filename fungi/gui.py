@@ -808,7 +808,7 @@ class MobilePage(QWidget):
 
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignCenter)
-        self.qr_label.setMinimumSize(260, 260)
+        self.qr_label.setMinimumSize(180, 180)
         root.addWidget(self.qr_label, 1)
 
         self.url_edit = LineEdit()
@@ -887,9 +887,8 @@ class ConfigPage(QWidget):
         self.setObjectName("configPage")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(48, 32, 48, 32)
-        root.setSpacing(14)
-
+        root.setContentsMargins(48, 14, 48, 14)
+        root.setSpacing(6)
         title = SubtitleLabel("设置")
         root.addWidget(title)
 
