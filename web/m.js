@@ -972,21 +972,19 @@ chatPage.addEventListener('touchmove', e => {
   drag.lastX = t.clientX; drag.lastT = now;
   setDrawer(x, 1 + x / drag.w);
 }, { passive: true });
-chatPage.addEventListener('touchend', () => {
-  if (!drag) return;
+function settleDrag(velSign) {
+  // Shared finish for touchend AND touchcancel: position decides, but a fast
+  // flick in the drag direction opens/closes even from a shallow drag —
+  // touchcancel means the browser stole the gesture mid-flick, so position
+  // alone would always settle closed.
   const d = drag; drag = null;
+  if (!d) return;
   const x = parseFloat(gsap.getProperty(drawer, 'x'));
-  const opened = x > -d.w / 2 || d.vx > 0.35;
+  const opened = x > -d.w / 2 || (d.vx || 0) * velSign > 0.35;
   applyDrawer(opened);
-}, { passive: true });
-chatPage.addEventListener('touchcancel', () => {
-  // The browser claimed the gesture (scrolling): settle the drawer where it
-  // was heading, or a stalled drag would wedge the state.
-  if (!drag) return;
-  drag = null;
-  const x = parseFloat(gsap.getProperty(drawer, 'x'));
-  applyDrawer(x > -drawerW() / 2);
-}, { passive: true });
+}
+chatPage.addEventListener('touchend', () => { if (drag) settleDrag(1); }, { passive: true });
+chatPage.addEventListener('touchcancel', () => { if (drag) settleDrag(1); }, { passive: true });
 // drawer-side left swipe (finger starts on the drawer itself)
 drawer.addEventListener('touchstart', e => {
   const t = e.touches[0];
