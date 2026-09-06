@@ -135,6 +135,10 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 #agent-modal .am-goal{color:var(--text2);font-size:0.8rem;margin-bottom:0.7rem;white-space:pre-wrap}
 #agent-modal .am-status{font-size:0.74rem;font-family:var(--mono);color:var(--accent2);margin-bottom:0.6rem}
 #agent-modal .am-ev{font-size:0.74rem;font-family:var(--mono);color:var(--text2);padding:0.4rem 0;border-top:1px solid var(--border-light);white-space:pre-wrap;word-break:break-word}
+#agent-modal .agent-modal-head{display:flex;align-items:center;justify-content:space-between;gap:0.6rem}
+#agent-modal .agent-modal-head h3{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:0}
+#agent-modal .am-close{background:none;border:none;color:var(--text2);font-size:1rem;padding:2px 8px;cursor:pointer}
+.msg.tool.spawn-block{cursor:pointer}
 /* ---- confirm modal ---- */
 #confirm-overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(10,12,30,0.45);backdrop-filter:blur(8px);align-items:center;justify-content:center}
 #confirm-overlay.show{display:flex}
@@ -157,10 +161,7 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 .theme-ic{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:none}
 html[data-theme="light"] .ic-moon{display:block}
 html[data-theme="dark"] .ic-sun{display:block}
-/* Scrollable content (tool output, agent tray) pans itself natively; the
-   drawer swipe lives in m.js and skips touches inside horizontal scrollers.
-   touch-action intersects along the ancestor chain, so pan-x must be
-   allowed here or .tool-result pre could never scroll by touch. */
-#chat-wrap,#messages{touch-action:pan-x pan-y}
-/* touch targets for row actions: >= 40px */
+/* Horizontal pans over the transcript belong to m.js (card scroll with edge
+   chaining into the drawer), so only vertical panning is native here. */
+#chat-wrap,#messages{touch-action:pan-y}
 .session-row-act{font-size:16px;padding:9px 11px}

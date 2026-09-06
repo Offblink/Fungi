@@ -267,6 +267,7 @@ function renderMessages(s) {
   _liveCount = 0;
   // Full re-render must replace: renderTranscript only appends (b8e3b65 contract).
   msgs.innerHTML = '';
+  registerArchived(s.subagents); // spawn cards from past sessions stay clickable
   renderTranscript(rawMessages, s.asks || []);
   if (turn && turn.sessionId === currentSessionId) {
     if (turn.userText && rawMessages.some(m => m.role === 'user' && m.content === turn.userText)) {
@@ -301,6 +302,7 @@ function renderTranscript(messages, asks) {
         const argsHtml = args ? ' <code>' + escapeHtml(args.length > 60 ? args.slice(0, 60) + '...' : args) + '</code>' : '';
         d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(tc.function?.name || 'tool') + argsHtml + '</div><div class="tool-result"></div>';
         msgs.appendChild(d);
+        if (tc.function?.name === 'spawn') makeSpawnBlockClickable(d, tc.id);
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
           const rec = askQueue.shift();
           if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
@@ -597,6 +599,7 @@ function renderTurnLive() {
       const argsHtml = e.args ? ' <code>' + escapeHtml(e.args.length > 60 ? e.args.slice(0, 60) + '...' : e.args) + '</code>' : '';
       d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(e.name) + argsHtml + '</div><div class="tool-result">' + (e.result ? '<pre>' + escapeHtml(e.result) + '</pre>' : '') + '</div>';
       msgs.appendChild(d);
+      if (e.name === 'spawn') makeSpawnBlockClickable(d, e.id);
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');
@@ -914,9 +917,19 @@ function renderFriendChat(d) {
 }
 
 /* ---------- agent tray (live subagent bubbles + bottom-sheet replay) ---------- */
-const agents = {};         // live spec id -> {layer, goal, replyFormat, status, history}
+const agents = {};         // live + archived spec id -> {layer, goal, replyFormat, status, history}
 const specByCall = {};     // live tool_call id -> spec id
+const archivedByCall = {}; // replayed spawn tool_call id -> spec id
 
+function registerArchived(subs) {
+  // Persisted subagent records (session replay): keeps spawn cards clickable
+  // and the bottom-sheet populated after a reload.
+  (subs || []).forEach(r => {
+    if (!r || !r.id) return;
+    agents[r.id] = { layer: r.layer, goal: r.goal || '', replyFormat: r.reply_format || '', status: r.status || 'done', history: r.events || [] };
+    if (r.call_id) archivedByCall[r.call_id] = r.id;
+  });
+}
 function agentBubble(id) {
   const tray = document.getElementById('agent-tray');
   let el = tray.querySelector('[data-agent="' + id + '"]');
@@ -939,21 +952,45 @@ function setAgentStatus(id, st) {
   if (st !== 'running') setTimeout(() => el.remove(), 12000); // finished: fade out of the tray
 }
 function agentEvent(id, ev) {
+  // Server payload: {type, content} — "kind"/"text" never existed.
   const el = document.getElementById('agent-tray').querySelector('[data-agent="' + id + '"]');
-  if (el && ev && ev.kind) el.querySelector('.nm').textContent = String(ev.text || ev.kind).slice(0, 24);
+  if (!el || !ev) return;
+  const c = ev.content;
+  const label = typeof c === 'string' ? c
+    : (c && (c.text || c.name || c.status || (c.goal ? 'spawn L' + c.layer : ''))) || ev.type || '';
+  el.querySelector('.nm').textContent = String(label).slice(0, 24);
+}
+function evLine(ev) {
+  const c = ev && ev.content;
+  if (!ev || !ev.type) return '?';
+  if (ev.type === 'agent_spawn') return '\u{1F9E9} spawn L' + (c.layer || '?') + ': ' + String(c.goal || '').slice(0, 160);
+  if (ev.type === 'agent_status') return 'status: ' + ((c && c.status) || '?');
+  const text = typeof c === 'string' ? c : (c && (c.text || c.name)) || JSON.stringify(c) || '';
+  return ev.type + ' \u00B7 ' + String(text).slice(0, 300);
 }
 function openAgentModal(id) {
   const a = agents[id];
   if (!a) return;
   const ov = document.getElementById('agent-modal-overlay');
-  const evs = (a.history || []).slice(-30).map(ev =>
-    '<div class="am-ev">' + escapeHtml((ev.kind || '?') + ' · ' + String(ev.text || '').slice(0, 300)) + '</div>').join('');
-  ov.innerHTML = '<div id="agent-modal"><h3>' + escapeHtml(a.layer || 'subagent') + '</h3>'
+  const evs = (a.history || []).slice(-30).map(ev => '<div class="am-ev">' + escapeHtml(evLine(ev)) + '</div>').join('');
+  ov.innerHTML = '<div id="agent-modal"><div class="agent-modal-head"><h3>'
+    + escapeHtml('L' + (a.layer || '?') + ' · ' + String(a.goal || '').slice(0, 40))
+    + '</h3><button id="agent-modal-close">\u2715</button></div>'
     + '<div class="am-goal">' + escapeHtml(a.goal) + '</div>'
     + '<div class="am-status">' + escapeHtml(a.status) + (a.replyFormat ? ' · 回复格式: ' + escapeHtml(a.replyFormat) : '') + '</div>'
     + (evs || '<div class="am-ev">（暂无事件）</div>') + '</div>';
   ov.classList.add('show');
-  ov.onclick = e => { if (e.target === ov) { ov.classList.remove('show'); ov.innerHTML = ''; } };
+  const close = () => { ov.classList.remove('show'); ov.innerHTML = ''; };
+  ov.querySelector('#agent-modal-close').addEventListener('click', close);
+  ov.onclick = e => { if (e.target === ov) close(); }; // backdrop tap also closes
+}
+function makeSpawnBlockClickable(el, callId) {
+  el.classList.add('spawn-block');
+  el.title = '点按查看子代理详情';
+  el.addEventListener('click', () => {
+    const id = specByCall[callId] || archivedByCall[callId];
+    if (id) openAgentModal(id);
+  });
 }
 
 /* ---------- drawer gestures (right-swipe open, left-swipe close) ---------- */
@@ -988,30 +1025,55 @@ function closeDrawer() { applyDrawer(false); }
 scrim.addEventListener('click', closeDrawer);
 document.getElementById('btn-menu').addEventListener('click', openDrawer);
 function inHorizScroller(el) {
-  /* A horizontal pan over scrollable content (long tool output, agent tray)
-     belongs to that element, not the drawer. */
+  /* The innermost horizontally scrollable element under the touch, if any
+     (long tool output, agent tray). */
   for (let n = el; n && n !== chatPage; n = n.parentElement) {
     if (n.scrollWidth > n.clientWidth + 2) {
       const ox = getComputedStyle(n).overflowX;
-      if (ox === 'auto' || ox === 'scroll') return true;
+      if (ox === 'auto' || ox === 'scroll') return n;
     }
   }
-  return false;
+  return null;
 }
+let pscroll = null; // touch on a horizontal card: JS scrolls it, edge overflow chains into the drawer
 chatPage.addEventListener('touchstart', e => {
   const t = e.touches[0];
-  if (inHorizScroller(e.target)) return; // let the element scroll natively
   // NO "if (drag) return" guard: a gesture the webview swallows (WeChat X5's
   // native edge handling often fires no end/cancel at all) used to wedge
   // drag truthy forever and silently kill every later swipe. A new touch
   // always supersedes stale state. The swipe may start ANYWHERE: the old 48px
   // edge wedge never triggered in real use and fought the phone's own edge
   // gesture; the vertical-lock in touchmove keeps normal scrolling intact.
+  const hs = inHorizScroller(e.target);
+  if (hs) {
+    // The card scrolls first — but native pan-x never chains across elements,
+    // so scrolling is manual here: once the content hits its edge, the
+    // leftover delta drives the drawer.
+    pscroll = { el: hs, x0: t.clientX, y0: t.clientY, start: hs.scrollLeft, locked: null };
+    return;
+  }
+  pscroll = null;
   drag = { x0: t.clientX, y0: t.clientY, base: drawerOpen ? 0 : -drawerW(), w: drawerW(), locked: null, lastX: t.clientX, lastT: performance.now(), vx: 0 };
 }, { passive: true });
 chatPage.addEventListener('touchmove', e => {
-  if (!drag) return;
   const t = e.touches[0];
+  if (pscroll) {
+    const dx = t.clientX - pscroll.x0, dy = t.clientY - pscroll.y0;
+    if (pscroll.locked === null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      pscroll.locked = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      if (pscroll.locked === 'v') { pscroll = null; return; } // vertical: native pan-y takes over
+    }
+    const el = pscroll.el, max = el.scrollWidth - el.clientWidth;
+    const want = pscroll.start - dx;              // finger right => content scrolls left
+    el.scrollLeft = Math.max(0, Math.min(max, want));
+    const over = want - el.scrollLeft;            // leftover after the content edge
+    const base = drawerOpen ? 0 : -drawerW();
+    const x = Math.max(-drawerW(), Math.min(0, base - over));
+    setDrawer(x, 1 + x / drawerW());
+    return;
+  }
+  if (!drag) return;
   const dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
   if (drag.locked === null) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
@@ -1035,8 +1097,14 @@ function settleDrag(velSign) {
   const opened = x > -d.w / 2 || (d.vx || 0) * velSign > 0.35;
   applyDrawer(opened);
 }
-chatPage.addEventListener('touchend', () => { if (drag) settleDrag(1); }, { passive: true });
-chatPage.addEventListener('touchcancel', () => { if (drag) settleDrag(1); }, { passive: true });
+function settlePSwipe() {
+  const p = pscroll; pscroll = null;
+  if (!p) return;
+  const x = parseFloat(gsap.getProperty(drawer, 'x'));
+  applyDrawer(x > -drawerW() / 2);
+}
+chatPage.addEventListener('touchend', () => { if (pscroll) settlePSwipe(); if (drag) settleDrag(1); }, { passive: true });
+chatPage.addEventListener('touchcancel', () => { if (pscroll) settlePSwipe(); if (drag) settleDrag(1); }, { passive: true });
 // drawer-side left swipe (finger starts on the drawer itself)
 drawer.addEventListener('touchstart', e => {
   const t = e.touches[0];
@@ -1070,7 +1138,10 @@ document.getElementById('btn-new-session').addEventListener('click', newSession)
 document.getElementById('session-filter').addEventListener('input', renderSessionList);
 document.getElementById('btn-back').addEventListener('click', leaveFriendView);
 btn.addEventListener('click', send);
-function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; }
+function autoGrow() {
+  input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  if (!processing) setBusy(false); // ↻/↑ follows the input content responsively
+}
 input.addEventListener('input', autoGrow);
 /* ---------- file upload: phone picker -> PC inbox, path dropped in the box ---------- */
 const fileInput = document.getElementById('file-input');
