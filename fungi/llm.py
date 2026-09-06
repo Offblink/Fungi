@@ -3,12 +3,13 @@
 Compatible with DeepSeek's `reasoning_content` deltas and incremental
 tool_call argument assembly (same protocol as the PowerShell original).
 """
-
 import json
+import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 READ_TIMEOUT = 600  # socket inactivity timeout per read, seconds
 
@@ -78,6 +79,13 @@ def stream_chat(
         resp = urllib.request.urlopen(request, timeout=READ_TIMEOUT)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:500]
+        # 4xx debugging: the exact outgoing request lands next to the sessions
+        # so a provider-side "Invalid API parameter" can be replayed offline.
+        try:
+            dump = Path(tempfile.gettempdir()) / "fungi-llm-error-payload.json"
+            dump.write_text(json.dumps({"endpoint": endpoint, "payload": payload}, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
         raise LLMError(f"HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
         raise LLMError(f"Connection failed: {getattr(exc, 'reason', exc)}") from exc
