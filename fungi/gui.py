@@ -949,9 +949,9 @@ class ConfigPage(QWidget):
                 if healable
                 else "需手动安装 VidSense 依赖（torch/transformers/faster-whisper/opencv、ffmpeg）"
             )
-            self.video_status.setText(f"{marks} — 缺 {'、'.join(missing)}，{hint}")
+            self.video_status.setText(f"{marks}\n缺 {'、'.join(missing)}，{hint}")
         else:
-            self.video_status.setText(f"{marks} — 已就绪，video 工具可用")
+            self.video_status.setText(f"{marks}\n已就绪，video 工具可用")
         # 只有可自愈缺失（依赖/模型）才给下载；下载进行中不允许重复点
         self.download_btn.setEnabled(bool(healable) and self._dl_proc is None)
 
