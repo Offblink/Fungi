@@ -594,13 +594,14 @@ function handleTurnEvent(obj) {
     }
     case 'tool':
       t.entries.push({ kind: 'tool', id: obj.content.id, name: obj.content.name, args: obj.content.args, result: '' });
-      if (visible) renderTurnLive();
+      // A long tool used to leave a stale "Writing..." on the status bar.
+      if (visible) { status.textContent = 'Running ' + (obj.content.name || 'tool') + '...'; renderTurnLive(); }
       break;
     case 'tool_result': {
       const rec = t.entries.find(x => x.kind === 'tool' && x.id === obj.content.id)
         || [...t.entries].reverse().find(x => x.kind === 'tool' && !x.result);
       if (rec) rec.result = obj.content.content;
-      if (visible) { const block = document.getElementById('tool-' + obj.content.id); if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(obj.content.content) + '</pre>'; else renderTurnLive(); }
+      if (visible) { status.textContent = 'Thinking...'; const block = document.getElementById('tool-' + obj.content.id); if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(obj.content.content) + '</pre>'; else renderTurnLive(); }
       break;
     }
     case 'agent_spawn':
