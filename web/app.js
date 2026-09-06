@@ -880,6 +880,7 @@ function placeAskCards() {
   pendingAskCards.forEach(({ rec, el }) => {
     if (friendView && rec.conv === friendView) {
       msgs.appendChild(el);
+      msgs.scrollTop = msgs.scrollHeight; // a new card must push itself into view
       window.fungiMotion?.askCardIn?.(el);
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
@@ -891,7 +892,7 @@ function placeAskCards() {
       if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
         el.remove();
         resolvedAskCards.delete(rec.id);
-      } else msgs.appendChild(el);
+      } else { msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight; }
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -982,6 +983,7 @@ async function pollPendingAsks() {
       pendingAskCards.set(a.id, { rec: a, el });
       if (friendView && a.conv === friendView) {
         msgs.appendChild(el);
+        msgs.scrollTop = msgs.scrollHeight;
         window.fungiMotion?.askCardIn?.(el);
       } else {
         document.getElementById('asks-banner').appendChild(el);
@@ -1044,6 +1046,7 @@ function leaveFriendView() {
   const wasViewing = friendView !== null;
   friendView = null;
   lastFriendPayload = null;
+  clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
   document.getElementById('friend-title').textContent = '';
   document.getElementById('friend-bar').classList.remove('visible');
@@ -1128,6 +1131,7 @@ function initConsentSlider() {
   s.addEventListener('pointermove', e => { if (s.hasPointerCapture && s.hasPointerCapture(e.pointerId)) apply(e.clientX); });
 }
 
+let friendLiveTimer = null;
 async function refreshFriendChat() {
   const host = friendView;
   if (!host) return;
@@ -1140,19 +1144,64 @@ async function refreshFriendChat() {
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
     renderFriendChat(d);
+    // A turn in flight: keep the spectate view warm at 2s instead of 5s.
+    clearTimeout(friendLiveTimer);
+    if ((d.live || []).length && friendView === host) {
+      friendLiveTimer = setTimeout(refreshFriendChat, 2000);
+    }
   } catch (e) {}
 }
 
-/* Friend view renders the comm clone's transcript exactly like a local
-   session (markdown, tool blocks, spawn clickables), plus file-transfer
-   envelope events that never produce agent turns. */
+function liveEvText(ev) {
+  const c = ev && ev.content;
+  if (typeof c === 'string') return c;
+  if (c && typeof c === 'object') return c.text || c.content || c.name || '';
+  return '';
+}
+function renderLiveEvents(live) {
+  // In-flight comm clone turn: merge adjacent text/reasoning deltas into
+  // runs so streaming reads as paragraphs, not one fragment per row.
+  const runs = [];
+  for (const ev of live || []) {
+    const k = ev && ev.kind;
+    if (k === 'reasoning_start' || k === 'reasoning_end') continue;
+    const last = runs[runs.length - 1];
+    if ((k === 'text' || k === 'reasoning') && last && last.kind === k) {
+      last.text += liveEvText(ev);
+      continue;
+    }
+    runs.push({ kind: k, text: liveEvText(ev), ev });
+  }
+  for (const r of runs) {
+    if (r.kind === 'text') {
+      addDiv('friend-live', marked.parse(r.text));
+    } else if (r.kind === 'reasoning') {
+      const det = document.createElement('details');
+      det.className = 'msg reasoning';
+      det.innerHTML = '<summary>Thinking\u2026</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(r.text) + '</div>';
+      msgs.appendChild(det);
+    } else if (r.kind === 'tool') {
+      const c = (r.ev && r.ev.content) || {};
+      addDiv('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+        + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
+    } else if (r.kind === 'tool_result') {
+      const t = String(liveEvText(r.ev) || '');
+      addDiv('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+    } else if (r.kind === 'status') {
+      addDiv('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
+    } else if (r.kind === 'error') {
+      addDiv('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
+    }
+  }
+}
 function renderFriendChat(d) {
   msgs.innerHTML = '';
   tray.innerHTML = '';
   registerArchived(d.subagents || []);
   const messages = d.messages || [];
   const events = d.events || [];
-  if (!messages.length && !events.length) {
+  const live = d.live || [];
+  if (!messages.length && !events.length && !live.length) {
     addDiv('friend-empty', '<i>No clone-to-clone conversation with this host yet.</i>');
     return;
   }
@@ -1160,11 +1209,11 @@ function renderFriendChat(d) {
   var fileNodes = [];
   events.forEach(row => {
     if (row.kind === 'transfer')
-      fileNodes.push(addDiv('msg friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer')));
+      fileNodes.push(addDiv('friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer')));
     else if (row.kind === 'task')
-      addDiv('msg friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      addDiv('friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      addDiv('msg friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+      addDiv('friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
   });
   // New file landed since the previous poll -> spore burst from its card
   // (first render of a view replays history silently: lastTransferCount < 0).
@@ -1172,6 +1221,7 @@ function renderFriendChat(d) {
     window.fungiMotion?.spores?.(fileNodes[fileNodes.length - 1]);
   }
   lastTransferCount = fileNodes.length;
+  renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint
   msgs.scrollTop = msgs.scrollHeight;
 }

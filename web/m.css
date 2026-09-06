@@ -166,3 +166,7 @@ html[data-theme="dark"] .ic-sun{display:block}
    chaining into the drawer), so only vertical panning is native here. */
 #chat-wrap,#messages{touch-action:pan-y}
 .session-row-act{font-size:16px;padding:9px 11px}
+
+/* live spectate rows (in-flight comm clone turn in the friend view) */
+.msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
+.msg.reasoning.friend-live{box-shadow:none}

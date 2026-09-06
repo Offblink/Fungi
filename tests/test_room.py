@@ -584,6 +584,72 @@ def test_delegate_roundtrip_between_server_and_client(tmp_path):
         server.stop()
 
 
+def test_comm_turn_streams_live_events_to_friend_view(tmp_path):
+    """While a comm clone turn is in flight, its events stream into the
+    per-peer live tape (friend-view spectating); when the turn ends the
+    tape clears and the durable transcript takes over."""
+    import threading
+
+    from fungi.llm import LLMResult
+
+    release = threading.Event()
+    calls = []
+
+    def gated_llm(messages, _tools):
+        if not calls:
+            calls.append(1)
+            return LLMResult(content="", tool_calls=[{
+                "id": "t1",
+                "type": "function",
+                "function": {"name": "send_peer", "arguments": '{"text": "hi"}'},
+            }])
+        calls.append(1)
+        release.wait(timeout=10)
+        return LLMResult(content="done")
+
+    server = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "d1",
+        llm=gated_llm, rules_path=tmp_path / "r1.json",
+    )
+    server.start()
+    try:
+        client = RoomClient(
+            "beta", CFG, NullSink(),
+            f"http://127.0.0.1:{server.hub.port}", "tok",
+            llm=gated_llm, sessions_dir=tmp_path / "cs",
+            rules_path=tmp_path / "r2.json",
+        )
+        client.start()
+        try:
+            assert _wait(
+                lambda: "beta" in (server.local.delegate_tools.peers_fn() or []), timeout_s=10
+            ), "beta never appeared in alpha's roster"
+            out: list[str] = []
+            th = threading.Thread(
+                target=lambda: out.append(
+                    server.local.delegate_tools.delegate({"host": "beta", "goal": "live test"})
+                ),
+                daemon=True,
+            )
+            th.start()
+            rt = client.webui_runtime()
+            assert _wait(
+                lambda: any(e["kind"] == "tool" for e in rt.comm_log("alpha")["live"]),
+                timeout_s=10,
+            ), "live tape never saw the tool event"
+            release.set()
+            th.join(timeout=25)
+            assert not th.is_alive(), "delegate never returned"
+            assert _wait(
+                lambda: rt.comm_log("alpha")["live"] == [], timeout_s=10
+            ), "live tape not cleared after the turn"
+            data = client._comm_store.load("comm-alpha")
+            assert data and data["messages"], "turn never reached the durable transcript"
+        finally:
+            client.stop()
+    finally:
+        server.stop()
+
 # ── turn persistence vs refresh/delete races ──
 
 

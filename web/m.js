@@ -719,6 +719,7 @@ function placeAskCards() {
     // open friend view, otherwise the global banner above the input.
     if (friendView && rec.conv === friendView) {
       msgs.appendChild(el);
+      msgs.scrollTop = msgs.scrollHeight; // a new card must push itself into view
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -730,7 +731,7 @@ function placeAskCards() {
       if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
         el.remove();
         resolvedAskCards.delete(rec.id);
-      } else msgs.appendChild(el);
+      } else { msgs.appendChild(el); msgs.scrollTop = msgs.scrollHeight; }
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -832,6 +833,7 @@ function leaveFriendView() {
   const wasViewing = friendView !== null;
   friendView = null;
   lastFriendPayload = null;
+  clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
   document.getElementById('friend-bar').classList.add('hidden');
   document.getElementById('btn-back').hidden = true;
@@ -900,6 +902,7 @@ document.querySelectorAll('#consent-seg button').forEach(b => {
   });
 });
 
+let friendLiveTimer = null;
 async function refreshFriendChat() {
   const host = friendView;
   if (!host) return;
@@ -912,28 +915,75 @@ async function refreshFriendChat() {
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
     renderFriendChat(d);
+    // A turn in flight: keep the spectate view warm at 2s instead of 5s.
+    clearTimeout(friendLiveTimer);
+    if ((d.live || []).length && friendView === host) {
+      friendLiveTimer = setTimeout(refreshFriendChat, 2000);
+    }
   } catch (e) {}
 }
 
-/* Friend view renders the comm clone's transcript exactly like a local
-   session, plus file-transfer envelope events that never produce turns. */
+function liveEvText(ev) {
+  const c = ev && ev.content;
+  if (typeof c === 'string') return c;
+  if (c && typeof c === 'object') return c.text || c.content || c.name || '';
+  return '';
+}
+function renderLiveEvents(live) {
+  // In-flight comm clone turn: merge adjacent text/reasoning deltas into
+  // runs so streaming reads as paragraphs, not one fragment per row.
+  const runs = [];
+  for (const ev of live || []) {
+    const k = ev && ev.kind;
+    if (k === 'reasoning_start' || k === 'reasoning_end') continue;
+    const last = runs[runs.length - 1];
+    if ((k === 'text' || k === 'reasoning') && last && last.kind === k) {
+      last.text += liveEvText(ev);
+      continue;
+    }
+    runs.push({ kind: k, text: liveEvText(ev), ev });
+  }
+  for (const r of runs) {
+    if (r.kind === 'text') {
+      addDiv('friend-live', escapeHtml(r.text));
+    } else if (r.kind === 'reasoning') {
+      const det = document.createElement('details');
+      det.className = 'msg reasoning';
+      det.innerHTML = '<summary>Thinking…</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(r.text) + '</div>';
+      msgs.appendChild(det);
+    } else if (r.kind === 'tool') {
+      const c = (r.ev && r.ev.content) || {};
+      addDiv('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+        + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
+    } else if (r.kind === 'tool_result') {
+      const t = String(liveEvText(r.ev) || '');
+      addDiv('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+    } else if (r.kind === 'status') {
+      addDiv('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
+    } else if (r.kind === 'error') {
+      addDiv('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
+    }
+  }
+}
 function renderFriendChat(d) {
   msgs.innerHTML = '';
   const messages = d.messages || [];
   const events = d.events || [];
-  if (!messages.length && !events.length) {
+  const live = d.live || [];
+  if (!messages.length && !events.length && !live.length) {
     addDiv('friend-event', '<i>还没有和该好友的 clone 对话记录。</i>');
     return;
   }
   renderTranscript(messages, d.asks || []);
   events.forEach(row => {
     if (row.kind === 'transfer')
-      addDiv('msg friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+      addDiv('friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     else if (row.kind === 'task')
-      addDiv('msg friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      addDiv('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      addDiv('msg friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+      addDiv('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
   });
+  renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint
   msgs.scrollTop = msgs.scrollHeight;
 }

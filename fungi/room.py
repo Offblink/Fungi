@@ -58,6 +58,11 @@ def _is_consent(body: dict) -> bool:
     return bool(body.get("action")) and bool(body.get("path"))
 
 
+MAX_LIVE_EVENTS = 400  # per-peer live turn tape cap (friend-view spectating)
+_LIVE_EVENT_KINDS = {"text", "reasoning", "reasoning_start", "reasoning_end",
+                     "tool", "tool_result", "status", "error"}
+
+
 class HostPoller:
     """Client-side fanout: one cursor on the shared host buffer, per-clone
     inboxes on this side. Unknown destinations are dropped (clone removed)."""
@@ -130,6 +135,11 @@ class RoomBase:
         self._webui_guard = threading.Lock()
         # Per-peer comm clone transcripts (friend view); set by subclasses.
         self._comm_store: SessionStore | None = None
+        # Live turn events per comm clone peer (friend-view spectating):
+        # filled by the tagged sink while a turn runs, cleared on turn end
+        # when the durable transcript takes over.
+        self._live_tapes: dict[str, list] = {}
+        self._live_lock = threading.Lock()
 
     # ── clones ──
 
@@ -165,7 +175,7 @@ class RoomBase:
             peer,
             transport,
             self.cfg,
-            self.sink,
+            self._live_sink(peer),
             llm=self.llm,
             inbox_dir=Path(self.cfg.inbox_dir) if self.cfg.inbox_dir else None,
             on_turn_end=lambda env_type, messages, agent: self._record_comm_turn(
@@ -179,11 +189,38 @@ class RoomBase:
         # while tests passed (they call clone.start() themselves).
         clone.start()
 
+    def _live_sink(self, peer: str) -> Sink:
+        """Sink wrapper that mirrors turn events into the peer's live tape
+        while still forwarding to the room sink (console/GUI). Must stay a
+        Sink object — the agent calls .emit on it."""
+        inner = self.sink
+
+        class _TapedSink:
+            def emit(self, event_type: str, content=None) -> None:
+                if event_type in _LIVE_EVENT_KINDS:
+                    with room._live_lock:
+                        tape = room._live_tapes.setdefault(peer, [])
+                        tape.append({"kind": event_type, "content": content})
+                        del tape[:-MAX_LIVE_EVENTS]
+                inner.emit(event_type, content)
+
+        room = self
+        return _TapedSink()
+
+    def live_tape(self, peer: str) -> list:
+        with self._live_lock:
+            return list(self._live_tapes.get(peer) or [])
+
+    def _clear_live_tape(self, peer: str) -> None:
+        with self._live_lock:
+            self._live_tapes.pop(peer, None)
+
     def remove_comm_clone(self, peer: str) -> None:
         with self._guard:
             clone = self._clones.pop(peer, None)
         if clone is not None:
             clone.stop()
+        self._clear_live_tape(peer)  # a gone clone must not leave a stale live view
 
     def _record_comm_turn(self, peer: str, env_type: str, messages: list, agent) -> None:
         """Persist one comm clone turn for the friend view (session-style
@@ -209,8 +246,9 @@ class RoomBase:
             asks = list(prev.get("asks") or []) + list(getattr(agent, "asks", None) or [])
             del msgs[:-MAX_TRANSCRIPT_MESSAGES]
             store.save(sid, f"comm: {peer}", msgs, subagents=subs[-100:], asks=asks[-100:])
-        except Exception as exc:  # a recording failure must not kill the turn
-            self.sink.emit("error", f"comm transcript {peer}: {exc}")
+        finally:
+            # Durable transcript (or a dead turn) takes over from the live view.
+            self._clear_live_tape(peer)
 
 
     # ── incoming asks: auto-allow -> cards + notification ──
@@ -646,7 +684,7 @@ class RoomRuntime(WebUIRuntime):
     def comm_log(self, host: str) -> dict:
         """Friend view payload: the comm clone's transcript (session-style
         messages + subagent/ask records) plus hub-side envelope events."""
-        out: dict = {"messages": [], "subagents": [], "asks": [], "events": []}
+        out: dict = {"messages": [], "subagents": [], "asks": [], "events": [], "live": []}
         store = self.room._comm_store
         if store is not None:
             data = store.load("comm-" + host)
@@ -658,6 +696,7 @@ class RoomRuntime(WebUIRuntime):
             out["events"] = self.room.hub.commlog.read(self.room.host, host)
         else:
             out["events"] = self.room.client.comm_log(host)  # client role: hub API
+        out["live"] = self.room.live_tape(host)  # in-flight turn events, if any
         return out
 
 
