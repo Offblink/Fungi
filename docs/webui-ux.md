@@ -304,7 +304,7 @@ agent 气泡轨道漂移 + 进度环。
 
 ## 视频模型门控（2026-09-06 深夜；同夜改为统一就绪检查）
 
-用户诉求："不要在要用的时候才下载"、"维持正常运行的都要一并检查"。VidSense 仓库保持原生，三层落地：
+用户诉求："不要在要用的时候才下载"、"维持正常运行的都要一并检查"。VidSense 已 vendored 进仓库（顶层 `vidsense/`，上游 Offblink/VidSense 仍是开发上游，更新手动拷），三层落地：
 
 1. **`fungi/tools/video.py` — 单一事实来源 `_video_ready()`**：一次查齐全部运行组件——Python 库（huggingface_hub/torch/transformers/faster_whisper/opencv，`find_spec` 零导入成本）、ffmpeg+ffprobe（`shutil.which`）、两个 HF 模型缓存（`_model_cached`：`HF_HUB_CACHE` 或 `~/.cache/huggingface/hub` 的 `models--<org>--<name>/snapshots/<rev>/`，≥50MB 阈值防半截）。`_HEALABLE = {huggingface_hub, CLIP, whisper}` 标记下载按钮可自愈的项。`tool_video` 缺任何组件即拒绝：可自愈缺失给 pip/下载脚本指引；torch 等 "不可自愈缺失" 提示手动装 VidSense 依赖。绝不现场下载。
 2. **`scripts/download_video_models.py`**：`HF_ENDPOINT` 默认 hf-mirror.com；`list_repo_files` 选唯一 torch 权重再 `snapshot_download(allow_patterns=...)`（CLIP 仓库另有 tf/flax 权重 ~1.8GB 必须筛）；try-import 守卫缺 huggingface_hub 打印 pip 指令 exit 1。

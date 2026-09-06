@@ -269,8 +269,8 @@ HELP_SECTIONS = [
      "双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。"
      "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
      "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"
-     "clone 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，自动发现旁置的 "
-     "VidSense）——手机上把文件传上来即可。"),
+     "clone 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，内置 "
+     "VidSense 管线）——手机上把文件传上来即可。"),
     ("手机端",
      "「手机端」页扫码即用：聊天区右划任意位置开抽屉（会话列表/好友视图），"
      "📎 把手机文件上传到电脑 inbox；输入框留空时发送键变重试（↻），"

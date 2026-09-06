@@ -47,7 +47,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
   完整数据目录图见下方「数据目录口径」。
 - **send_file 传输**：字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
 - **skill 系统**：每台主机的 clone 可沉淀可复用流程——`data/skills/<name>/SKILL.md` + 可选配套脚本，列表注入 system prompt，通讯 clone 只读。
-- **视频理解**：`video` 工具零配置发现旁置的 VidSense checkout——子进程跑原生本地管线（whisper 转写 + CLIP 镜头切分），事件卡 + 关键帧直接附给本机视觉模型，无第二 API key；CJK 路径自动转 ASCII 副本、GFW 下自动走 hf-mirror。
+- **视频理解**：`video` 工具跑仓库内置的 `vidsense/` 包（vendored 自 [VidSense](https://github.com/Offblink/VidSense)，子进程原生本地管线：whisper 转写 + CLIP 镜头切分），事件卡 + 关键帧直接附给本机视觉模型，无第二 API key；CJK 路径自动转 ASCII 副本、GFW 下自动走 hf-mirror。
 - **移动端 WebUI**：GUI「手机端」页扫码即用——全功能聊天、右划任意位置开抽屉（横向滚动内容自动让路）、📎 手机文件上传到电脑 inbox、输入框留空一键重试、ask/consent 卡片与好友视图齐备。
 - **GUI 启动器**：PyQt5 + qfluentwidgets 程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。单实例：再次启动会唤起已运行的主界面。Token 支持自定义（字母/数字/-/_，1-64 位），发起前改即开房生效；运行中改完按回车（或移开焦点）即时热更新，已加入的好友需用新 Token 重新加入。
 
