@@ -2,7 +2,6 @@
 
 import json
 import time
-
 import fungi.agent as fungi_agent
 from fungi.agent import Agent
 from fungi.config import Config
@@ -316,6 +315,6 @@ def test_every_tool_description_is_a_plain_string():
     from fungi.tools import tool_defs
     from fungi.trilayer import SPAWN_SCHEMA
 
-    schemas = [SPAWN_SCHEMA] + [d["schema"] for d in tool_defs()]
+    schemas = [SPAWN_SCHEMA] + tool_defs()
     for s in schemas:
         assert isinstance(s["function"]["description"], str), s["function"]["name"]
