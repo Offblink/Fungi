@@ -351,8 +351,8 @@ function agentBubble(id) {
   const b = document.createElement('div');
   b.className = 'agent-bubble ' + (a.layer === 3 ? 'layer3' : '') + ' ' + a.status;
   b.id = 'bubble-' + id;
-  b.title = (a.layer === 3 ? 'L3' : 'L2') + ': ' + a.goal;
-  b.innerHTML = 'L' + a.layer + '<span class="agent-status-dot"></span>';
+  b.title = (a.tool === 'background' ? 'Bg' : (a.layer === 3 ? 'L3' : 'L2')) + ': ' + a.goal;
+  b.innerHTML = (a.tool === 'background' ? 'Bg' : 'L' + a.layer) + '<span class="agent-status-dot"></span>';
   b.addEventListener('click', () => openAgentModal(id));
   tray.appendChild(b);
   window.fungiMotion?.float?.(b);
@@ -411,7 +411,7 @@ function openAgentModal(id) {
   if (!a) return;
   const overlay = document.getElementById('agent-modal-overlay');
   overlay.innerHTML = '<div id="agent-modal">'
-    + '<div class="agent-modal-head"><h3>' + (a.layer === 3 ? 'L3 Worker' : 'L2 Task Agent') + ' \u00B7 ' + escapeHtml((a.goal || '').slice(0, 60)) + '</h3>'
+    + '<div class="agent-modal-head"><h3>' + (a.tool === 'background' ? 'Bg Command' : (a.layer === 3 ? 'L3 Worker' : 'L2 Task Agent')) + ' \u00B7 ' + escapeHtml((a.goal || '').slice(0, 60)) + '</h3>'
     + '<button id="agent-modal-close">\u2715</button></div>'
     + '<div class="agent-modal-taskspec"><b>Goal:</b> ' + escapeHtml(a.goal || '')
     + '<br><b>Reply format:</b> ' + escapeHtml(a.replyFormat || '(free)')
@@ -438,8 +438,7 @@ function registerArchived(subs) {
   for (const k of Object.keys(archivedByCall)) delete archivedByCall[k];
   (subs || []).forEach(r => {
     archived[r.id] = {
-      layer: r.layer, goal: r.goal, replyFormat: r.reply_format,
-      status: r.status, history: r.events || [],
+      layer: r.layer, tool: r.tool, goal: r.goal, replyFormat: r.reply_format,
     };
     if (r.call_id) archivedByCall[r.call_id] = r.id;
   });
@@ -631,19 +630,12 @@ function handleTurnEvent(obj) {
     }
     case 'agent_spawn':
       agents[obj.content.id] = {
-        layer: obj.content.layer, goal: obj.content.goal,
+        layer: obj.content.layer, tool: obj.content.tool, goal: obj.content.goal,
         replyFormat: obj.content.reply_format || '', status: 'running', history: [],
       };
       if (obj.content.call_id) specByCall[obj.content.call_id] = obj.content.id;
       agentBubble(obj.content.id);
       break;
-    case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
-    case 'agent_event': {
-      const aid = obj.content.id, ev = obj.content.event;
-      if (agents[aid]) agents[aid].history.push(ev);
-      agentEvent(aid, ev);
-      break;
-    }
     case 'ask':
       t.entries.filter(x => x.kind === 'ask').forEach(a => a.active = false);
       t.entries.push({ kind: 'ask', id: obj.content.id, questions: obj.content.questions || [], answers: null, active: true });

@@ -256,6 +256,7 @@ class TriLayer:
                 },
                 parent_layer,
                 call_id,
+                tool="background",
             )
 
         return BoundTool(schema=BACKGROUND_SCHEMA, fn=_run, with_call_id=True)
@@ -317,7 +318,9 @@ class TriLayer:
         agent.asks = self.asks
         return agent
 
-    def _spawn(self, args: dict, parent_layer: int, call_id: str | None = None) -> str:
+    def _spawn(
+        self, args: dict, parent_layer: int, call_id: str | None = None, tool: str = "spawn"
+    ) -> str:
         goal = str(args.get("goal") or "").strip()
         reply_format = str(args.get("reply_format") or "").strip()
         if not goal:
@@ -345,6 +348,7 @@ class TriLayer:
             "id": spec.id,
             "call_id": call_id,
             "layer": spec.layer,
+            "tool": tool,
             "goal": goal,
             "reply_format": reply_format,
             "status": "running",
@@ -357,6 +361,7 @@ class TriLayer:
                 "id": spec.id,
                 "call_id": call_id,
                 "layer": spec.layer,
+                "tool": tool,
                 "goal": goal,
                 "reply_format": reply_format,
             },
