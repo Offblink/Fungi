@@ -324,9 +324,11 @@ let turn = null; // {sessionId, entries, userText, userRendered, aborted}
 
 function setBusy(busy, stopping) {
   btn.classList.toggle('stopping', !!stopping);
-  btn.innerHTML = busy ? '&#x25A0;' : '&#x2191;'; // ■ stop while running, ↑ send
+  // Empty input = retry the last turn (↻); typed text = send (↑); running = stop (■).
+  const has = !!input.value.trim();
+  btn.innerHTML = busy ? '&#x25A0;' : (has ? '&#x2191;' : '&#x21BB;');
   btn.disabled = false;
-  btn.title = busy ? (stopping ? '再点一次强制断开' : '停止') : '发送';
+  btn.title = busy ? (stopping ? '再点一次强制断开' : '停止') : (has ? '发送' : '重试上一回合');
 }
 async function send() {
   if (processing && turn) { // running: button = stop (graceful, then hard)
@@ -345,7 +347,7 @@ async function send() {
     return;
   }
   const text = input.value.trim();
-  if (!text) return;
+  if (!text) return retryTurn(); // empty box: the button is the retry icon
   processing = true;
   abortCtrl = new AbortController(); stopRequested = false;
   setBusy(true);
@@ -365,6 +367,23 @@ async function send() {
   _liveCount = 0;
   renderTurnLive();
   await pumpStream(api('/chat'), { message: text, sessionId: sid });
+}
+/* Empty send button: rerun the failed/stopped turn with no new prompt —
+   the desktop Alt+R contract (POST /retry, server strips the error tail). */
+async function retryTurn() {
+  if (processing || !currentSessionId) return;
+  if (!rawMessages.some(m => m.role !== 'system')) return;
+  const sid = currentSessionId;
+  processing = true;
+  abortCtrl = new AbortController(); stopRequested = false;
+  if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+  turn = { sessionId: sid, entries: [] };
+  sessionDirty = true;
+  setBusy(true);
+  status.textContent = '重试中...';
+  _liveCount = 0;
+  renderTurnLive();
+  await pumpStream(api('/retry'), { sessionId: sid });
 }
 /* A session's turn may still run server-side (reload / switch): /events
    replays the tape, then streams live. */
@@ -968,8 +987,20 @@ function openDrawer() { applyDrawer(true); }
 function closeDrawer() { applyDrawer(false); }
 scrim.addEventListener('click', closeDrawer);
 document.getElementById('btn-menu').addEventListener('click', openDrawer);
+function inHorizScroller(el) {
+  /* A horizontal pan over scrollable content (long tool output, agent tray)
+     belongs to that element, not the drawer. */
+  for (let n = el; n && n !== chatPage; n = n.parentElement) {
+    if (n.scrollWidth > n.clientWidth + 2) {
+      const ox = getComputedStyle(n).overflowX;
+      if (ox === 'auto' || ox === 'scroll') return true;
+    }
+  }
+  return false;
+}
 chatPage.addEventListener('touchstart', e => {
   const t = e.touches[0];
+  if (inHorizScroller(e.target)) return; // let the element scroll natively
   // NO "if (drag) return" guard: a gesture the webview swallows (WeChat X5's
   // native edge handling often fires no end/cancel at all) used to wedge
   // drag truthy forever and silently kill every later swipe. A new touch

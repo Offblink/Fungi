@@ -158,7 +158,10 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 .theme-ic{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:none}
 html[data-theme="light"] .ic-moon{display:block}
 html[data-theme="dark"] .ic-sun{display:block}
-/* horizontal drawer swipes must survive over the scrollable transcript */
-#chat-wrap,#messages{touch-action:pan-y}
+/* Scrollable content (tool output, agent tray) pans itself natively; the
+   drawer swipe lives in m.js and skips touches inside horizontal scrollers.
+   touch-action intersects along the ancestor chain, so pan-x must be
+   allowed here or .tool-result pre could never scroll by touch. */
+#chat-wrap,#messages{touch-action:pan-x pan-y}
 /* touch targets for row actions: >= 40px */
 .session-row-act{font-size:16px;padding:9px 11px}
