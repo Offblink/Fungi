@@ -92,11 +92,41 @@ def test_video_multi_image_tool_content_upgrade(vidsense_env):
 
 
 def test_video_not_configured_reports_setup_hint(tmp_path, monkeypatch):
+    # force the auto-discovery to find nothing (it would otherwise locate the
+    # real checkout via the well-known sibling layout)
+    monkeypatch.setattr("fungi.tools.video._vidsense_root", lambda: None)
+    out = tool_video(str(tmp_path / "x.mp4"))
+    assert out.startswith("ERROR: VidSense not found")
+
+
+def test_video_autodiscovers_sibling_checkout(tmp_path, monkeypatch):
+    """Dev layout: <root>/Harness/Fungi -> <root>/Skill/VidSense, no config."""
+    root = tmp_path / "Skill" / "VidSense"
+    (root / "vidsense").mkdir(parents=True)
+    (root / "vidsense" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "vidsense" / "cli.py").write_text(
+        "CARD = " + repr(FAKE_CARD) + "\n" + FAKE_CLI, encoding="utf-8"
+    )
+    video = tmp_path / "clip.mp4"
+    video.write_bytes(b"\x00\x00fake mp4")
+    monkeypatch.setattr("fungi.tools.video.PROJECT_ROOT", tmp_path / "Harness" / "Fungi")
     monkeypatch.setattr(
         "fungi.tools.video.load_config",
-        lambda: Config(api_key="k", endpoint="e", model="m"),
+        lambda: Config(api_key="k", endpoint="e", model="m"),  # no vidsense_dir
     )
-    assert tool_video(str(tmp_path / "x.mp4")).startswith("ERROR: VidSense is not configured")
+
+    def fake_extract(_video, timestamps, out_dir):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for i in range(len(timestamps)):
+            dest = out_dir / f"kf{i:02d}.jpg"
+            dest.write_bytes(b"fakejpeg%d" % i)
+            paths.append(dest)
+        return paths
+
+    monkeypatch.setattr("fungi.tools.video._extract_keyframes", fake_extract)
+    out = tool_video(str(video))
+    assert isinstance(out, ImageRead) and "hello world" in out
 
 
 def test_video_missing_file(vidsense_env):

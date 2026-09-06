@@ -1,7 +1,10 @@
 """File tools: read (with :N / :N-M line selectors), write, edit (unique-match replace)."""
 
 import base64
+import html
 import io
+import re
+import zipfile
 from pathlib import Path
 
 TRUNCATE_READ = 20000
@@ -112,6 +115,51 @@ def _read_image(file: Path) -> str:
     )
 
 
+_OOXML_PARTS = {
+    ".docx": ["word/document.xml"],
+    ".xlsx": ["xl/sharedStrings.xml"],
+}
+_T_RE = re.compile(r"<(?:\w+:)?t(?:\s[^>]*)?>(.*?)</(?:\w+:)?t>", re.S)
+_P_SPLIT = re.compile(r"</(?:\w+:)?p>")
+
+
+def _read_ooxml(file: Path) -> str:
+    """Office files are ZIPs of XML — read's job is text, so extract it in one
+    step instead of bouncing the agent through bash + zipfile scripts. Text
+    nodes keep their namespace-agnostic local names (some exporters use odd
+    prefixes); docx/pptx yield one line per paragraph, xlsx one per string."""
+    suffix = file.suffix.lower()
+    try:
+        zf = zipfile.ZipFile(file)
+    except (OSError, zipfile.BadZipFile) as exc:
+        return f"ERROR: unreadable OOXML package: {exc}"
+    try:
+        if suffix == ".pptx":
+            names = sorted(
+                n for n in zf.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)
+            )
+        else:
+            names = _OOXML_PARTS[suffix]
+        lines = []
+        for name in names:
+            data = zf.read(name).decode("utf-8", errors="replace")
+            blocks = _P_SPLIT.split(data) if suffix != ".xlsx" else [data]
+            for block in blocks:
+                text = html.unescape("".join(_T_RE.findall(block)))
+                if text.strip():
+                    lines.append(text)
+        if not lines:
+            return f"OFFICE: {file.name} — package readable but contains no text nodes"
+        return _truncate("\n".join(lines), TRUNCATE_READ)
+    except KeyError as exc:
+        return (
+            f"ERROR: OOXML package is missing {exc} (nonstandard export). "
+            "Fall back to `bash` with a python script over zipfile."
+        )
+    finally:
+        zf.close()
+
+
 def _image_data_url(ext: str, raw: bytes) -> tuple[str | None, str, str]:
     """Return (data_url, mime, "WxH"). Small originals ride as-is; anything
     bigger is downscaled and re-encoded JPEG (a 2448px phone photo base64s
@@ -155,8 +203,6 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     half = limit // 2
-    return f"{text[:half]}\n... [truncated {len(text) - limit} chars] ...\n{text[-half:]}"
-
 
 def tool_read(path: str) -> str:
     """Read a file, numbering lines. Supports `path:N` and `path:N-M` selectors."""
@@ -178,6 +224,8 @@ def tool_read(path: str) -> str:
         if selector is not None:
             return "ERROR: Images are attached whole — drop the :N line selector"
         return _read_image(file)
+    if file.suffix.lower() in {".docx", ".pptx", ".xlsx"}:
+        return _read_ooxml(file)
     try:
         raw = file.read_bytes()
     except OSError as exc:

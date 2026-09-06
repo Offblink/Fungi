@@ -17,7 +17,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..config import load_config
+from ..config import PROJECT_ROOT, load_config
 from .files import ImageRead
 
 _VIDEO_TIMEOUT_S = 1800.0  # CPU laptops transcribe+CLIP a long video slowly
@@ -25,17 +25,34 @@ _MAX_TEXT_CHARS = 20000
 _MAX_KEYFRAMES = 12  # mirror vidsense API_MAX_KEYFRAMES; tokens are not free
 
 _NOT_CONFIGURED = (
-    'ERROR: VidSense is not configured — set "vidsense_dir" in config.json to a '
-    "VidSense checkout (needs ffmpeg/ffprobe on PATH + torch, transformers, "
-    "faster-whisper, opencv-python installed in Fungi's Python)."
+    "ERROR: VidSense not found — drop the Offblink/VidSense checkout beside Fungi "
+    "(<install root>/Skill/VidSense) or set \"vidsense_dir\" in config.json. "
+    "Needs ffmpeg/ffprobe on PATH + torch, transformers, faster-whisper, "
+    "opencv-python in Fungi's Python."
 )
+
+
+def _vidsense_root() -> Path | None:
+    """Explicit config wins; otherwise well-known layouts. The dev checkout
+    sits beside Fungi: <root>/Harness/Fungi -> <root>/Skill/VidSense."""
+    cfg = load_config()
+    candidates = []
+    if cfg.vidsense_dir:
+        candidates.append(Path(cfg.vidsense_dir))
+    candidates += [
+        PROJECT_ROOT.parent.parent / "Skill" / "VidSense",
+        Path.home() / "Desktop" / "Vibe Coding" / "useful" / "基于LLM" / "Skill" / "VidSense",
+    ]
+    for c in candidates:
+        if (c / "vidsense" / "cli.py").is_file():
+            return c
+    return None
 
 
 def tool_video(path: str) -> str:
     """Understand a local video: transcript + scenes + attached keyframes."""
-    cfg = load_config()
-    root = Path(cfg.vidsense_dir) if cfg.vidsense_dir else None
-    if not root or not root.is_dir():
+    root = _vidsense_root()
+    if not root:
         return _NOT_CONFIGURED
     video = Path(path)
     if not video.is_file():

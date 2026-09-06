@@ -51,15 +51,29 @@ def test_write_creates_parents(tmp_path):
     assert target.read_text(encoding="utf-8") == "hello"
 
 
-def test_read_binary_docx_reports_not_mojibake(tmp_path):
+def test_read_binary_pdf_reports_not_mojibake(tmp_path):
     """Field regression: a non-image binary used to return replace-char soup.
     It must be identified and refused, with an actionable next step."""
-    file = tmp_path / "report.docx"
-    file.write_bytes(b"PK\x03\x04" + b"\x00" * 64 + b"word/document.xml")
+    file = tmp_path / "report.pdf"
+    file.write_bytes(b"%PDF-1.7 " + b"\x00" * 64)
     out = tool_read(str(file))
-    assert out.startswith("BINARY: report.docx")
-    assert "ZIP archive" in out
+    assert out.startswith("BINARY: report.pdf")
+    assert "PDF document" in out
     assert "bash" in out and "python" in out
+
+
+def test_read_docx_extracts_text_directly(tmp_path):
+    import zipfile
+    file = tmp_path / "report.docx"
+    doc = (
+        "<w:document><w:body>"
+        "<w:p><w:r><w:t>first paragraph</w:t><w:t> continued</w:t></w:r></w:p>"
+        "<w:p><w:r><w:tab/><w:t>l &amp; found</w:t></w:r></w:p>"
+        "</w:body></w:document>"
+    )
+    with zipfile.ZipFile(file, "w") as zf:
+        zf.writestr("word/document.xml", doc)
+    assert tool_read(str(file)) == "first paragraph continued\nl & found"
 
 
 def test_read_binary_png_with_wrong_extension_is_sniffed(tmp_path):
