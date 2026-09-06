@@ -11,7 +11,7 @@ from typing import Any
 
 from fungi.config import PROJECT_ROOT
 
-SESSIONS_DIR = PROJECT_ROOT / "sessions"
+SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"  # one location for every mode
 
 
 def _now() -> str:

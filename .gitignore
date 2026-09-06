@@ -1,5 +1,4 @@
 config.json
-sessions/
 data/
 __pycache__/
 *.pyc
