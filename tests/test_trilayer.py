@@ -313,8 +313,8 @@ def test_every_tool_description_is_a_plain_string():
     array, which strict providers (GLM 1210) reject as an invalid parameter -
     the whole turn 400s. Assert the type at the source for every schema."""
     from fungi.tools import tool_defs
-    from fungi.trilayer import SPAWN_SCHEMA
+    from fungi.trilayer import BACKGROUND_SCHEMA, SPAWN_SCHEMA
 
-    schemas = [SPAWN_SCHEMA] + tool_defs()
+    schemas = [SPAWN_SCHEMA, BACKGROUND_SCHEMA] + tool_defs()
     for s in schemas:
         assert isinstance(s["function"]["description"], str), s["function"]["name"]

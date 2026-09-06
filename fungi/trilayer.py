@@ -94,6 +94,27 @@ Discipline (mandatory):
 - If the job cannot be done, report that inside the required reply format.
 """
 
+BACKGROUND_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "background",
+        "description": (
+            "Run a shell command in the BACKGROUND. Returns 'dispatched (id=...)'"
+            " immediately - the command's output arrives later as the input of a"
+            " new turn ([background report]), NOT in this turn. Use it for slow"
+            " commands (installs, builds, long tests) while you keep responding"
+            " to the user."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "The exact shell command to run"},
+                "cwd": {"type": "string", "description": "Working directory (optional)"},
+            },
+            "required": ["command"],
+        },
+    },
+}
 SPAWN_SCHEMA = {
     "type": "function",
     "function": {
@@ -205,6 +226,40 @@ class TriLayer:
             with_call_id=True,
         )
 
+    def bound_background(self, parent_layer: int) -> BoundTool:
+        """The `background` tool: spawn's async UX with a command-only surface.
+
+        Accepts one shell command, runs it on an L2 task agent (the full async
+        machinery: instant dispatch, [background report] re-activation, /stop
+        kill), and the command's output is the only thing that comes back.
+        """
+
+        def _run(args: dict, call_id: str | None = None) -> str:
+            command = str(args.get("command") or "").strip()
+            if not command:
+                return "ERROR: Missing required argument: command"
+            cwd = str(args.get("cwd") or "").strip()
+            return self._spawn(
+                {
+                    "goal": (
+                        "Run this exact shell command with your bash tool and report"
+                        f" its output.\ncommand: {command}"
+                        + (f"\nworking directory: {cwd}" if cwd else "")
+                    ),
+                    "reply_format": (
+                        "The command's verbatim terminal output (stdout + stderr);"
+                        " if it failed, the error text and exit code."
+                    ),
+                    "constraints": (
+                        "Run only this command; do not inspect, fix, or extend anything."
+                    ),
+                },
+                parent_layer,
+                call_id,
+            )
+
+        return BoundTool(schema=BACKGROUND_SCHEMA, fn=_run, with_call_id=True)
+
     def build_orchestrator(self, sink: Sink) -> Agent:
         """The L1 agent, ready to run user turns."""
         agent = Agent(
@@ -213,13 +268,14 @@ class TriLayer:
             system_prompt=SYSTEM_PROMPT + L1_ADDENDUM + skills.section(),
             extra_tools={
                 "spawn": self.bound_spawn(1),
+                "background": self.bound_background(1),
                 "inquire": make_ask_tool(
                     sink, on_answer=self.asks.append, should_abort=self._should_abort
                 ),
                 **mcp_extra_tools(self.cfg.mcp_servers),
                 **skills.bound(),
             },
-            parallel_tools={"spawn"},
+            parallel_tools={"spawn", "background"},
             llm=self._llm,
             model=self.cfg.model_for(1),
             should_abort=self._should_abort,
@@ -248,10 +304,11 @@ class TriLayer:
             tool_names=tool_names,
             extra_tools={
                 "spawn": self.bound_spawn(1),
+                "background": self.bound_background(1),
                 **skills.bound(readonly=not self._skill_save),
                 **extra_tools,
             },
-            parallel_tools={"spawn"},
+            parallel_tools={"spawn", "background"},
             llm=self._llm,
             model=model or self.cfg.model_for(1),
             should_abort=self._should_abort,
