@@ -97,7 +97,6 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 .session-row-act{background:none;border:none;color:var(--dim);font-size:15px;padding:6px 8px;border-radius:6px}
 .session-row-act.del{color:#ef4444}
 #session-list-empty{padding:44px 16px;text-align:center;color:var(--dim);font-size:0.85rem;line-height:1.9}
-.drawer-foot{padding:0.7rem 1rem calc(0.8rem + env(safe-area-inset-bottom));border-top:1px solid var(--border);color:var(--dim);font-size:0.7rem;text-align:center}
 #rescan-overlay{display:flex;position:fixed;inset:0;z-index:100;background:rgba(10,12,30,0.6);backdrop-filter:blur(8px);align-items:center;justify-content:center}
 #rescan-overlay.hide{display:none}
 .rescan-card{background:var(--surface);border-radius:var(--radius);padding:2rem 1.6rem;text-align:center;max-width:80vw;box-shadow:0 16px 56px rgba(0,0,0,0.4)}

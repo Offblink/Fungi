@@ -177,3 +177,52 @@ ask 是普通消息，不需要独立协调设施：
   pytest 为门禁（windows-latest + py3.13，Qt 测试在 runner 上 importorskip 跳过）；
   release 追加 `git archive` 源码 zip + GitHub Release（generate_release_notes）。
   ruff 仍是本地门禁（`scripts/check.ps1`），暂不进 CI——版本漂移待统一后钉版。
+
+## 13. 增补（2026-09-06）：文件空间全景、会话目录统一、视频理解与移动端打磨
+
+### 文件空间全景
+
+fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、其余一律拒绝），
+但 `data/` 的实际布局早已不止三个目录——**每台主机一份自己的 `data/`**，server
+主机的那份额外承载共享空间：
+
+| 目录（每主机 `<repo>/data/`） | 内容 | 写者 |
+|---|---|---|
+| `sessions/` | 本机 WebUI 会话（每会话一个 JSON，逐回合落盘） | 各自主机——server 角色=hub store 后端；client/单机=本地落盘，**绝不代理进 hub store**（2026-09-04 真机教训：共享一个 sessions/ 会让每台主机的 WebUI 列出所有主机的聊天） |
+| `comm-sessions/` | 好友视图：通讯 clone 的会话式转录（与 sessions 同构） | room 进程 |
+| `comm/`（仅 server） | clone 间信封流量镜像，`发送方__接收方.jsonl` | hub，每次投递一条 |
+| `public/`、`homes/<host>/` | clone 文件空间（守卫白名单内） | clone |
+| `transfers/` | send_file 暂存（store-and-forward，取走即删） | hub |
+| `skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent；通讯 clone 只读 |
+
+仓库根另有 `inbox/`（send_file 收件，`<来源主机>/` 子目录）与 `config.json`（模型、
+vidsense_dir）；用户级配置在 `~/.fungi/`（`webui_token`=WebUI 门禁、
+`consent_rules.json`=好友同意模式开关）。以上全部不入库。
+
+**会话目录统一**：单机模式原本写仓库根 `sessions/`，与房间模式的 `data/sessions/`
+双轨——同一台机器的聊天史裂成两处。现 `session.py SESSIONS_DIR` 统一指向
+`data/sessions/`，根目录旧会话已迁移，目录删除。
+
+### 视频理解（`video` 工具）
+
+- 零配置发现旁置的 VidSense checkout（config 显式 > `<安装根>/Skill/VidSense` 兄弟目录
+  > 桌面备用路径）；子进程跑 VidSense **原生本地管线**（`--no-api`：ffmpeg/ffprobe 抽取、
+  faster-whisper 转写、CLIP 镜头切分），Fungi 读取事件卡 JSON 后自己用 ffmpeg 按时间戳
+  重抽关键帧——理解交给 Fungi 自己的视觉模型，无第二 API key，VidSense 仓库零改动。
+- 可靠性细节：子进程 env 注入 `HF_ENDPOINT=hf-mirror.com`（防 GFW 下 transformers
+  HEAD 校验卡死）；路径含 CJK 时先复制成 ASCII 临时副本再喂管线（本机 ffmpeg 解码
+  中文路径输入会失败）；相对路径按 Fungi cwd 解析；错误路径透传子进程 stderr。
+
+### 移动端打磨（真机 X5 反馈闭环）
+
+- **右划抽屉任意位置可起**：48px 边缘 wedge 从未在真机触发且与系统边缘手势冲突，废除；
+  touchstart 无卫语句（X5 吞手势后 drag 卡 truthy 的教训）；touchmove 垂直锁隔离滚动。
+- **横向滚动优先**：touchstart 命中横向可滚动元素（长工具输出 `<pre>`、agent tray）时不启动
+  抽屉拖动，pan-x 交还给内容本身（touch-action 沿祖先链取交集，`#chat-wrap/#messages`
+  需 `pan-x pan-y`）。
+- **空输入即重试**：发送键图标随输入框状态切换（↻ 重试 / ↑ 发送 / ■ 停止）；重试走桌面
+  Alt+R 同一契约（POST /retry，server 剥离失败回合的合成尾）。
+- **状态栏**：tool 事件显示 `⚙ <工具名>…`，tool_result 复位 Thinking——长工具不再挂着
+  陈旧的 "Writing..."。
+- **停止丢卡片修复**：流未收到 done 就终结（硬中断/断网）时，`recoverAfterDrop` 先按磁盘
+  reconcile 再视情重连接续，live 卡片不再在下次渲染时凭空消失（桌面 app.js 同步）。

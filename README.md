@@ -33,17 +33,20 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
   - 本机 clone（local）：每 host 恰一个，专职与用户交互，持原生全套工具 + `delegate(host, goal, reply_format)` 跨主机委派。
   - 通讯 clone（comm）：每远端 host 一个，与对位通讯 clone 自由 chat/task 往来，**不自动回信**——LLM 想回才显式调 `send_peer`；工具面只有守卫版文件工具 + `send_peer` / `confirm` / `inquire`，原生 bash/read/write 不下放。
 - **同意流即消息**：无 Redis 等协调设施。ask 是普通 envelope，投到属主 host 的本机 clone → WebUI 卡片（允许 / 禁止 / 自定义输入 / 始终允许）→ answer envelope 唤醒阻塞中的请求方。断线重连后心跳重放未决卡片。
-- **文件空间**（存于 server `data/`）：
+- **文件空间**（server 主机 `data/`；fs 守卫为白名单三分区）：
 
   | 目录 | 规则 |
   |---|---|
   | `public/` | 所有通讯 clone 自由读写 |
   | `homes/<host>/` | 属主 clone 写需自身用户同意；非属主读写都要属主用户同意 |
-  | `sessions/` | 拒绝 clone 访问，仅经本机 clone 代理给用户 |
+  | 其余一切（`sessions/`、`transfers/`、`skills/`、`comm*/`） | fs 工具一律拒绝——会话经代理、传输经 consent、技能只读注入 |
 
   路径守卫在 **server 端强制**（前缀校验，拒绝 `..` 与绝对路径逃逸），不依赖 clone 自觉。
+  完整数据目录图见下方「数据目录口径」。
 - **send_file 传输**：字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
 - **skill 系统**：每台主机的 clone 可沉淀可复用流程——`data/skills/<name>/SKILL.md` + 可选配套脚本，列表注入 system prompt，通讯 clone 只读。
+- **视频理解**：`video` 工具零配置发现旁置的 VidSense checkout——子进程跑原生本地管线（whisper 转写 + CLIP 镜头切分），事件卡 + 关键帧直接附给本机视觉模型，无第二 API key；CJK 路径自动转 ASCII 副本、GFW 下自动走 hf-mirror。
+- **移动端 WebUI**：GUI「手机端」页扫码即用——全功能聊天、右划任意位置开抽屉（横向滚动内容自动让路）、📎 手机文件上传到电脑 inbox、输入框留空一键重试、ask/consent 卡片与好友视图齐备。
 - **GUI 启动器**：PyQt5 + qfluentwidgets 程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。单实例：再次启动会唤起已运行的主界面。Token 支持自定义（字母/数字/-/_，1-64 位），发起前改即开房生效；运行中改完按回车（或移开焦点）即时热更新，已加入的好友需用新 Token 重新加入。
 
 ```
@@ -59,16 +62,21 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 
 ## 数据目录口径
 
-两套存储根按角色划分，**不是重复**，请勿合并：
+**每台主机一份自己的 `data/`**；server 主机的那份额外承载共享文件空间。会话目录
+全模式统一为 `data/sessions/`（单机模式曾写仓库根 `sessions/`，已迁移并删除）。
 
-| 目录 | 角色 | 内容 |
+| 目录 | 内容 | 谁写 |
 |---|---|---|
-| `data/` | hub 共享存储（server 角色） | `public/`、`homes/`、`transfers/`、房间会话 `sessions/`、好友视图 `comm-sessions/` |
-| 仓库根 | 本机 UI 数据（单机/加入方） | WebUI 会话 `sessions/`、收件箱 `inbox/`、`comm-sessions/` |
+| `data/sessions/` | 本机 WebUI 会话（每会话一个 JSON） | server 角色=hub store 后端；client/单机=本地落盘，**不代理进 hub store**（2026-09-04 真机教训：共享 sessions/ 会让每台主机列出所有主机的聊天，见 `ClientSessions` docstring） |
+| `data/comm-sessions/` | 好友视图：通讯 clone 的会话式转录 | room 进程 |
+| `data/comm/`（仅 server） | clone 间信封流量镜像（`发送方__接收方.jsonl`） | hub，每投递一条 |
+| `data/public/`、`data/homes/<host>/` | clone 文件空间（三分区守卫） | clone 经守卫读写 |
+| `data/transfers/` | send_file 暂存（store-and-forward，取走即删） | hub |
+| `data/skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent，通讯 clone 只读 |
+| `inbox/`（仓库根） | send_file 收到的文件（`<来源主机>/` 子目录） | WebUI 传输落盘 |
+| `~/.fungi/webui_token` · `~/.fungi/consent_rules.json` | WebUI 门禁 token · 好友同意模式开关 | GUI / WebUI |
 
-房间会话进 `data/` 是 server 角色的会话后端；本机会话放仓库根，因为 2026-09-04 真机
-验证发现共享一个 `sessions/` 会让每台主机的 WebUI 列出所有主机的聊天（见
-`ClientSessions` docstring）。两侧均被 `.gitignore` 覆盖，不入库。
+以上均被 `.gitignore` 覆盖，不入库。
 
 ## 快速开始
 

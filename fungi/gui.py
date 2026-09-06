@@ -261,7 +261,13 @@ HELP_SECTIONS = [
     ("WebUI 与 clone 能力",
      "双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。"
      "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
-     "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"),
+     "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"
+     "clone 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，自动发现旁置的 "
+     "VidSense）——手机上把文件传上来即可。"),
+    ("手机端",
+     "「手机端」页扫码即用：聊天区右划任意位置开抽屉（会话列表/好友视图），"
+     "📎 把手机文件上传到电脑 inbox；输入框留空时发送键变重试（↻），"
+     "工具执行时状态栏显示正在跑什么。"),
     ("托盘与后台",
      "关闭窗口不停房间：转入托盘后台；点击或右键托盘图标可回主界面，菜单可开 WebUI、退出。"
      "再次启动程序也会唤起主界面（单实例）。"
@@ -784,7 +790,6 @@ class MobilePage(QWidget):
 
         hint = BodyLabel(
             "发起或加入房间后，用手机相机扫码即可在手机上打开移动版 WebUI。\n"
-            "链接里的 token 是 WebUI 门禁凭证（与上方房间的 Token 无关），请整段扫码，不要手抄。\n"
             "手机连不上时检查 Windows 防火墙（公用网络常拦 Python 入站）；换网络后点「刷新二维码」。"
         )
         hint.setWordWrap(True)
