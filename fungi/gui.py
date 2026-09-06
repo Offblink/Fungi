@@ -11,7 +11,6 @@ same range for a hub that accepts the token (wrong-token hubs are skipped).
 Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
-import importlib.util
 import io
 import os
 import re
@@ -66,7 +65,7 @@ from .config import (
     save_config,
 )
 from .protocol import valid_host_name
-from .tools.video import _models_ready
+from .tools.video import _HEALABLE, _module_available, _video_ready
 from .tray import make_icon
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
@@ -864,10 +863,7 @@ class MobilePage(QWidget):
 
 def _hf_hub_missing() -> bool:
     """True when Fungi's Python lacks huggingface_hub (download deps)."""
-    try:
-        return importlib.util.find_spec("huggingface_hub") is None
-    except (ImportError, ValueError):  # broken/partial installs
-        return True
+    return not _module_available("huggingface_hub")
 
 
 class ConfigPage(QWidget):
@@ -939,21 +935,25 @@ class ConfigPage(QWidget):
 
     def _check_video_models(self) -> None:
         try:
-            ready = _models_ready()
+            ready = _video_ready()
         except OSError as exc:
             self.video_status.setText(f"视频模型状态检查失败：{exc}")
             self.download_btn.setEnabled(False)
             return
         marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
         missing = [name for name, ok in ready.items() if not ok]
+        healable = [name for name in missing if name in _HEALABLE]
         if missing:
-            self.video_status.setText(
-                f"{marks} — 缺 {'、'.join(missing)}，缺失时 video 工具会拒绝执行"
+            hint = (
+                "点「下载缺失模型」自动补齐"
+                if healable
+                else "需手动安装 VidSense 依赖（torch/transformers/faster-whisper/opencv、ffmpeg）"
             )
+            self.video_status.setText(f"{marks} — 缺 {'、'.join(missing)}，{hint}")
         else:
             self.video_status.setText(f"{marks} — 已就绪，video 工具可用")
-        # 不缺失即禁用下载；下载进行中也不允许重复点
-        self.download_btn.setEnabled(bool(missing) and self._dl_proc is None)
+        # 只有可自愈缺失（依赖/模型）才给下载；下载进行中不允许重复点
+        self.download_btn.setEnabled(bool(healable) and self._dl_proc is None)
 
     def _python_cmd(self) -> str | None:
         """Interpreter for helper subprocesses: Fungi's own Python in dev;

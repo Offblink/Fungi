@@ -10,6 +10,7 @@ which VidSense already requires.
 """
 
 import base64
+import importlib.util
 import json
 import os
 import shutil
@@ -77,6 +78,34 @@ def _models_ready() -> dict[str, bool]:
     }
 
 
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):  # broken/partial installs
+        return False
+
+
+# Missing items the GUI download button can heal on its own (pip + model script).
+_HEALABLE = frozenset({"huggingface_hub", "CLIP", "whisper"})
+
+
+def _video_ready() -> dict[str, bool]:
+    """Single source of truth for everything the local VidSense pipeline needs:
+    Python libs, ffmpeg/ffprobe, and the HF model caches. Drives the tool gate
+    AND the GUI status line, so the two can never disagree."""
+    ready = {
+        "ffmpeg": shutil.which("ffmpeg") is not None
+        and shutil.which("ffprobe") is not None,
+        "huggingface_hub": _module_available("huggingface_hub"),
+        "torch": _module_available("torch"),
+        "transformers": _module_available("transformers"),
+        "faster_whisper": _module_available("faster_whisper"),
+        "opencv": _module_available("cv2"),
+    }
+    ready.update(_models_ready())  # CLIP, whisper
+    return ready
+
+
 def _vidsense_root() -> Path | None:
     """Explicit config wins; otherwise well-known layouts. The dev checkout
     sits beside Fungi: <root>/Harness/Fungi -> <root>/Skill/VidSense."""
@@ -99,13 +128,29 @@ def tool_video(path: str) -> str:
     root = _vidsense_root()
     if not root:
         return _NOT_CONFIGURED
-    missing = [label for label, ok in _models_ready().items() if not ok]
+    missing = [name for name, ok in _video_ready().items() if not ok]
     if missing:
+        if set(missing) <= _HEALABLE:
+            steps = []
+            if "huggingface_hub" in missing:
+                steps.append("`pip install huggingface_hub`")
+            steps.append(
+                "`python scripts/download_video_models.py` in Fungi's root "
+                "(downloads via hf-mirror.com)"
+            )
+            return (
+                "ERROR: video not ready, missing: "
+                + ", ".join(missing)
+                + ". Run "
+                + " and ".join(steps)
+                + " - the GUI download button does both automatically; the tool "
+                "never downloads on demand."
+            )
         return (
-            "ERROR: video model(s) missing from the HF cache: "
+            "ERROR: VidSense runtime components missing: "
             + ", ".join(missing)
-            + ". Run `python scripts/download_video_models.py` in Fungi's root "
-            "(downloads via hf-mirror.com); the tool never downloads on demand."
+            + ". Install VidSense's Python deps (torch, transformers, "
+            "faster-whisper, opencv-python) and put ffmpeg/ffprobe on PATH."
         )
     video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
     if not video.is_file():       # subprocess runs with cwd=vidsense_dir

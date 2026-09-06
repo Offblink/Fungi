@@ -43,6 +43,18 @@ FAKE_CLI = textwrap.dedent("""
     print("ok")
 """)
 
+# every component _video_ready() checks, all present
+_ALL_READY = {
+    "ffmpeg": True,
+    "huggingface_hub": True,
+    "torch": True,
+    "transformers": True,
+    "faster_whisper": True,
+    "opencv": True,
+    "CLIP": True,
+    "whisper": True,
+}
+
 
 @pytest.fixture()
 def vidsense_env(tmp_path, monkeypatch):
@@ -58,11 +70,11 @@ def vidsense_env(tmp_path, monkeypatch):
         "fungi.tools.video.load_config",
         lambda: Config(api_key="k", endpoint="e", model="m", vidsense_dir=str(root)),
     )
-    # these tests fake a working VidSense checkout; pretend the HF weights are
-    # already cached (dedicated tests below cover the missing-model gate)
+    # these tests fake a working VidSense checkout; pretend the whole runtime
+    # (libs + ffmpeg + HF weights) is in place (dedicated tests below cover gaps)
     monkeypatch.setattr(
-        "fungi.tools.video._models_ready",
-        lambda: {"CLIP": True, "whisper": True},
+        "fungi.tools.video._video_ready",
+        lambda: dict(_ALL_READY),
     )
 
     def fake_extract(video_path, timestamps, out_dir):
@@ -191,12 +203,23 @@ def test_video_missing_model_refuses_and_points_to_downloader(
 ):
     """The tool never downloads on demand: missing weights -> guidance ERROR."""
     _root, video = vidsense_env
-    monkeypatch.setattr(
-        "fungi.tools.video._models_ready", lambda: {"CLIP": True, "whisper": False}
-    )
+    ready = dict(_ALL_READY) | {"whisper": False}
+    monkeypatch.setattr("fungi.tools.video._video_ready", lambda: ready)
     out = tool_video(str(video))
-    assert out.startswith("ERROR: video model(s) missing")
+    assert out.startswith("ERROR: video not ready")
     assert "download_video_models.py" in out and "whisper" in out
+
+
+def test_video_missing_non_healable_runtime_reports_manual_install(
+    vidsense_env, monkeypatch
+):
+    """torch/ffmpeg etc. can't be auto-healed: point at VidSense's deps."""
+    _root, video = vidsense_env
+    ready = dict(_ALL_READY) | {"torch": False, "ffmpeg": False}
+    monkeypatch.setattr("fungi.tools.video._video_ready", lambda: ready)
+    out = tool_video(str(video))
+    assert out.startswith("ERROR: VidSense runtime components missing")
+    assert "torch" in out and "ffmpeg" in out and "download_video_models" not in out
 
 
 def test_model_cached_reads_hf_snapshot_layout(tmp_path, monkeypatch):

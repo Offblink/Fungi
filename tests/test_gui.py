@@ -425,14 +425,20 @@ def test_second_launch_activates_existing_window(window, monkeypatch):
     assert calls
 
 
+def _ready(**overrides):
+    return {
+        "ffmpeg": True, "huggingface_hub": True, "torch": True,
+        "transformers": True, "faster_whisper": True, "opencv": True,
+        "CLIP": True, "whisper": True, **overrides,
+    }
+
+
 def test_config_page_video_models_all_present_disables_download(
     window, monkeypatch
 ):
-    """全都在缓存 -> 按钮禁用, 状态行打勾 (不缺失禁用下载)."""
+    """运行时全就绪 -> 按钮禁用, 状态行打勾 (不缺失禁用下载)."""
     page = window.cfg_page
-    monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
-    )
+    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready())
     page._check_video_models()
     assert "✓" in page.video_status.text()
     assert "✗" not in page.video_status.text()
@@ -441,19 +447,40 @@ def test_config_page_video_models_all_present_disables_download(
 
 def test_config_page_video_models_missing_enables_download(window, monkeypatch):
     page = window.cfg_page
-    monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": True}
-    )
+    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(CLIP=False))
     page._check_video_models()
     assert "✗" in page.video_status.text() and "CLIP" in page.video_status.text()
     assert page.download_btn.isEnabled()
+
+
+def test_config_page_missing_dep_enables_download(window, monkeypatch):
+    """模型都在但 huggingface_hub 没了 -> 状态行标 ✗, 按钮启用(可自愈)."""
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._video_ready", lambda: _ready(huggingface_hub=False)
+    )
+    page._check_video_models()
+    assert "huggingface_hub" in page.video_status.text()
+    assert "✗" in page.video_status.text()
+    assert page.download_btn.isEnabled()
+
+
+def test_config_page_non_healable_missing_disables_download(window, monkeypatch):
+    """torch/ffmpeg 缺失不可自愈: 状态行提示手动装, 按钮不给下载."""
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._video_ready", lambda: _ready(torch=False, ffmpeg=False)
+    )
+    page._check_video_models()
+    assert "torch" in page.video_status.text() and "手动安装" in page.video_status.text()
+    assert not page.download_btn.isEnabled()
 
 
 def test_config_page_download_runs_script_and_rechecks(window, monkeypatch):
     """点下载 -> Popen 脚本 + 轮询结束后自动复检并恢复按钮可用性。"""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": False}
+        "fungi.gui._video_ready", lambda: _ready(CLIP=False, whisper=False)
     )
     monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: False)
     page._check_video_models()
@@ -477,7 +504,7 @@ def test_config_page_download_runs_script_and_rechecks(window, monkeypatch):
 
     # 下载结束后的复检, 两个模型都已就绪
     monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
+        "fungi.gui._video_ready", lambda: _ready()
     )
     page._poll_download()
     assert page._dl_proc is None
@@ -490,7 +517,7 @@ def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
     """缺 huggingface_hub: 先 pip 装依赖, 成功后自动接下载脚本, 全程一次点击。"""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": False}
+        "fungi.gui._video_ready", lambda: _ready(CLIP=False, whisper=False)
     )
     monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: True)
 
@@ -514,7 +541,7 @@ def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
     assert len(spawned) == 2 and spawned[1][-1].endswith("download_video_models.py")
     assert "视频模型" in page.video_status.text()
     monkeypatch.setattr(
-        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
+        "fungi.gui._video_ready", lambda: _ready()
     )
     page._poll_download()  # 模型下完 -> 复检就绪并禁用按钮
     assert not page._dl_timer.isActive()
