@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tomllib
 import zipfile
 from pathlib import Path
 from urllib.error import URLError
@@ -13,7 +14,11 @@ from fungi import update
 # ---------- local_version ----------
 
 def test_local_version_reads_pyproject():
-    assert update.local_version() == "0.1.1"  # pyproject.toml single source
+    # reads the real pyproject.toml; compare against the file, never a pinned
+    # version (that broke the suite on every release bump)
+    with open("pyproject.toml", "rb") as fh:
+        expected = tomllib.load(fh)["project"]["version"]
+    assert update.local_version() == expected
 
 
 def test_local_version_frozen_uses_resource_root(monkeypatch, tmp_path):
