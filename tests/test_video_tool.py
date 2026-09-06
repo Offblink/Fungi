@@ -3,6 +3,7 @@
 import base64
 import json
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -238,3 +239,32 @@ def test_model_cached_reads_hf_snapshot_layout(tmp_path, monkeypatch):
     # absent cache root -> missing, never raises
     monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "nope"))
     assert not video_mod._model_cached("openai/clip-vit-base-patch32", ("model.safetensors",))
+
+
+def test_video_demo_path_runs_full_pipeline(vidsense_env, monkeypatch):
+    """path "demo" = built-in self-test: routes the generated clip through the
+    normal subprocess pipeline, so one successful call proves readiness."""
+    _root, video = vidsense_env
+    monkeypatch.setattr("fungi.tools.video._demo_video", lambda: video)
+    out = tool_video("demo")
+    assert isinstance(out, ImageRead) and "hello world" in out
+
+
+def test_demo_video_generates_once_then_caches(tmp_path, monkeypatch):
+    """_demo_video: ffmpeg lavfi generation is cached under PROJECT_ROOT/data."""
+    monkeypatch.setattr("fungi.tools.video.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "fungi.tools.video.shutil.which", lambda _name: "C:/ffmpeg/ffmpeg.exe"
+    )
+    calls = []
+
+    def fake_run(cmd, **_kw):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"fake mp4")
+
+    monkeypatch.setattr("fungi.tools.video.subprocess.run", fake_run)
+    first = video_mod._demo_video()
+    second = video_mod._demo_video()
+    assert first == second == tmp_path / "data" / "demo_video.mp4"
+    assert len(calls) == 1 and calls[0][0] == "C:/ffmpeg/ffmpeg.exe"
+    assert any("testsrc2" in a for a in calls[0]) and any("sine" in a for a in calls[0])

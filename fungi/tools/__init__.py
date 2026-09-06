@@ -47,12 +47,12 @@ TOOLS: dict[str, dict] = {
             "video",
             "Understand a local video file: returns the timestamped transcript, "
             "scene structure, and keyframe images attached for vision models. "
-            "Requires VidSense (vidsense_dir in config.json) AND pre-downloaded "
-            "runtime (ffmpeg, torch/transformers/faster-whisper, HF model caches); "
-            "if any part is missing the tool returns an ERROR with setup guidance "
-            "and never downloads on demand - do NOT promise video analysis before "
-            "a call has actually succeeded.",
-            {"path": {"type": "string", "description": "Video file path (mp4/mov/mkv…)"}},
+            "path \"demo\" runs a built-in test clip - one successful call "
+            "proves the whole pipeline (ffmpeg, VidSense, HF models) is ready; "
+            "do NOT promise video analysis before a call has succeeded. If any "
+            "runtime part is missing the tool returns an ERROR with setup "
+            "guidance and never downloads on demand.",
+            {"path": {"type": "string", "description": "Video file path (mp4/mov/mkv…) or \"demo\" for the built-in test clip"}},
             ["path"],
         ),
         "fn": tool_video,

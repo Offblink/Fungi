@@ -123,6 +123,34 @@ def _vidsense_root() -> Path | None:
     return None
 
 
+def _demo_video() -> Path:
+    """Built-in 5s test clip (lavfi-generated countdown-style pattern + tone,
+    cached under data/): gives `video` something concrete to run so verifying
+    the whole pipeline is just one call with path "demo". ffmpeg is already a
+    VidSense prerequisite, so generation adds no new dependency."""
+    dest = PROJECT_ROOT / "data" / "demo_video.mp4"
+    if dest.is_file() and dest.stat().st_size > 0:
+        return dest
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise FileNotFoundError("ffmpeg not found on PATH")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            ffmpeg, "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=10:duration=5",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-shortest",
+            str(dest),
+        ],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return dest
+
+
 def tool_video(path: str) -> str:
     """Understand a local video: transcript + scenes + attached keyframes."""
     root = _vidsense_root()
@@ -152,9 +180,15 @@ def tool_video(path: str) -> str:
             + ". Install VidSense's Python deps (torch, transformers, "
             "faster-whisper, opencv-python) and put ffmpeg/ffprobe on PATH."
         )
-    video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
-    if not video.is_file():       # subprocess runs with cwd=vidsense_dir
-        return f"ERROR: File not found: {video}"
+    if path == "demo":  # built-in self-test clip: one successful call proves
+        try:            # the whole pipeline (ffmpeg, VidSense, models, LLM)
+            video = _demo_video()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return f"ERROR: could not generate the built-in demo clip: {exc}"
+    else:
+        video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
+        if not video.is_file():       # subprocess runs with cwd=vidsense_dir
+            return f"ERROR: File not found: {video}"
     with tempfile.TemporaryDirectory(prefix="fungi-video-") as tmp:
         # ffmpeg on this box fails to decode inputs whose path contains CJK
         # characters (observed on real runs). VidSense's checkout must stay

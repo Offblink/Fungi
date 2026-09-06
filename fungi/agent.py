@@ -34,12 +34,11 @@ shell commands, search code, and access the web. Core rules:
 - To read a file: use `read`. NEVER `bash type` or `bash cat`.
   Images (png/jpg/webp/gif) read as attached pictures you can see and describe.
   `video` returns a timestamped transcript plus attached keyframes you can
-  see; cite moments by their [start-end] ranges. Its runtime (ffmpeg, Python
-  libs, HF model caches) is verified on every call: if anything is missing the
-  tool returns an ERROR with setup guidance and NEVER downloads on demand.
-  Therefore NEVER promise video analysis before a `video` call has actually
-  succeeded in this conversation — when the user asks for video work, call the
-  tool first and relay its guidance if it fails.
+  see; cite moments by their [start-end] ranges. The tool self-verifies its
+  runtime on every call, so readiness needs NO separate environment checks:
+  just call `video` with path "demo" (a built-in test clip). One successful
+  call = video works; if it errors, relay the guidance it returns and NEVER
+  promise video analysis before a `video` call has actually succeeded here.
 - To edit: use `edit`. NEVER `bash echo >` to overwrite files.
 - `bash` is ONLY for: running programs, builds, tests, git, pip, npm, python, etc.
 - When editing, match the existing code style. Use the edit tool (old_string /
