@@ -51,6 +51,36 @@ def test_write_creates_parents(tmp_path):
     assert target.read_text(encoding="utf-8") == "hello"
 
 
+def test_read_binary_docx_reports_not_mojibake(tmp_path):
+    """Field regression: a non-image binary used to return replace-char soup.
+    It must be identified and refused, with an actionable next step."""
+    file = tmp_path / "report.docx"
+    file.write_bytes(b"PK\x03\x04" + b"\x00" * 64 + b"word/document.xml")
+    out = tool_read(str(file))
+    assert out.startswith("BINARY: report.docx")
+    assert "ZIP archive" in out
+    assert "bash" in out and "python" in out
+
+
+def test_read_binary_png_with_wrong_extension_is_sniffed(tmp_path):
+    file = tmp_path / "photo.bin"
+    file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    out = tool_read(str(file))
+    assert "PNG image" in out
+
+
+def test_read_utf16_bom_file_is_text(tmp_path):
+    file = tmp_path / "u16.txt"
+    file.write_bytes("中文内容".encode("utf-16"))
+    assert tool_read(str(file)) == "1:中文内容"
+
+
+def test_read_utf8_text_still_numbered(tmp_path):
+    file = tmp_path / "a.txt"
+    file.write_text("one\ntwo", encoding="utf-8")
+    assert tool_read(str(file)) == "1:one\n2:two"
+
+
 def test_edit_unique(tmp_path):
     file = tmp_path / "a.txt"
     file.write_text("alpha beta alpha gamma", encoding="utf-8")

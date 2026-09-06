@@ -21,21 +21,74 @@ IMAGE_MAX_BYTES = 64 * 1024 * 1024  # refuse to buffer absurd files
 
 
 class ImageRead(str):
-    """Read result for an image file: a plain string summary (renders, saves,
-    truncates like any tool output) that also carries the pixel data URL, so
-    the agent loop can upgrade the tool message to multimodal content."""
+    """Read result carrying attached images: a plain string summary (renders,
+    saves, truncates like any tool output) plus the pixel data URLs, so the
+    agent loop can upgrade the tool message to multimodal content. One URL
+    for an image file; several for a video's keyframes."""
 
-    data_url: str
+    data_urls: list[str]
 
-    def __new__(cls, summary: str, data_url: str):
+    def __new__(cls, summary: str, data_urls: list[str]):
         obj = super().__new__(cls, summary)
-        obj.data_url = data_url
+        obj.data_urls = list(data_urls)
         return obj
+
+    @property
+    def data_url(self) -> str:
+        return self.data_urls[0]
+
+
+def _human_size(n: int) -> str:
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n} bytes"  # unreachable
+
+
+_MAGIC: list[tuple[bytes, str]] = [
+    (b"\x89PNG\r\n\x1a\n", "PNG image"),
+    (b"\xff\xd8\xff", "JPEG image"),
+    (b"GIF8", "GIF image"),
+    (b"%PDF", "PDF document"),
+    (b"PK\x03\x04", "ZIP archive (docx/xlsx/pptx/jar/apk are ZIPs — unzip for the XML)"),
+    (b"\x1f\x8b", "gzip archive"),
+    (b"7z\xbc\xaf\x27\x1c", "7z archive"),
+    (b"Rar!", "RAR archive"),
+    (b"MZ", "Windows executable (PE)"),
+    (b"\x7fELF", "Linux executable (ELF)"),
+    (b"\x1aE\xdf\xa3", "Matroska/WebM video"),
+    (b"OggS", "Ogg media"),
+    (b"fLaC", "FLAC audio"),
+    (b"ID3", "MP3 audio"),
+    (b"SQLite format 3\x00", "SQLite database"),
+]
+
+
+def _sniff(raw: bytes) -> str:
+    if raw[4:8] == b"ftyp":
+        return "MP4/MOV video"
+    if raw[:4] == b"RIFF":
+        return {"WEBP": "WEBP image", "WAVE": "WAV audio"}.get(
+            raw[8:12].decode("latin-1"), "RIFF container"
+        )
+    for magic, label in _MAGIC:
+        if raw.startswith(magic):
+            return label
+    return "unknown binary format"
+
+
+_BINARY_HINT = (
+    "Bytes are not readable as text; do NOT re-read this file as text. "
+    "To extract content use `bash`: write a one-off .py script first (inline "
+    "multi-line `python -c` breaks under cmd.exe quoting), then run it — "
+    "e.g. zipfile for OOXML, pypdf/pdftotext for PDFs, strings for fallbacks."
+)
 
 
 def _read_image(file: Path) -> str:
     """Images ride along as data URLs. The old text path was worse than
-    useless here: errors=\"replace\" mojibake meant the model saw neither the
+    useless here: errors="replace" mojibake meant the model saw neither the
     bytes nor the picture."""
     try:
         raw = file.read_bytes()
@@ -55,7 +108,7 @@ def _read_image(file: Path) -> str:
     return ImageRead(
         f"IMAGE: {file.name} — attached to this result as {mime}, {dims} "
         "(vision models can see it; describe the content directly)",
-        url,
+        [url],
     )
 
 
@@ -126,9 +179,18 @@ def tool_read(path: str) -> str:
             return "ERROR: Images are attached whole — drop the :N line selector"
         return _read_image(file)
     try:
-        content = file.read_text(encoding="utf-8-sig", errors="replace")
+        raw = file.read_bytes()
     except OSError as exc:
         return f"ERROR: {exc}"
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        content = raw.decode("utf-16", errors="replace")  # BOM: real text
+    elif b"\x00" in raw[:8192]:  # git's null-byte heuristic
+        return (
+            f"BINARY: {file.name} — {_human_size(len(raw))}, "
+            f"detected {_sniff(raw)}. {_BINARY_HINT}"
+        )
+    else:
+        content = raw.decode("utf-8-sig", errors="replace")
 
     lines = content.splitlines()
     if selector is not None:

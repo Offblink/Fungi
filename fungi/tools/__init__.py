@@ -10,6 +10,7 @@ import inspect
 from fungi.tools.files import tool_edit, tool_read, tool_write
 from fungi.tools.search import tool_glob, tool_grep
 from fungi.tools.shell import tool_bash
+from fungi.tools.video import tool_video
 from fungi.tools.webtools import tool_web, tool_web_search
 
 
@@ -40,6 +41,17 @@ TOOLS: dict[str, dict] = {
             ["path"],
         ),
         "fn": tool_read,
+    },
+    "video": {
+        "schema": _schema(
+            "video",
+            "Understand a local video file: returns the timestamped transcript, "
+            "scene structure, and keyframe images attached for vision models. "
+            "Requires VidSense (vidsense_dir in config.json).",
+            {"path": {"type": "string", "description": "Video file path (mp4/mov/mkv…)"}},
+            ["path"],
+        ),
+        "fn": tool_video,
     },
     "write": {
         "schema": _schema(
