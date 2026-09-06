@@ -1,8 +1,10 @@
 """GUI launcher smoke: three pages construct offscreen; validation logic holds."""
 
 import os
-import pytest
 import time
+import uuid
+
+import pytest
 
 pytest.importorskip("qfluentwidgets", reason="PyQt6-Fluent-Widgets (qfluentwidgets) not installed")
 
@@ -18,8 +20,17 @@ from fungi.gui import FungiGui, valid_host_name
 
 @pytest.fixture(scope="module")
 def window(qapp):  # noqa: ARG001 (Qt app fixture)
+    # Unique pipe name: the user's real running Fungi owns the production
+    # _GUI_IPC pipe (Windows serves clients from the OLDEST same-name server),
+    # so a fixed name makes the second-launch test hit the wrong window.
+    gui._GUI_IPC, _real = "fungi-gui-test-" + uuid.uuid4().hex[:8], gui._GUI_IPC
     win = FungiGui()
     yield win
+    # close() only hides the window: without this the QLocalServer keeps the
+    # fixed _GUI_IPC pipe alive, the NEXT fixture window's listen silently
+    # fails, and the second-launch test talks to a stale unpatched window.
+    win._ipc_server.close()
+    gui._GUI_IPC = _real
     win.close()
 
 

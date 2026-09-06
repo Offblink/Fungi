@@ -308,7 +308,7 @@ function renderTranscript(messages, asks) {
         const argsHtml = args ? ' <code>' + escapeHtml(args.length > 60 ? args.slice(0, 60) + '...' : args) + '</code>' : '';
         d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(tc.function?.name || 'tool') + argsHtml + '</div><div class="tool-result"></div>';
         msgs.appendChild(d);
-        if (tc.function?.name === 'spawn') makeSpawnBlockClickable(d, tc.id);
+        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') makeSpawnBlockClickable(d, tc.id);
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
           const rec = askQueue.shift();
           if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
@@ -631,7 +631,7 @@ function renderTurnLive() {
       const argsHtml = e.args ? ' <code>' + escapeHtml(e.args.length > 60 ? e.args.slice(0, 60) + '...' : e.args) + '</code>' : '';
       d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(e.name) + argsHtml + '</div><div class="tool-result">' + (e.result ? '<pre>' + escapeHtml(e.result) + '</pre>' : '') + '</div>';
       msgs.appendChild(d);
-      if (e.name === 'spawn') makeSpawnBlockClickable(d, e.id);
+      if (e.name === 'spawn' || e.name === 'background') makeSpawnBlockClickable(d, e.id);
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');

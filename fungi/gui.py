@@ -808,7 +808,7 @@ class MobilePage(QWidget):
 
         self.qr_label = QLabel()
         self.qr_label.setAlignment(Qt.AlignCenter)
-        self.qr_label.setMinimumSize(180, 180)
+        self.qr_label.setMinimumSize(260, 260)
         root.addWidget(self.qr_label, 1)
 
         self.url_edit = LineEdit()
@@ -1186,18 +1186,29 @@ class FungiGui(FluentWindow):
         self.mobile_page = MobilePage(self)
         self.cfg_page = ConfigPage(self)
         self.help_page = HelpPage()
-        self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
-        self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
-        self.addSubInterface(self.mobile_page, FluentIcon.QRCODE, "手机端")
-        self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "设置")
+        # Every page rides a scroll area (help-page style): the window keeps
+        # its compact size no matter what each page's content minimum is.
+        self.addSubInterface(self._scroll(self.host_page, "hostScroll"), FluentIcon.HOME, "发起房间")
+        self.addSubInterface(self._scroll(self.join_page, "joinScroll"), FluentIcon.PEOPLE, "加入房间")
+        self.addSubInterface(self._scroll(self.mobile_page, "mobileScroll"), FluentIcon.QRCODE, "手机端")
+        self.addSubInterface(self._scroll(self.cfg_page, "cfgScroll"), FluentIcon.SETTING, "设置")
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
-        self.resize(760, 460)  # compact default; sidebar layout still fits
+        self.resize(840, 540)  # compact default; pages scroll instead of stretching it
         self._tray: _Tray | None = None
         # single-instance IPC: a second launch asks this window to show itself
         QLocalServer.removeServer(_GUI_IPC)  # stale pipe from a hard crash
         self._ipc_server = QLocalServer(self)
         if self._ipc_server.listen(_GUI_IPC):
             self._ipc_server.newConnection.connect(self._on_ipc_connection)
+
+    @staticmethod
+    def _scroll(page, name: str) -> QScrollArea:
+        box = QScrollArea()
+        box.setObjectName(name)
+        box.setWidgetResizable(True)
+        box.setFrameShape(QScrollArea.NoFrame)
+        box.setWidget(page)
+        return box
 
     # ── tray / background lifecycle ──
 
