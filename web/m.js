@@ -667,6 +667,7 @@ function buildActiveAskCard(a, saved) {
 function buildAnsweredAskCard(rec) {
   const card = document.createElement('div');
   card.className = 'msg ask-card answered';
+  if (rec.id) card.dataset.askId = rec.id;
   const qs = rec.questions || [];
   const ans = Array.isArray(rec.answers) ? rec.answers : (rec.answers != null ? [rec.answers] : null);
   card.innerHTML = qs.map((q, qi) => {
@@ -679,7 +680,7 @@ function buildAnsweredAskCard(rec) {
     let row = '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
       + '<div class="ask-options">' + opts + '</div>';
     if (rec.status && rec.status !== 'answered') row += '<div class="ask-a">\u23F3 未回答</div>';
-    else if (isCustom || !labels.length) row += '<div class="ask-a">\u2705 ' + escapeHtml(a) + '</div>';
+    else if (isCustom || !labels.length) row += '<div class="ask-a">' + (a === 'no' ? '\u274C ' : '\u2705 ') + escapeHtml(a) + '</div>';
     return '<div class="ask-block">' + row + '</div>';
   }).join('');
   return card;
@@ -711,12 +712,25 @@ function collectAskAnswers(card) {
    (placeAskCards). Missing either makes cards vanish mid-stream. */
 const pendingAskIds = new Set();
 const pendingAskCards = new Map();
+const resolvedAskCards = new Map(); // answered card asks: verdict stays visible
 function placeAskCards() {
   pendingAskCards.forEach(({ rec, el }) => {
     // A pending ask belongs to the conversation that raised it: inline in the
     // open friend view, otherwise the global banner above the input.
     if (friendView && rec.conv === friendView) {
       msgs.appendChild(el);
+    } else if (el.parentElement !== banner) {
+      banner.appendChild(el);
+    }
+  });
+  resolvedAskCards.forEach(({ rec, el }) => {
+    // Answered cards stay visible the same way until the durable transcript
+    // record (saved by the server) renders — that copy then replaces them.
+    if (friendView && rec.conv === friendView) {
+      if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
+        el.remove();
+        resolvedAskCards.delete(rec.id);
+      } else msgs.appendChild(el);
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
     }
@@ -771,13 +785,21 @@ function answerPendingAsk(a, card, value) {
     body: JSON.stringify({ id: a.id, value }) }).catch(() => {});
   pendingAskIds.delete(a.id);
   pendingAskCards.delete(a.id);
-  const done = document.createElement('div');
-  done.className = 'msg ask-card answered';
-  const verdict = value === 'no' ? '\u274C 已拒绝' : '\u2705 ' + (Array.isArray(value) ? value.join(', ') : value);
-  done.textContent = (a.kind === 'consent' ? 'Consent ' : 'Ask ') + verdict;
-  const finish = () => { card.replaceWith(done); setTimeout(() => done.remove(), 8000); };
-  if (motionOn()) gsap.to(card, { opacity: 0, scale: 0.92, duration: 0.35, ease: 'power2.in', onComplete: finish });
-  else finish();
+  // The verdict stays as a real answered card (same builder as the in-turn
+  // replay path) instead of evaporating after 8 seconds; the server also
+  // files it into the friend transcript so it survives reload.
+  const done = buildAnsweredAskCard({
+    id: a.id,
+    questions: a.questions,
+    answers: Array.isArray(value) ? value : [value],
+    status: 'answered',
+  });
+  const settle = () => {
+    card.replaceWith(done);
+    resolvedAskCards.set(a.id, { rec: a, el: done });
+  };
+  if (motionOn()) gsap.to(card, { opacity: 0, scale: 0.92, duration: 0.35, ease: 'power2.in', onComplete: settle });
+  else settle();
 }
 async function pollPendingAsks() {
   try {
@@ -972,7 +994,23 @@ function openAgentModal(id) {
   const a = agents[id];
   if (!a) return;
   const ov = document.getElementById('agent-modal-overlay');
-  const evs = (a.history || []).slice(-30).map(ev => '<div class="am-ev">' + escapeHtml(evLine(ev)) + '</div>').join('');
+  // text/reasoning deltas arrive one recorded event per sink call; merge
+  // adjacent same-type runs so the modal reads as flowing paragraphs
+  // instead of one word per bordered row.
+  const rows = [];
+  for (const ev of a.history || []) {
+    const c = ev && ev.content;
+    const last = rows[rows.length - 1];
+    if ((ev.type === 'text' || ev.type === 'reasoning') && last && last.type === ev.type) {
+      last.text += typeof c === 'string' ? c : (c && (c.text || c.name)) || '';
+    } else {
+      rows.push({ ev, type: ev.type, text: typeof c === 'string' ? c : (c && (c.text || c.name)) || '' });
+    }
+  }
+  const evs = rows.slice(-40).map(r =>
+    '<div class="am-ev">' + escapeHtml(r.type === 'text' || r.type === 'reasoning'
+      ? r.type + ' \u00B7 ' + r.text
+      : evLine(r.ev)) + '</div>').join('');
   ov.innerHTML = '<div id="agent-modal"><div class="agent-modal-head"><h3>'
     + escapeHtml('L' + (a.layer || '?') + ' · ' + String(a.goal || '').slice(0, 40))
     + '</h3><button id="agent-modal-close">\u2715</button></div>'

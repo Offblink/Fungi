@@ -34,7 +34,7 @@ from .events import Sink
 from .hub.app import Hub
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
-from .protocol import Envelope, parse_addr
+from .protocol import Envelope
 from .server import WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
@@ -44,6 +44,13 @@ MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
 MAX_TRANSCRIPT_MESSAGES = 400  # friend-view transcript cap (messages per peer)
 
+
+
+def _card_conv(src: str) -> str:
+    """Friend conversation an ask envelope belongs to: the envelope src is
+    the raising comm clone ("<host>:comm-<peer>"); its agent suffix names it."""
+    host_part, _, agent_part = str(src).partition(":")
+    return agent_part[len("comm-"):] if agent_part.startswith("comm-") else host_part
 
 
 def _is_consent(body: dict) -> bool:
@@ -545,20 +552,54 @@ class RoomRuntime(WebUIRuntime):
         )
         if card is not None:
             self.room._send_answer(card, value)
+            self._record_card_verdict(card, value)
             return True
         return resolve_ask(ask_id, value)
 
-    def pending_asks(self) -> list[dict]:
-        def conv_of(src: str) -> str:
-            # Envelope src is the raising comm clone ("<host>:comm-<peer>");
-            # its agent suffix names the friend conversation the ask belongs to.
-            host_part, _, agent_part = str(src).partition(":")
-            return agent_part[len("comm-"):] if agent_part.startswith("comm-") else host_part
+    def _record_card_verdict(self, card: Envelope, value) -> None:
+        """Persist a card ask's verdict into the friend conversation it
+        belongs to, so the transcript keeps the decision after reload —
+        same replay path as in-turn inquire records. Cross-host guard asks
+        (conv == our own host) have no local transcript to attach to: the
+        raising turn lives on the remote host."""
+        try:
+            conv = _card_conv(card.src)
+            if conv == self.room.host:
+                return
+            store = self.room._comm_store
+            data = store.load("comm-" + conv) if store is not None else None
+            if not data:
+                return
+            body = card.body
+            questions = body.get("questions")
+            if not isinstance(questions, list) or not questions:
+                questions = [
+                    {"question": body.get("question") or "(ask)", "options": [], "allow_custom": True}
+                ]
+            asks = list(data.get("asks") or [])
+            asks.append(
+                {
+                    "id": card.id,
+                    "questions": questions,
+                    "answers": value if isinstance(value, list) else [value],
+                    "status": "answered",
+                }
+            )
+            store.save(
+                "comm-" + conv,
+                data.get("title") or f"comm: {conv}",
+                data.get("messages") or [],
+                subagents=data.get("subagents") or [],
+                asks=asks[-100:],
+            )
+        except Exception as exc:  # a tracing failure must not break answering
+            self.room.sink.emit("error", f"ask verdict trace: {exc}")
 
+    def pending_asks(self) -> list[dict]:
         out = []
         for card in self.room.cards.pending():
             body = card["body"]
-            conv = conv_of(card["src"])
+            conv = _card_conv(card["src"])
             src = body.get("from") or card["src"]
             questions = body.get("questions")
             if isinstance(questions, list) and questions:

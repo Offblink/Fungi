@@ -712,7 +712,7 @@ function renderTurnLive() {
   msgs.scrollTop = msgs.scrollHeight;
   // Motion: animate only nodes that appeared since the previous streaming
   // re-render — every text chunk rebuilds .live-node, re-animating all of
-  // them would flicker (docs/plan-ux.md contract).
+  // them would flicker (docs/webui-ux.md contract).
   var _live = msgs.querySelectorAll('.live-node');
   if (window.fungiMotion && !window.fungiMotion.reduced) {
     for (var _li = _liveCount; _li < _live.length; _li++) {
@@ -820,6 +820,7 @@ function buildActiveAskCard(a, saved) {
 function buildAnsweredAskCard(rec) {
   const card = document.createElement('div');
   card.className = 'msg ask-card answered';
+  if (rec.id) card.dataset.askId = rec.id;
   const qs = rec.questions || [];
   const ans = Array.isArray(rec.answers) ? rec.answers : (rec.answers != null ? [rec.answers] : null);
   card.innerHTML = qs.map((q, qi) => {
@@ -832,7 +833,7 @@ function buildAnsweredAskCard(rec) {
     let row = '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
       + '<div class="ask-options">' + opts + '</div>';
     if (rec.status && rec.status !== 'answered') row += '<div class="ask-a">\u23F3 No answer</div>';
-    else if (isCustom || !labels.length) row += '<div class="ask-a">\u2705 ' + escapeHtml(a) + '</div>';
+    else if (isCustom || !labels.length) row += '<div class="ask-a">' + (a === 'no' ? '\u274C ' : '\u2705 ') + escapeHtml(a) + '</div>';
     return '<div class="ask-block">' + row + '</div>';
   }).join('');
   return card;
@@ -869,9 +870,12 @@ function renderArchivedAsk(rec) {
 /* ---------- pending card asks (consent / cross-host asks, out-of-band) ---------- */
 const pendingAskIds = new Set();
 const pendingAskCards = new Map(); // ask id -> {rec, el} while the card is live
+const resolvedAskCards = new Map(); // answered card asks: verdict stays visible
 function placeAskCards() {
   // A pending ask belongs to the conversation that raised it: inline in the
-  // matching open friend view, otherwise the global banner.
+  // matching open friend view, otherwise the global banner. Answered cards
+  // follow the same rule until the durable transcript record (saved by the
+  // server) renders — that copy then replaces the floating one.
   const banner = document.getElementById('asks-banner');
   pendingAskCards.forEach(({ rec, el }) => {
     if (friendView && rec.conv === friendView) {
@@ -880,6 +884,16 @@ function placeAskCards() {
     } else if (el.parentElement !== banner) {
       banner.appendChild(el);
       window.fungiMotion?.askCardIn?.(el);
+    }
+  });
+  resolvedAskCards.forEach(({ rec, el }) => {
+    if (friendView && rec.conv === friendView) {
+      if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
+        el.remove();
+        resolvedAskCards.delete(rec.id);
+      } else msgs.appendChild(el);
+    } else if (el.parentElement !== banner) {
+      banner.appendChild(el);
     }
   });
 }
@@ -938,21 +952,25 @@ function answerPendingAsk(a, card, value) {
     body: JSON.stringify({ id: a.id, value }) }).catch(() => {});
   pendingAskIds.delete(a.id);
   pendingAskCards.delete(a.id);
-  const done = document.createElement('div');
-  done.className = 'msg ask-card answered';
-  const verdict = value === 'no' ? '\u274C denied'
-    : '\u2705 ' + (Array.isArray(value) ? value.join(', ') : value);
-  done.textContent = (a.kind === 'consent' ? 'Consent ' : 'Ask ') + verdict;
-  const M = window.fungiMotion;
-  const finish = () => {
+  // The verdict stays as a real answered card (same builder as the in-turn
+  // replay path) instead of evaporating after 8 seconds; the server also
+  // files it into the friend transcript so it survives reload.
+  const done = buildAnsweredAskCard({
+    id: a.id,
+    questions: a.questions,
+    answers: Array.isArray(value) ? value : [value],
+    status: 'answered',
+  });
+  const settle = () => {
     card.replaceWith(done);
-    setTimeout(() => done.remove(), 8000);
+    resolvedAskCards.set(a.id, { rec: a, el: done });
   };
+  const M = window.fungiMotion;
   if (M && !M.reduced && M.askResolved) {
     const ok = value !== 'no';
     M.askResolved(card, ok);
-    setTimeout(finish, 1000); // let the stamp read before collapsing
-  } else finish();
+    setTimeout(settle, 1000); // let the stamp read before collapsing
+  } else settle();
 }
 async function pollPendingAsks() {
   try {

@@ -113,6 +113,51 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
     assert room.hub.asks.get(ask.id)["status"] == "answered"
 
 
+def test_answered_card_verdict_persists_to_comm_transcript(server_room):
+    """A card ask's verdict must be filed into the friend conversation it
+    belongs to, so the transcript keeps the decision after reload (the
+    WebUI answered card would otherwise evaporate with the page)."""
+    room = server_room
+    room._comm_store.save("comm-selftest", "comm: selftest", [{"role": "user", "content": "hi"}])
+    ask = _send_ask(
+        room.hub,
+        "alpha:comm-selftest",
+        "alpha:local",
+        {"question": "Allow write on homes/alpha/x?", "from": "alpha:comm-selftest"},
+    )
+    assert _wait(room.cards.pending), "ask envelope never became a card"
+    runtime: RoomRuntime = room.webui_runtime()
+    assert runtime.route_answer(ask.id, "yes") is True
+    data = room._comm_store.load("comm-selftest")
+    assert data["asks"] == [
+        {
+            "id": ask.id,
+            "questions": [
+                {"question": "Allow write on homes/alpha/x?", "options": [], "allow_custom": True}
+            ],
+            "answers": ["yes"],
+            "status": "answered",
+        }
+    ]
+
+
+def test_cross_host_card_verdict_has_no_local_transcript(server_room):
+    """Guard asks raised on a remote host (conv == our own host) must not
+    fabricate a local conversation — the raising turn lives elsewhere."""
+    room = server_room
+    room._comm_store.save("comm-beta", "comm: beta", [])
+    ask = _send_ask(
+        room.hub,
+        "beta:comm-alpha",
+        "alpha:local",
+        {"question": "Allow write?", "from": "beta:comm-alpha"},
+    )
+    assert _wait(room.cards.pending), "ask envelope never became a card"
+    runtime: RoomRuntime = room.webui_runtime()
+    assert runtime.route_answer(ask.id, "no") is True
+    assert room._comm_store.load("comm-beta")["asks"] == []
+
+
 def test_room_turn_persists_answered_asks(server_room):
     """Room-mode turns must record completed inquire calls on the agent:
     the WebUI turn runner saves that bucket, and sessions replay answered
