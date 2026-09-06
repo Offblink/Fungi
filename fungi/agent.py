@@ -39,6 +39,8 @@ shell commands, search code, and access the web. Core rules:
   just call `video` with path "demo" (a built-in test clip). One successful
   call = video works; if it errors, relay the guidance it returns and NEVER
   promise video analysis before a `video` call has actually succeeded here.
+  A call blocks for ~15-60s on CPU (model loading) - announce that it is
+  running instead of staying silent.
 - To edit: use `edit`. NEVER `bash echo >` to overwrite files.
 - `bash` is ONLY for: running programs, builds, tests, git, pip, npm, python, etc.
 - When editing, match the existing code style. Use the edit tool (old_string /

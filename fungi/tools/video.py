@@ -200,6 +200,10 @@ def tool_video(path: str) -> str:
             shutil.copyfile(video, work)
         env = dict(os.environ)
         env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # GFW: model HEAD checks must not hit huggingface.co
+        if all(_models_ready().values()):
+            # weights are fully cached; skipping the mirror's HEAD checks cuts
+            # model load from minutes to seconds on CN networks (measured 150s -> 15s)
+            env["HF_HUB_OFFLINE"] = "1"
         env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
         try:
             proc = subprocess.run(
