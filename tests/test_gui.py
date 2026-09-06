@@ -423,3 +423,107 @@ def test_second_launch_activates_existing_window(window, monkeypatch):
         if calls:
             break
     assert calls
+
+
+def test_config_page_video_models_all_present_disables_download(
+    window, monkeypatch
+):
+    """全都在缓存 -> 按钮禁用, 状态行打勾 (不缺失禁用下载)."""
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
+    )
+    page._check_video_models()
+    assert "✓" in page.video_status.text()
+    assert "✗" not in page.video_status.text()
+    assert not page.download_btn.isEnabled()
+
+
+def test_config_page_video_models_missing_enables_download(window, monkeypatch):
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": True}
+    )
+    page._check_video_models()
+    assert "✗" in page.video_status.text() and "CLIP" in page.video_status.text()
+    assert page.download_btn.isEnabled()
+
+
+def test_config_page_download_runs_script_and_rechecks(window, monkeypatch):
+    """点下载 -> Popen 脚本 + 轮询结束后自动复检并恢复按钮可用性。"""
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": False}
+    )
+    monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: False)
+    page._check_video_models()
+
+    spawned = []
+
+    class FakeProc:
+        returncode = 0
+
+        def poll(self):
+            return 0  # "finished" on first tick
+
+    monkeypatch.setattr(
+        gui.subprocess,
+        "Popen",
+        lambda argv, **_kw: spawned.append(argv) or FakeProc(),
+    )
+    page._download_models()
+    assert page._dl_proc is not None and not page.download_btn.isEnabled()
+    assert len(spawned) == 1 and spawned[0][-1].endswith("download_video_models.py")
+
+    # 下载结束后的复检, 两个模型都已就绪
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
+    )
+    page._poll_download()
+    assert page._dl_proc is None
+    assert not page._dl_timer.isActive()
+    assert "✓" in page.video_status.text()
+    assert not page.download_btn.isEnabled()  # 全部就绪 -> 禁用
+
+
+def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
+    """缺 huggingface_hub: 先 pip 装依赖, 成功后自动接下载脚本, 全程一次点击。"""
+    page = window.cfg_page
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": False, "whisper": False}
+    )
+    monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: True)
+
+    spawned = []
+
+    class FakeProc:
+        returncode = 0
+
+        def poll(self):
+            return 0  # 每步首个轮询 tick 即"完成"
+
+    monkeypatch.setattr(
+        gui.subprocess,
+        "Popen",
+        lambda argv, **_kw: spawned.append(argv) or FakeProc(),
+    )
+    page._download_models()
+    assert spawned[0][1:4] == ["-m", "pip", "install"] and "huggingface_hub" in spawned[0]
+    assert "依赖" in page.video_status.text()
+    page._poll_download()  # 依赖装完 -> 链到模型下载
+    assert len(spawned) == 2 and spawned[1][-1].endswith("download_video_models.py")
+    assert "视频模型" in page.video_status.text()
+    monkeypatch.setattr(
+        "fungi.gui._models_ready", lambda: {"CLIP": True, "whisper": True}
+    )
+    page._poll_download()  # 模型下完 -> 复检就绪并禁用按钮
+    assert not page._dl_timer.isActive()
+    assert not page.download_btn.isEnabled()
+
+
+def test_config_page_frozen_exe_falls_back_to_path_python(monkeypatch):
+    """exe 冻结态没有内嵌解释器, 落到系统 PATH 上的 python。"""
+    monkeypatch.setattr(gui.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(gui.shutil, "which", lambda _name: "C:/Python/python.exe")
+    page_gui = gui.ConfigPage.__new__(gui.ConfigPage)  # 不触 Qt: 只测纯函数
+    assert page_gui._python_cmd() == "C:/Python/python.exe"

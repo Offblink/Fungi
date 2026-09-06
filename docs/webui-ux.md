@@ -301,3 +301,13 @@ agent 气泡轨道漂移 + 进度环。
 ## 真机首扫反馈修复（2026-09-06 晚）
 
 手机扫码后弹「链接已失效」遮罩。根因**不是 token 不一致**（GUI 二维码与 `~/.fungi/webui_token` 同源，房间 Token 与 WebUI t= 是两回事，GUI 已加说明文字），而是：`m.html` 引用的 `/m.css`、`/m.js`、`/vendor/*` 是写死路径无法带 token，手机（非 loopback）全部 403 → CSS 丢失使遮罩失去 `display:none` 直接露出、JS 丢失页面死掉。修复：静态壳资源（页面/css/js/vendor）豁免门禁——壳里没有数据，无 token 打开 `/m` 时 m.js 正常运行并显示有样式的重扫码遮罩；数据端点保持全门禁；`/vendor/..` 穿越仍 403。同时：marked 从 jsdelivr CDN vendor 化到 `/vendor/marked.min.js`（国内手机网络 CDN 不可达会让 m.js 首行 ReferenceError 全页死掉，桌面 index.html 一并改本地）；遮罩改为默认可见、有 token 才隐藏（JS 挂掉也显示有意义提示）；连接被手机 reset 的 10054 噪音 traceback 由 `WebUIServer.handle_error` 吞掉。
+
+## 视频模型门控（2026-09-06 深夜）
+
+用户诉求："不要在要用的时候才下载"。三层落地，VidSense 仓库保持原生：
+
+1. **`fungi/tools/video.py`**：`_model_cached(repo_id, filenames)` 查 HF hub 缓存（`HF_HUB_CACHE` 或 `~/.cache/huggingface/hub` 的 `models--<org>--<name>/snapshots/<rev>/<file>`，≥50MB 尺寸阈值防半截文件）；`_models_ready()` 返回 `{CLIP: bool, whisper: bool}`（CLIP=`openai/clip-vit-base-patch32` 的 model.safetensors|pytorch_model.bin，whisper=`Systran/faster-whisper-small` 的 model.bin）。`tool_video` 缺模型 → 返回 ERROR + 指引 `python scripts/download_video_models.py`，绝不现场下载。
+2. **`scripts/download_video_models.py`**：独立下载脚本，`HF_ENDPOINT` 默认 hf-mirror.com；用 `list_repo_files` 选定唯一 torch 权重文件再 `snapshot_download(allow_patterns=...)`（CLIP 仓库另有 tf/flax 权重 ~1.8GB，不加筛选会全拉）。缺 huggingface_hub 时 try-import 守卫打印 `pip install huggingface_hub` 后 exit 1。
+3. **GUI `ConfigPage`**：视频模型状态行（进场 + showEvent 自动检查，无需手点）+「下载缺失模型」按钮——**不缺失即禁用**。点击后阶段链执行：缺 `huggingface_hub`（`find_spec` 预检，零导入成本）→ 先 `pip install huggingface_hub`；再跑下载脚本；QTimer 1s 轮询子进程（不用 Signal 传参），每步成功自动接下一步、全部完成后自动复检并 InfoBar 提示。冻结 exe 无内嵌解释器 → `_python_cmd()` 落到系统 PATH 的 python；找不到则状态行提示装 Python。子进程 `CREATE_NEW_CONSOLE`，exe（--noconsole）下也会弹独立控制台显示进度。
+
+测试：`tests/test_video_tool.py`（fixture 打桩 `_models_ready`；缺模型拒绝 + 指引用例；`_model_cached` 快照布局/尺寸阈值/缺失根目录单测）+ `tests/test_gui.py`（双模型齐→按钮禁用；缺→启用；缺依赖→先 pip 后脚本的阶段链；exe 冻结态解释器回退）。

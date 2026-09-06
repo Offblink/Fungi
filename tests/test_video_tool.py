@@ -9,6 +9,7 @@ import pytest
 from fungi.agent import _tool_content
 from fungi.config import Config
 from fungi.tools import dispatch, tool_defs
+from fungi.tools import video as video_mod
 from fungi.tools.files import ImageRead
 from fungi.tools.video import tool_video
 
@@ -56,6 +57,12 @@ def vidsense_env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "fungi.tools.video.load_config",
         lambda: Config(api_key="k", endpoint="e", model="m", vidsense_dir=str(root)),
+    )
+    # these tests fake a working VidSense checkout; pretend the HF weights are
+    # already cached (dedicated tests below cover the missing-model gate)
+    monkeypatch.setattr(
+        "fungi.tools.video._models_ready",
+        lambda: {"CLIP": True, "whisper": True},
     )
 
     def fake_extract(video_path, timestamps, out_dir):
@@ -177,3 +184,34 @@ def test_video_registered_and_dispatchable():
     names = {d["function"]["name"] for d in tool_defs()}
     assert "video" in names
     assert dispatch("video", {}).startswith("ERROR: Missing required argument")
+
+
+def test_video_missing_model_refuses_and_points_to_downloader(
+    vidsense_env, monkeypatch
+):
+    """The tool never downloads on demand: missing weights -> guidance ERROR."""
+    _root, video = vidsense_env
+    monkeypatch.setattr(
+        "fungi.tools.video._models_ready", lambda: {"CLIP": True, "whisper": False}
+    )
+    out = tool_video(str(video))
+    assert out.startswith("ERROR: video model(s) missing")
+    assert "download_video_models.py" in out and "whisper" in out
+
+
+def test_model_cached_reads_hf_snapshot_layout(tmp_path, monkeypatch):
+    """Cache check: env-driven root, models--*--* snapshot dirs, size floor."""
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path))
+    monkeypatch.setattr(video_mod, "_MODEL_MIN_BYTES", 8)
+    slug = "models--openai--clip-vit-base-patch32"
+    snap = tmp_path / slug / "snapshots" / "abc123"
+    snap.mkdir(parents=True)
+    assert not video_mod._model_cached("openai/clip-vit-base-patch32", ("model.safetensors",))
+    (snap / "model.safetensors").write_bytes(b"x" * 16)
+    assert video_mod._model_cached("openai/clip-vit-base-patch32", ("model.safetensors",))
+    # below the size floor (truncated download) -> treated as missing
+    (snap / "model.safetensors").write_bytes(b"x" * 4)
+    assert not video_mod._model_cached("openai/clip-vit-base-patch32", ("model.safetensors",))
+    # absent cache root -> missing, never raises
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "nope"))
+    assert not video_mod._model_cached("openai/clip-vit-base-patch32", ("model.safetensors",))

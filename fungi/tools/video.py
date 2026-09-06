@@ -32,6 +32,50 @@ _NOT_CONFIGURED = (
     "opencv-python in Fungi's Python."
 )
 
+# HF models the local pipeline needs. The tool never downloads on demand;
+# scripts/download_video_models.py pre-seeds the cache (via hf-mirror.com).
+_VIDEO_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
+    # label -> (repo_id, weight-file candidates; first fully-present wins)
+    "CLIP": ("openai/clip-vit-base-patch32", ("model.safetensors", "pytorch_model.bin")),
+    "whisper": ("Systran/faster-whisper-small", ("model.bin",)),
+}
+# Snapshot files are pointers into blobs/; anything materially below the real
+# weight size means a truncated/interrupted download.
+_MODEL_MIN_BYTES = 50 * 1024 * 1024
+
+
+def _hub_cache_root() -> Path:
+    """huggingface_hub's cache resolution, without importing it."""
+    hub = os.environ.get("HF_HUB_CACHE")
+    if hub:
+        return Path(hub)
+    hf_home = os.environ.get("HF_HOME") or str(Path.home() / ".cache" / "huggingface")
+    return Path(hf_home) / "hub"
+
+
+def _model_cached(repo_id: str, filenames: tuple[str, ...]) -> bool:
+    """True when one candidate weight file is fully present in the HF hub
+    cache (models--<org>--<name>/snapshots/<rev>/<file>, >= 50 MB)."""
+    snapshots = _hub_cache_root() / ("models--" + repo_id.replace("/", "--")) / "snapshots"
+    try:
+        entries = list(snapshots.iterdir())
+    except OSError:
+        return False
+    for snap in entries:
+        for name in filenames:
+            try:
+                if (snap / name).stat().st_size >= _MODEL_MIN_BYTES:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _models_ready() -> dict[str, bool]:
+    return {
+        label: _model_cached(repo, files) for label, (repo, files) in _VIDEO_MODELS.items()
+    }
+
 
 def _vidsense_root() -> Path | None:
     """Explicit config wins; otherwise well-known layouts. The dev checkout
@@ -55,6 +99,14 @@ def tool_video(path: str) -> str:
     root = _vidsense_root()
     if not root:
         return _NOT_CONFIGURED
+    missing = [label for label, ok in _models_ready().items() if not ok]
+    if missing:
+        return (
+            "ERROR: video model(s) missing from the HF cache: "
+            + ", ".join(missing)
+            + ". Run `python scripts/download_video_models.py` in Fungi's root "
+            "(downloads via hf-mirror.com); the tool never downloads on demand."
+        )
     video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
     if not video.is_file():       # subprocess runs with cwd=vidsense_dir
         return f"ERROR: File not found: {video}"

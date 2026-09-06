@@ -11,11 +11,14 @@ same range for a hub that accepts the token (wrong-token hubs are skipped).
 Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
+import importlib.util
 import io
 import os
 import re
 import secrets
+import shutil
 import socket
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -63,6 +66,7 @@ from .config import (
     save_config,
 )
 from .protocol import valid_host_name
+from .tools.video import _models_ready
 from .tray import make_icon
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
@@ -858,6 +862,14 @@ class MobilePage(QWidget):
         )
 
 
+def _hf_hub_missing() -> bool:
+    """True when Fungi's Python lacks huggingface_hub (download deps)."""
+    try:
+        return importlib.util.find_spec("huggingface_hub") is None
+    except (ImportError, ValueError):  # broken/partial installs
+        return True
+
+
 class ConfigPage(QWidget):
     """模型配置：迁移自 WebUI 的配置弹窗（api_key / endpoint / model）。"""
 
@@ -892,6 +904,15 @@ class ConfigPage(QWidget):
         self.save_btn.clicked.connect(self._save)
         root.addWidget(self.save_btn)
 
+        # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("视频模型（VidSense）"))
+        self.video_status = BodyLabel()
+        self.video_status.setWordWrap(True)
+        root.addWidget(self.video_status)
+        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
+        self.download_btn.clicked.connect(self._download_models)
+        root.addWidget(self.download_btn)
         root.addStretch(1)
         self.status = BodyLabel()
         self.status.setWordWrap(True)
@@ -900,6 +921,107 @@ class ConfigPage(QWidget):
         for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
             edit.textChanged.connect(self._refresh_status)
         self._refresh_status()
+
+        # 视频模型状态轮询：下载子进程退出后自动复检（不用 Signal 传参）
+        self._dl_proc: subprocess.Popen | None = None
+        self._dl_steps: list[tuple[str, list[str]]] = []
+        self._dl_stage = ""
+        self._dl_timer = QTimer(self)
+        self._dl_timer.setInterval(1000)
+        self._dl_timer.timeout.connect(self._poll_download)
+        self._check_video_models()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().showEvent(event)
+        # 模型可能在别处（命令行）补装了；下载中则保持进度文案不动
+        if self._dl_proc is None:
+            self._check_video_models()
+
+    def _check_video_models(self) -> None:
+        try:
+            ready = _models_ready()
+        except OSError as exc:
+            self.video_status.setText(f"视频模型状态检查失败：{exc}")
+            self.download_btn.setEnabled(False)
+            return
+        marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
+        missing = [name for name, ok in ready.items() if not ok]
+        if missing:
+            self.video_status.setText(
+                f"{marks} — 缺 {'、'.join(missing)}，缺失时 video 工具会拒绝执行"
+            )
+        else:
+            self.video_status.setText(f"{marks} — 已就绪，video 工具可用")
+        # 不缺失即禁用下载；下载进行中也不允许重复点
+        self.download_btn.setEnabled(bool(missing) and self._dl_proc is None)
+
+    def _python_cmd(self) -> str | None:
+        """Interpreter for helper subprocesses: Fungi's own Python in dev;
+        frozen exe has none, fall back to a system Python on PATH."""
+        if not getattr(sys, "frozen", False):
+            return sys.executable
+        return shutil.which("python")
+
+    def _download_models(self) -> None:
+        if self._dl_proc is not None:
+            return
+        py = self._python_cmd()
+        if py is None:
+            self.video_status.setText(
+                "未找到系统 Python（exe 模式需先安装 Python 并加入 PATH）"
+            )
+            return
+        script = PROJECT_ROOT / "scripts" / "download_video_models.py"
+        if not script.is_file():
+            self.video_status.setText(
+                "下载脚本缺失（scripts/download_video_models.py），请手动预装模型。"
+            )
+            return
+        # 阶段链：缺 huggingface_hub 就先自动装依赖，再下模型
+        self._dl_steps: list[tuple[str, list[str]]] = []
+        if _hf_hub_missing():
+            self._dl_steps.append(
+                ("依赖 huggingface_hub", [py, "-m", "pip", "install", "huggingface_hub"])
+            )
+        self._dl_steps.append(("视频模型", [py, str(script)]))
+        self._start_next_dl_step()
+
+    def _start_next_dl_step(self) -> None:
+        stage, cmd = self._dl_steps.pop(0)
+        self._dl_stage = stage
+        try:
+            self._dl_proc = subprocess.Popen(
+                cmd,
+                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+            )
+        except OSError as exc:
+            self.video_status.setText(f"下载启动失败：{exc}")
+            self._dl_proc = None
+            return
+        self._check_video_models()  # 先禁用按钮, 再写进度文案(复检会覆写状态行)
+        self.video_status.setText(f"正在下载{stage}…（进度见弹出的控制台，完成后自动复检）")
+        self._dl_timer.start()
+
+    def _poll_download(self) -> None:
+        if self._dl_proc is None or self._dl_proc.poll() is None:
+            return
+        code = self._dl_proc.returncode
+        self._dl_proc = None
+        if code == 0 and self._dl_steps:
+            self._start_next_dl_step()  # 依赖装完 -> 接着下模型
+            return
+        self._dl_timer.stop()
+        self._check_video_models()
+        if code == 0:
+            InfoBar.success(
+                "下载完成", "视频模型已就绪", duration=2500, parent=self.window_ref
+            )
+        else:
+            InfoBar.error(
+                "下载失败", f"「{self._dl_stage}」步骤退出码 {code}，详见其控制台窗口",
+                duration=4000, parent=self.window_ref,
+            )
+
 
     def _refresh_status(self) -> None:
         cfg = load_config()
