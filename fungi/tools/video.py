@@ -1,11 +1,12 @@
 """Video understanding via an optional VidSense checkout (subprocess, isolated).
 
-VidSense runs its LOCAL pipeline only (--no-api): ffmpeg/ffprobe extract,
-faster-whisper transcript, CLIP scenes/MMR keyframes -> event card JSON +
-keyframe JPEGs. The final understanding is done by Fungi's own model: the
-tool result carries the timestamped transcript plus keyframe pixels (via
-ImageRead), so a vision LLM sees both axes. No second API key, no DeepSeek
-round-trip.
+VidSense runs its LOCAL pipeline only (--no-api, stock behavior): ffmpeg/ffprobe
+extract, faster-whisper transcript, CLIP scenes/MMR keyframes -> event card
+JSON. The final understanding is done by Fungi's own model: the tool result
+carries the timestamped transcript plus keyframe pixels (via ImageRead), so a
+vision LLM sees both axes. No second API key, no DeepSeek round-trip, and no
+VidSense-side modifications — keyframes are re-extracted here with ffmpeg,
+which VidSense already requires.
 """
 
 import base64
@@ -13,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from ..config import load_config
@@ -24,7 +26,7 @@ _MAX_KEYFRAMES = 12  # mirror vidsense API_MAX_KEYFRAMES; tokens are not free
 
 _NOT_CONFIGURED = (
     'ERROR: VidSense is not configured — set "vidsense_dir" in config.json to a '
-    "VidSense checkout (needs ffmpeg on PATH + torch, transformers, "
+    "VidSense checkout (needs ffmpeg/ffprobe on PATH + torch, transformers, "
     "faster-whisper, opencv-python installed in Fungi's Python)."
 )
 
@@ -43,7 +45,7 @@ def tool_video(path: str) -> str:
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "vidsense.cli", str(video), "--no-api", "--save-frames"],
+            [sys.executable, "-m", "vidsense.cli", str(video), "--no-api"],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -65,10 +67,35 @@ def tool_video(path: str) -> str:
         card = json.loads(card_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return f"ERROR: VidSense ran but its event card is unreadable ({exc})"
-    return _render(card, root / "output" / "frames" / video.stem, video.name)
+
+    keyframes = card.get("keyframes", [])[:_MAX_KEYFRAMES]
+    with tempfile.TemporaryDirectory(prefix="fungi-video-") as tmp:
+        frames = _extract_keyframes(video, [k.get("t", 0.0) for k in keyframes], Path(tmp))
+        return _render(card, frames, video.name)
 
 
-def _render(card: dict, keyframe_dir: Path, name: str) -> str:
+def _extract_keyframes(video: Path, timestamps: list[float], out_dir: Path) -> list[Path]:
+    """Grab one JPEG per keyframe timestamp with ffmpeg (fast seek). VidSense
+    keeps frames in memory only, so we re-extract them here — keeps the
+    VidSense checkout untouched."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for i, t in enumerate(timestamps):
+        dest = out_dir / f"kf{i:02d}.jpg"
+        try:
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{t:.2f}",
+                 "-i", str(video), "-frames:v", "1", "-q:v", "3", str(dest)],
+                capture_output=True, timeout=120, check=True,
+            )
+        except (subprocess.SubprocessError, OSError):
+            paths.append(None)  # type: ignore[list-item]
+        else:
+            paths.append(dest)
+    return paths
+
+
+def _render(card: dict, frame_paths: list[Path | None], name: str) -> str:
     """Event card -> compact grounding text + keyframe pixels attached."""
     lines = [
         f"VIDEO: {name} — {card.get('duration', 0):.0f}s, "
@@ -90,12 +117,11 @@ def _render(card: dict, keyframe_dir: Path, name: str) -> str:
         )
 
     urls: list[str] = []
-    for kf in card.get("keyframes", [])[:_MAX_KEYFRAMES]:
-        matches = sorted(keyframe_dir.glob(f"kf{kf.get('id', 0):02d}_*.jpg"))
-        if not matches:
+    for p in frame_paths:
+        if p is None:
             continue
         try:
-            raw = matches[0].read_bytes()
+            raw = p.read_bytes()
         except OSError:
             continue
         urls.append("data:image/jpeg;base64," + base64.b64encode(raw).decode())

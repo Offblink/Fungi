@@ -39,10 +39,6 @@ FAKE_CLI = textwrap.dedent("""
     video = Path([a for a in args if not a.startswith("-")][0])
     jdir = Path("output/json"); jdir.mkdir(parents=True, exist_ok=True)
     (jdir / f"{video.stem}_eventcard.json").write_text(json.dumps(CARD), encoding="utf-8")
-    if "--save-frames" in args:
-        fdir = Path("output/frames") / video.stem; fdir.mkdir(parents=True, exist_ok=True)
-        for kid, t in ((0, 2.0), (1, 9.0)):
-            (fdir / f"kf{kid:02d}_{t:08.2f}.jpg").write_bytes(b"fakejpeg%d" % kid)
     print("ok")
 """)
 
@@ -61,6 +57,17 @@ def vidsense_env(tmp_path, monkeypatch):
         "fungi.tools.video.load_config",
         lambda: Config(api_key="k", endpoint="e", model="m", vidsense_dir=str(root)),
     )
+
+    def fake_extract(video_path, timestamps, out_dir):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for i, _t in enumerate(timestamps):
+            dest = out_dir / f"kf{i:02d}.jpg"
+            dest.write_bytes(b"fakejpeg%d" % i)
+            paths.append(dest)
+        return paths
+
+    monkeypatch.setattr("fungi.tools.video._extract_keyframes", fake_extract)
     return root, video
 
 
