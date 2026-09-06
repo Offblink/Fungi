@@ -1,4 +1,4 @@
-"""Fungi GUI launcher: four pages — 发起房间 / 加入房间 / 模型配置 / 帮助.
+"""Fungi GUI launcher: five pages — 发起房间 / 加入房间 / 手机端 / 模型配置 / 帮助.
 
 Entry: ``python start.py`` (or ``python -m fungi --gui``). The GUI hosts the
 room IN-PROCESS (hub/clones/poller run on daemon threads; closing the window
@@ -11,6 +11,7 @@ same range for a hub that accepts the token (wrong-token hubs are skipped).
 Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
+import io
 import os
 import re
 import secrets
@@ -18,15 +19,17 @@ import socket
 import sys
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 from PyQt5.QtCore import QSettings, QSharedMemory, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QCursor, QGuiApplication, QKeySequence
+from PyQt5.QtGui import QCursor, QGuiApplication, QKeySequence, QPixmap
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QScrollArea,
     QShortcut,
@@ -767,6 +770,89 @@ class JoinPage(QWidget):
         )
 
 
+class MobilePage(QWidget):
+    """手机端：房间启动后生成移动版 WebUI 的局域网二维码，手机扫码即用。"""
+
+    def __init__(self, window):
+        super().__init__()
+        self.window_ref = window
+        self.setObjectName("mobilePage")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(12)
+
+        hint = BodyLabel(
+            "发起或加入房间后，用手机相机扫码即可在手机上打开移动版 WebUI。\n"
+            "手机连不上时检查 Windows 防火墙（公用网络常拦 Python 入站）；"
+            "换网络后点「刷新二维码」。"
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        self.qr_label = QLabel()
+        self.qr_label.setAlignment(Qt.AlignCenter)
+        self.qr_label.setMinimumSize(260, 260)
+        root.addWidget(self.qr_label, 1)
+
+        self.url_edit = LineEdit()
+        self.url_edit.setReadOnly(True)
+        copy_btn = _copy_button()
+        copy_btn.clicked.connect(
+            lambda: _copy(self.url_edit.text(), self.window_ref, "手机端地址")
+        )
+        root.addWidget(_row("手机端地址", self.url_edit, copy_btn))
+
+        self.refresh_btn = PushButton(FluentIcon.SYNC, "刷新二维码")
+        self.refresh_btn.clicked.connect(self.refresh)
+        root.addWidget(self.refresh_btn)
+
+        self.refresh()
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().showEvent(event)
+        # The room may have started (or left) since the last visit.
+        self.refresh()
+
+    def refresh(self) -> None:
+        rooms = self.window_ref.rooms()
+        if not rooms:
+            self.qr_label.setPixmap(QPixmap())
+            self.qr_label.setText(
+                "先在「发起房间」或「加入房间」页启动房间，再回到这里生成二维码。"
+            )
+            self.url_edit.clear()
+            return
+        try:
+            import segno  # noqa: PLC0415 (graceful degrade when not installed)
+
+            from .server import lan_payload  # noqa: PLC0415 (lazy: heavy module)
+        except ImportError as exc:
+            self.qr_label.setPixmap(QPixmap())
+            self.qr_label.setText(f"生成二维码失败：缺少依赖 {exc.name}（pip install segno）")
+            return
+        webui_url = rooms[0].open_webui(open_browser=False)  # "http://localhost:PORT"
+        port = urllib.parse.urlparse(webui_url).port
+        mobile_url = lan_payload(port, loopback=True)["url"]
+        self.url_edit.setText(mobile_url)
+
+        buf = io.BytesIO()
+        segno.make(mobile_url, error="m").save(
+            buf, kind="png", scale=8, border=2, dark="#1f1f1f", light="#ffffff"
+        )
+        pm = QPixmap()
+        pm.loadFromData(buf.getvalue())
+        self.qr_label.setText("")
+        self.qr_label.setPixmap(
+            pm.scaled(
+                self.qr_label.width(),
+                self.qr_label.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
+
+
 class ConfigPage(QWidget):
     """模型配置：迁移自 WebUI 的配置弹窗（api_key / endpoint / model）。"""
 
@@ -845,10 +931,12 @@ class FungiGui(FluentWindow):
         super().__init__()
         self.host_page = HostPage(self)
         self.join_page = JoinPage(self)
+        self.mobile_page = MobilePage(self)
         self.cfg_page = ConfigPage(self)
         self.help_page = HelpPage()
         self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
         self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
+        self.addSubInterface(self.mobile_page, FluentIcon.QRCODE, "手机端")
         self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
         self.setWindowTitle("Fungi")

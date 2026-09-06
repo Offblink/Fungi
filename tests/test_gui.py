@@ -47,6 +47,7 @@ def _fresh_pages(window):
 def test_three_pages_present(window):
     assert window.host_page.objectName() == "hostPage"
     assert window.join_page.objectName() == "joinPage"
+    assert window.mobile_page.objectName() == "mobilePage"
     assert window.cfg_page.objectName() == "configPage"
     # status card hidden until the room is launched
     assert not window.host_page.ip_row.isVisibleTo(window.host_page)
@@ -54,6 +55,32 @@ def test_three_pages_present(window):
     assert window.host_page.ip_row.isVisibleTo(window.host_page)
     assert not window.host_page.start_btn.isEnabled()
     window.host_page._set_started(False)
+
+
+def test_mobile_page_renders_qr_for_running_room(window):
+    from fungi.server import WEBUI_TOKEN
+
+    page = window.mobile_page
+    # no room yet: placeholder text, empty URL field, no QR pixmap
+    assert page.url_edit.text() == ""
+    assert page.qr_label.pixmap() is None or page.qr_label.pixmap().isNull()
+
+    class FakeWebRoom:
+        def open_webui(self, open_browser=True):
+            return "http://localhost:12345"
+
+    window.host_page.room = FakeWebRoom()
+    try:
+        page.refresh()
+        assert page.url_edit.text() == (
+            f"http://{gui.lan_ip()}:12345/m?t={WEBUI_TOKEN}"
+        )
+        pm = page.qr_label.pixmap()
+        assert pm is not None and not pm.isNull()
+    finally:
+        window.host_page.room = None
+        page.refresh()
+    assert page.url_edit.text() == ""
 
 
 def test_host_page_starts_server_in_process(window, monkeypatch):
