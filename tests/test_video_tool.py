@@ -146,6 +146,33 @@ def test_video_surfaces_vidsense_stderr(vidsense_env):
     assert "boom" in out
 
 
+def test_video_cjk_path_runs_on_ascii_copy(vidsense_env, tmp_path, monkeypatch):
+    """ffmpeg fails to decode inputs whose path contains CJK characters on
+    this box: the tool must hand the subprocess an ASCII-named copy while the
+    result still names the original file."""
+    import fungi.tools.video as vt
+
+    _root, video = vidsense_env
+    cjk = tmp_path / "中文视频.mp4"
+    cjk.write_bytes(video.read_bytes())
+    argvs = []
+    real_run = vt.subprocess.run
+
+    def spy(argv, **kw):
+        argvs.append(argv)
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(vt.subprocess, "run", spy)
+    out = tool_video(str(cjk))
+    assert isinstance(out, ImageRead)
+    assert "[    0.0-    5.0] hello world" in out
+    assert "中文视频" in str(out)  # the user-facing name survives the copy
+    assert len(argvs) == 1
+    video_arg = argvs[0][3]
+    assert video_arg.isascii() and video_arg.endswith(".mp4")
+    assert str(cjk) not in video_arg
+
+
 def test_video_registered_and_dispatchable():
     names = {d["function"]["name"] for d in tool_defs()}
     assert "video" in names

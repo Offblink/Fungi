@@ -12,6 +12,7 @@ which VidSense already requires.
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -57,38 +58,45 @@ def tool_video(path: str) -> str:
     video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
     if not video.is_file():       # subprocess runs with cwd=vidsense_dir
         return f"ERROR: File not found: {video}"
-
-    env = dict(os.environ)
-    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # GFW: model HEAD checks must not hit huggingface.co
-    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
-    try:
-        proc = subprocess.run(
-            [sys.executable, "-m", "vidsense.cli", str(video), "--no-api"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_VIDEO_TIMEOUT_S,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return f"ERROR: VidSense timed out after {_VIDEO_TIMEOUT_S:.0f}s"
-    except OSError as exc:
-        return f"ERROR: {exc}"
-    if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip()[-800:]
-        return f"ERROR: VidSense failed:\n{tail}"
-
-    card_path = root / "output" / "json" / f"{video.stem}_eventcard.json"
-    try:
-        card = json.loads(card_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        return f"ERROR: VidSense ran but its event card is unreadable ({exc})"
-
-    keyframes = card.get("keyframes", [])[:_MAX_KEYFRAMES]
     with tempfile.TemporaryDirectory(prefix="fungi-video-") as tmp:
-        frames = _extract_keyframes(video, [k.get("t", 0.0) for k in keyframes], Path(tmp))
+        # ffmpeg on this box fails to decode inputs whose path contains CJK
+        # characters (observed on real runs). VidSense's checkout must stay
+        # native, so hand BOTH its subprocess and our keyframe pass an
+        # ASCII-named copy instead.
+        work = video
+        if not str(video).isascii():
+            work = Path(tmp) / ("video" + (video.suffix.lower() or ".mp4"))
+            shutil.copyfile(video, work)
+        env = dict(os.environ)
+        env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # GFW: model HEAD checks must not hit huggingface.co
+        env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "vidsense.cli", str(work), "--no-api"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=_VIDEO_TIMEOUT_S,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            return f"ERROR: VidSense timed out after {_VIDEO_TIMEOUT_S:.0f}s"
+        except OSError as exc:
+            return f"ERROR: {exc}"
+        if proc.returncode != 0:
+            tail = (proc.stderr or proc.stdout or "").strip()[-800:]
+            return f"ERROR: VidSense failed:\n{tail}"
+
+        card_path = root / "output" / "json" / f"{work.stem}_eventcard.json"
+        try:
+            card = json.loads(card_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return f"ERROR: VidSense ran but its event card is unreadable ({exc})"
+
+        keyframes = card.get("keyframes", [])[:_MAX_KEYFRAMES]
+        frames = _extract_keyframes(work, [k.get("t", 0.0) for k in keyframes], Path(tmp) / "kf")
         return _render(card, frames, video.name)
 
 
