@@ -1220,7 +1220,12 @@ function settleDrag(velSign) {
   const d = drag; drag = null;
   if (!d) return;
   const x = parseFloat(gsap.getProperty(drawer, 'x'));
-  const opened = x > -d.w / 2 || (d.vx || 0) * velSign > 0.35;
+  // Opening still needs the halfway point (or a flick); closing is
+  // symmetric with the drawer-side swipe: ANY leftward displacement or a
+  // fast left flick closes, from wherever the finger started.
+  const opened = d.base === 0
+    ? !(x < 0 || (d.vx || 0) < -0.35)
+    : x > -d.w / 2 || (d.vx || 0) > 0.35;
   applyDrawer(opened);
 }
 function settlePSwipe() {
