@@ -19,7 +19,7 @@ function api(path) {
   if (!TOKEN) return path;
   return path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
 }
-function unauthorized() { document.getElementById('rescan-overlay').classList.add('show'); }
+function unauthorized() { document.getElementById('rescan-overlay').classList.remove('hide'); }
 async function fetchJSON(path, opts) {
   const r = await fetch(api(path), opts);
   if (r.status === 403) { unauthorized(); throw new Error('unauthorized'); }
@@ -960,6 +960,7 @@ document.getElementById('theme-switch').addEventListener('click', () => {
 /* ---------- boot ---------- */
 setBusy(false);
 if (!TOKEN) unauthorized(); // no token in URL or storage: rescan required
+else document.getElementById('rescan-overlay').classList.add('hide'); // valid token: drop the rescan card
 fetchJSON('/model').then(r => r.json()).then(d => { document.getElementById('model-name').textContent = d.model || ''; }).catch(() => {});
 loadSessions().then(() => {
   let saved = null;

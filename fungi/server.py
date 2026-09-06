@@ -10,6 +10,7 @@ card answers back out as answer envelopes.
 import json
 import secrets
 import socket
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,6 +81,11 @@ def lan_payload(port: int, loopback: bool) -> dict:
     return payload
 
 _TAPE_GRACE_S = 60.0  # how long a sealed (done) tape stays for late reattach
+
+
+_STATIC_ROUTES = frozenset(
+    ("/", "/m", "/app.js", "/style.css", "/motion.js", "/m.css", "/m.js")
+)
 
 
 RETRY_STRIP_PREFIXES = ("(LLM error:", "(Hit max tool rounds", "(Aborted")
@@ -294,10 +300,19 @@ class YesSirHandler(BaseHTTPRequestHandler):
             return {}
 
     def _authorized(self) -> bool:
-        """Loopback clients (desktop WebUI, GUI) pass freely; LAN clients must
-        carry the QR token in the query string (?t=...)."""
+        """Loopback clients (desktop WebUI, GUI) pass freely. LAN clients must
+        carry the QR token for every data route. Static shell assets (page,
+        css, js) stay open: they carry no data, their sub-resource URLs cannot
+        append ?t=, and a phone opening /m without a valid token then gets a
+        working page whose m.js shows the rescan overlay — not a broken
+        half-styled one."""
         if self.client_address[0] in ("127.0.0.1", "::1"):
             return True
+        route = urlparse(self.path).path
+        if route in _STATIC_ROUTES:
+            return True
+        if route.startswith("/vendor/") and "/" not in route[8:] and ".." not in route:
+            return True  # flat vendor dir; same guard as the route itself
         q = parse_qs(urlparse(self.path).query)
         return (q.get("t") or [""])[0] == WEBUI_TOKEN
 
@@ -689,3 +704,22 @@ def run_server(port: int | None = None, runtime: WebUIRuntime | None = None) -> 
         pass
     finally:
         server.server_close()
+
+
+class WebUIServer(ThreadingHTTPServer):
+    """Mobile browsers open speculative connections and reset them constantly;
+    those are noise, not errors — don't dump a traceback per reset."""
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(
+            exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, TimeoutError)
+        ):
+            return
+        super().handle_error(request, client_address)
+
+
+def make_webui_server(port: int | None, runtime: WebUIRuntime) -> WebUIServer:
+    """Build (not start) the WebUI server; room mode embeds this in-process."""
+    handler = type("BoundHandler", (YesSirHandler,), {"runtime": runtime})
+    return WebUIServer(("0.0.0.0", _free_port(port)), handler)

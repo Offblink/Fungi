@@ -87,3 +87,7 @@
 - **验证中抓到并修复的既有 bug**（2eeeac7）：磁带 60s grace-pop 按会话 id 无世代 pop——上一回合 done 后 60s 内同会话开新回合，新回合运行中磁带被弹掉，刷新重连拿到裸 done 静默丢失直播视图（桌面同样中招）。修复：pop 按磁带对象身份校验；grace 提为 `_TAPE_GRACE_S` 供测试。
 - **前端坑**：scroll-bottom 按钮必须放在 `#messages` 外层（全量重绘 innerHTML='' 会销毁它，桌面靠 `if (!b) return` 掩盖成功能缺失而非崩溃；移动端曾因此 TypeError 吞掉 reattach）。
 - **验证**：280 tests 全绿（+7）；门控 harness + browser-act 实测 token 门禁（LAN 无 token 403 / 带 token 200 / loopback 免检）、抽屉合成触摸手势开合、流式回合、done 落点、中途刷新重连接续、agent 气泡+模态。真机手机扫码待用户实测（Windows 防火墙可能需放行 Python 入站）。
+
+## 真机首扫反馈修复（2026-09-06 晚）
+
+手机扫码后弹「链接已失效」遮罩。根因**不是 token 不一致**（GUI 二维码与 `~/.fungi/webui_token` 同源，房间 Token 与 WebUI t= 是两回事，GUI 已加说明文字），而是：`m.html` 引用的 `/m.css`、`/m.js`、`/vendor/*` 是写死路径无法带 token，手机（非 loopback）全部 403 → CSS 丢失使遮罩失去 `display:none` 直接露出、JS 丢失页面死掉。修复：静态壳资源（页面/css/js/vendor）豁免门禁——壳里没有数据，无 token 打开 `/m` 时 m.js 正常运行并显示有样式的重扫码遮罩；数据端点保持全门禁；`/vendor/..` 穿越仍 403。同时：marked 从 jsdelivr CDN vendor 化到 `/vendor/marked.min.js`（国内手机网络 CDN 不可达会让 m.js 首行 ReferenceError 全页死掉，桌面 index.html 一并改本地）；遮罩改为默认可见、有 token 才隐藏（JS 挂掉也显示有意义提示）；连接被手机 reset 的 10054 噪音 traceback 由 `WebUIServer.handle_error` 吞掉。

@@ -1,5 +1,6 @@
-"""WebUI LAN gate: loopback passes, non-loopback needs the QR token; /lan
-hands out the token only to loopback callers."""
+"""WebUI LAN gate: loopback passes, non-loopback needs the QR token; the
+static shell (page/css/js) is exempt; /lan hands out the token only to
+loopback callers."""
 
 import json
 import threading
@@ -37,6 +38,21 @@ def test_lan_client_with_qr_token_passes():
             _fake_handler("192.168.1.7", f"/sessions?t={WEBUI_TOKEN}")
         )
         is True
+    )
+
+
+def test_static_shell_is_open_to_lan_clients():
+    """The page/css/js shell carries no data and its sub-resource URLs cannot
+    append ?t= — a phone must be able to load them without a token (then m.js
+    shows the rescan overlay when the token is missing or wrong)."""
+    for path in ("/m", "/m.css", "/m.js", "/app.js", "/vendor/gsap.min.js"):
+        assert YesSirHandler._authorized(_fake_handler("192.168.1.7", path)) is True
+
+
+def test_vendor_traversal_is_not_exempt():
+    assert (
+        YesSirHandler._authorized(_fake_handler("192.168.1.7", "/vendor/../secret.txt"))
+        is False
     )
 
 
