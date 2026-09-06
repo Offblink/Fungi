@@ -1036,3 +1036,65 @@ def test_background_spawn_report_reactivates_session(tmp_path):
         server.shutdown()
         server.server_close()
         room.stop()
+
+def test_stop_discards_pending_reports_and_aborts_running_spawn(tmp_path):
+    """Stop means stop: /stop clears the pending registry (no 3s-later
+    re-activation with a [background report]) and a still-running background
+    child finishes as aborted without re-adding itself."""
+    import threading
+    import urllib.request
+
+    from fungi.llm import LLMResult
+    from fungi.server import _PENDING_SPAWNS
+
+    child_started = threading.Event()
+    child_go = threading.Event()
+
+    def routed_llm(messages, _tools):
+        first_user = next((m["content"] for m in messages if m["role"] == "user"), "")
+        if first_user.startswith("## Goal"):
+            child_started.set()
+            child_go.wait(timeout=15)  # hold the child until the test stops it
+            return LLMResult(content="42")
+        return LLMResult(tool_calls=[{
+            "id": "t1",
+            "type": "function",
+            "function": {
+                "name": "spawn",
+                "arguments": json.dumps({"goal": "count slowly", "reply_format": "a number"}),
+            },
+        }])
+
+    room = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "data",
+        llm=routed_llm, rules_path=tmp_path / "rules.json",
+    )
+    room.start()
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        body = _post(port, "/chat", {"message": "fan out", "sessionId": None}).read().decode("utf-8")
+        sid = next(
+            json.loads(line)["content"]
+            for line in body.splitlines()
+            if line and json.loads(line)["type"] == "sessionId"
+        )
+        assert child_started.wait(timeout=10), "background child never started"
+
+        stop_body = _post(port, "/stop", {"sessionId": sid}).read().decode("utf-8")
+        assert json.loads(stop_body)["ok"] is True
+
+        child_go.set()  # let the child finish; it must NOT re-add itself
+        assert _wait(lambda: not _PENDING_SPAWNS.get(sid)), \
+            "aborted background spawn re-registered itself after /stop"
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/spawn-pending?sessionId={sid}", timeout=10
+        ) as resp:
+            assert json.loads(resp.read())["pending"] == 0
+
+        resume_body = _post(port, "/resume", {"sessionId": sid}).read().decode("utf-8")
+        assert '"injected": 0' in resume_body  # nothing left to re-activate
+    finally:
+        server.shutdown()
+        server.server_close()
+        room.stop()

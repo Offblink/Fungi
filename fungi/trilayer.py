@@ -331,6 +331,17 @@ class TriLayer:
         except Exception as exc:  # a crashed child must not kill the session
             answer = f"FAIL: subagent crashed: {exc}"
             status = "failed"
+        if self._should_abort is not None and self._should_abort():
+            # The turn was stopped while this child ran: mark it and do NOT
+            # re-activate the session — /stop cleared the pending registry,
+            # a resurrecting report would undo the stop from the user's view.
+            status = "aborted"
+            record["answer"] = answer
+            with contextlib.suppress(Exception):  # stream may already be closed
+                self.sink.emit("agent_status", {"id": spec.id, "status": status})
+            with self._lock:
+                self._active -= 1
+            return
         record["status"] = status
         record["answer"] = answer
         with contextlib.suppress(Exception):  # parent turn's HTTP stream may be closed

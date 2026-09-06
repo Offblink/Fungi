@@ -484,6 +484,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
             with _TURNS_LOCK:
                 events = _ACTIVE_TURNS.pop(sid, set())
                 bg = _BG_ABORTS.pop(sid, None)
+                # Stop means stop: undelivered background reports must not
+                # auto-reactivate the session 3s later (frontend resume poll).
+                _PENDING_SPAWNS.pop(sid, None)
             for event in events:
                 event.set()
             if bg is not None:
