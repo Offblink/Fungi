@@ -54,11 +54,12 @@ def tool_video(path: str) -> str:
     root = _vidsense_root()
     if not root:
         return _NOT_CONFIGURED
-    video = Path(path)
-    if not video.is_file():
+    video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
+    if not video.is_file():       # subprocess runs with cwd=vidsense_dir
         return f"ERROR: File not found: {video}"
 
     env = dict(os.environ)
+    env.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # GFW: model HEAD checks must not hit huggingface.co
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
     try:
         proc = subprocess.run(
