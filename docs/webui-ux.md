@@ -311,3 +311,9 @@ agent 气泡轨道漂移 + 进度环。
 3. **GUI `ConfigPage`**：状态行显示全部 8 项 ✓/✗（进场 + showEvent 自动检查）+「下载缺失模型」按钮——**仅当存在可自愈缺失（依赖/模型）时启用**；torch/ffmpeg 等缺失只提示手动装。点击 = 阶段链：缺 huggingface_hub → 先 `pip install huggingface_hub` → 再跑下载脚本；QTimer 1s 轮询（不用 Signal 传参），每步成功自动接下一步、完成后自动复检。**坑：`_check_video_models` 会覆写状态行——`_start_next_dl_step` 必须先 check 再写进度文案**。冻结 exe：`_python_cmd()` 落 `shutil.which("python")`。子进程 CREATE_NEW_CONSOLE（exe --noconsole 也会弹控制台）。
 
 测试：`tests/test_video_tool.py`（fixture 打桩 `_video_ready` 为 `_ALL_READY`；可自愈缺失指引用例；torch/ffmpeg 缺失 → 手动安装提示用例；`_model_cached` 布局/阈值单测）+ `tests/test_gui.py`（`_ready(**overrides)` 工厂：全就绪→禁用；CLIP 缺→启用；仅 hub 缺→启用（可自愈）；仅 torch/ffmpeg 缺→禁用+手动提示；缺依赖先 pip 后脚本的阶段链；exe 解释器回退）。
+
+## background 工具与 Bg 气泡（2026-09-06 深夜）
+
+`background` 工具：一条命令丢后台直跑（工作线程 + bash abort，无子代理、零 LLM 调用），`dispatched (id=...)` 即回，输出经 `[background report]` 回传再激活。前端右上角气泡显示 **Bg**（spawn 仍显示 L2/L3），点开看命令与输出。
+
+气泡生命周期补丁：后台任务完成时的 `agent_status` 原本发往已关闭的派发回合流（被 suppress），前端永远收不到 done——`/resume` 回合现在重发各项最终状态；/stop 杀掉的残跑气泡由前端在 `done (aborted)` 时统一置为 stopped 并移除（桌面与手机端同构）。

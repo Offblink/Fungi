@@ -270,7 +270,8 @@ HELP_SECTIONS = [
      "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
      "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"
      "clone 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，内置 "
-     "VidSense 管线）——手机上把文件传上来即可。"),
+     "VidSense 管线）、用 background 工具把慢命令丢后台跑（完成后自动回"
+     "传结果）——手机上把文件传上来即可。"),
     ("手机端",
      "「手机端」页扫码即用：聊天区右划任意位置开抽屉（会话列表/好友视图），"
      "📎 把手机文件上传到电脑 inbox；输入框留空时发送键变重试（↻），"
@@ -1191,8 +1192,7 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self.mobile_page, FluentIcon.QRCODE, "手机端")
         self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "设置")
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
-        self.setWindowTitle("Fungi")
-        self.resize(900, 560)  # sidebar layout needs a little width for the nav
+        self.resize(760, 460)  # compact default; sidebar layout still fits
         self._tray: _Tray | None = None
         # single-instance IPC: a second launch asks this window to show itself
         QLocalServer.removeServer(_GUI_IPC)  # stale pipe from a hard crash

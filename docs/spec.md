@@ -81,7 +81,7 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.1 通讯 clone
 
-- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`confirm(host, action, path, reason)`、`inquire(...)`、spawn。
+- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`confirm(host, action, path, reason)`、`inquire(...)`、spawn、background（后台直跑命令，报告异步回传）。
 - 路径守卫：`public/` 自由；`homes/<owner>/` 非属主需 consent（confirm 发往属主 host 的 local clone）；`homes/<own>/` 与自身会话目录需自身用户 consent；`sessions/` 拒绝。
 - 自主交流：对位通讯 clone 之间 chat/task 自由往来，无需用户参与；涉及 `public/` 之外的文件操作才触发 consent。
 
