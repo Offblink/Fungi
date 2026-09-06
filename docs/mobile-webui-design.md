@@ -76,3 +76,14 @@
 - Windows 防火墙拦入站 → GUI 页提示 + 文档记录；真机联调时实测。
 - iOS Safari 长按选择/橡皮筋滚动与手势冲突 → `touch-action` 与 `user-select` 按区域控制。
 - `_TURN_TAPES` 内存上限未实测（既有已知项），移动端长时间挂后台重连会加重它——不在本切片解决，记录观察。
+
+## 实施结果（2026-09-06，HEAD f6cf578+）
+
+全部切片已交付：25b7a37（server 门禁+lan+m 路由）、5ea6c57（GUI MobilePage+segno）、2eeeac7（磁带 bug 修复）、f6cf578（移动端前端）、后续好友/agent tray commit。
+
+- **好友视图**：抽屉内「好友」分组（/peers 5s 轮询）；点开 = 只读 comm-log + 顶栏「←」返回 + 权限分段控件（允许/询问，POST /consent-mode）。
+- **agent tray**：agent_spawn/status/event → 输入区上方横向气泡（状态色点）；点开底部模态看 goal/status/最近 30 条事件。
+- **文件上传取消**：桌面的「选择文件」调 /pickfile（服务端 tkinter 对话框选**电脑**文件），手机触发会在电脑上弹窗，语义不成立；跨主机传文件走 hub transfer（agent 工具），不经过 WebUI。移动端不设文件入口。
+- **验证中抓到并修复的既有 bug**（2eeeac7）：磁带 60s grace-pop 按会话 id 无世代 pop——上一回合 done 后 60s 内同会话开新回合，新回合运行中磁带被弹掉，刷新重连拿到裸 done 静默丢失直播视图（桌面同样中招）。修复：pop 按磁带对象身份校验；grace 提为 `_TAPE_GRACE_S` 供测试。
+- **前端坑**：scroll-bottom 按钮必须放在 `#messages` 外层（全量重绘 innerHTML='' 会销毁它，桌面靠 `if (!b) return` 掩盖成功能缺失而非崩溃；移动端曾因此 TypeError 吞掉 reattach）。
+- **验证**：280 tests 全绿（+7）；门控 harness + browser-act 实测 token 门禁（LAN 无 token 403 / 带 token 200 / loopback 免检）、抽屉合成触摸手势开合、流式回合、done 落点、中途刷新重连接续、agent 气泡+模态。真机手机扫码待用户实测（Windows 防火墙可能需放行 Python 入站）。

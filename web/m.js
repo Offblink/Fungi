@@ -108,7 +108,8 @@ async function closeCurrentSession() {
   loadSessions();
 }
 async function switchSession(id) {
-  if (id === currentSessionId) { closeDrawer(); return; }
+  if (id === currentSessionId && !friendView) { closeDrawer(); return; }
+  leaveFriendView();
   await closeCurrentSession();
   sessionDirty = false;
   try {
@@ -129,6 +130,7 @@ async function switchSession(id) {
 async function newSession() {
   // Focus any untouched "(new session)" instead of littering the list.
   const empty = allSessions.find(s => s.title === '(new session)' && (s.msgCount || 0) <= 1 && !s.running);
+  leaveFriendView();
   if (empty) {
     if (empty.id !== currentSessionId) await switchSession(empty.id);
     closeDrawer();
@@ -363,7 +365,7 @@ async function pumpStream(url, body, method = 'POST') {
 function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
-  const visible = currentSessionId === t.sessionId;
+  const visible = currentSessionId === t.sessionId && !friendView;
   switch (obj.type) {
     case 'text': {
       const last = t.entries[t.entries.length - 1];
@@ -404,9 +406,21 @@ function handleTurnEvent(obj) {
       }
       break;
     }
-    /* agent_* events: tray is desktop-only for now; data is kept in the tape
-       and rendered from the disk copy after done. */
-    case 'agent_spawn': case 'agent_status': case 'agent_event': break;
+    case 'agent_spawn':
+      agents[obj.content.id] = {
+        layer: obj.content.layer, goal: obj.content.goal,
+        replyFormat: obj.content.reply_format || '', status: 'running', history: [],
+      };
+      if (obj.content.call_id) specByCall[obj.content.call_id] = obj.content.id;
+      agentBubble(obj.content.id);
+      break;
+    case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
+    case 'agent_event': {
+      const aid = obj.content.id, ev = obj.content.event;
+      if (agents[aid]) agents[aid].history.push(ev);
+      agentEvent(aid, ev);
+      break;
+    }
     case 'ask':
       t.entries.filter(x => x.kind === 'ask').forEach(a => a.active = false);
       t.entries.push({ kind: 'ask', id: obj.content.id, questions: obj.content.questions || [], answers: null, active: true });
@@ -457,7 +471,7 @@ function updateLastReasoning() {
   else renderTurnLive();
 }
 function renderTurnLive() {
-  if (!turn || turn.sessionId !== currentSessionId) return;
+  if (!turn || turn.sessionId !== currentSessionId || friendView) return;
   const saved = saveAskCardState();
   msgs.querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText && !turn.userRendered) {
@@ -596,8 +610,14 @@ function collectAskAnswers(card) {
 const pendingAskIds = new Set();
 const pendingAskCards = new Map();
 function placeAskCards() {
-  pendingAskCards.forEach(({ el }) => {
-    if (el.parentElement !== banner) banner.appendChild(el);
+  pendingAskCards.forEach(({ rec, el }) => {
+    // A pending ask belongs to the conversation that raised it: inline in the
+    // open friend view, otherwise the global banner above the input.
+    if (friendView && rec.conv === friendView) {
+      msgs.appendChild(el);
+    } else if (el.parentElement !== banner) {
+      banner.appendChild(el);
+    }
   });
 }
 function buildPendingAskCard(a) {
@@ -671,6 +691,171 @@ async function pollPendingAsks() {
   } catch (e) {}
 }
 setInterval(pollPendingAsks, 3000);
+
+/* ---------- friends: room members + read-only comm clone conversations ---------- */
+let friendView = null;   // host name while viewing a friend conversation
+let allPeers = [];       // [{name, display}]
+let lastFriendPayload = null; // rendered /comm-log JSON: skip no-change repaints
+
+function peerName(p) { return typeof p === 'string' ? p : (p && p.name) || ''; }
+function peerDisplay(p) { return typeof p === 'string' ? p : ((p && p.display) || peerName(p)); }
+function displayOf(host) {
+  for (const p of allPeers) if (peerName(p) === host) return peerDisplay(p);
+  return host;
+}
+
+function leaveFriendView() {
+  const wasViewing = friendView !== null;
+  friendView = null;
+  lastFriendPayload = null;
+  document.getElementById('input-area').style.display = '';
+  document.getElementById('friend-bar').classList.add('hidden');
+  document.getElementById('btn-back').hidden = true;
+  renderFriendList();
+  if (wasViewing) {
+    // openFriendChat wiped the message area without touching session state:
+    // re-render the session that was on screen.
+    msgs.innerHTML = '';
+    if (currentSessionId) reloadSessionFromServer();
+  }
+}
+
+async function loadPeers() {
+  try {
+    const r = await fetchJSON('/peers');
+    if (!r.ok) return;
+    const d = await r.json();
+    allPeers = d.peers || [];
+    document.getElementById('friends-count').textContent = allPeers.length ? '(' + allPeers.length + ')' : '';
+    document.getElementById('friends-empty').style.display = allPeers.length ? 'none' : '';
+    renderFriendList();
+    if (friendView) refreshFriendChat();
+  } catch (e) {}
+}
+
+function renderFriendList() {
+  const list = document.getElementById('friend-list');
+  list.querySelectorAll('.friend-row').forEach(r => r.remove());
+  allPeers.forEach(p => {
+    const name = peerName(p);
+    const row = document.createElement('div');
+    row.className = 'friend-row' + (name === friendView ? ' active' : '');
+    row.innerHTML = '<span class="friend-dot"></span><span>' + escapeHtml(peerDisplay(p)) + '</span>';
+    row.addEventListener('click', () => { openFriendChat(name); closeDrawer(); });
+    list.appendChild(row);
+  });
+}
+
+async function openFriendChat(host) {
+  leaveFriendView();
+  friendView = host;
+  lastFriendPayload = null;
+  msgs.innerHTML = '';
+  document.getElementById('input-area').style.display = 'none';
+  document.getElementById('btn-back').hidden = false;
+  document.getElementById('friend-bar').classList.remove('hidden');
+  document.getElementById('session-title').textContent = '@' + displayOf(host) + ' · 只读';
+  renderFriendList();
+  try {
+    const cm = await (await fetchJSON('/consent-mode?host=' + encodeURIComponent(host))).json();
+    setConsentSeg(cm.mode || 'ask');
+  } catch (e) { setConsentSeg('ask'); }
+  await refreshFriendChat();
+}
+
+function setConsentSeg(mode) {
+  document.querySelectorAll('#consent-seg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.v === mode));
+}
+document.querySelectorAll('#consent-seg button').forEach(b => {
+  b.addEventListener('click', () => {
+    if (!friendView) return;
+    setConsentSeg(b.dataset.v);
+    fetch(api('/consent-mode'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host: friendView, mode: b.dataset.v }) }).catch(() => {});
+  });
+});
+
+async function refreshFriendChat() {
+  const host = friendView;
+  if (!host) return;
+  try {
+    const r = await fetchJSON('/comm-log?host=' + encodeURIComponent(host));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (friendView !== host) return; // raced a switch away: never paint here
+    const payload = JSON.stringify(d);
+    if (payload === lastFriendPayload) return; // unchanged: no flicker
+    lastFriendPayload = payload;
+    renderFriendChat(d);
+  } catch (e) {}
+}
+
+/* Friend view renders the comm clone's transcript exactly like a local
+   session, plus file-transfer envelope events that never produce turns. */
+function renderFriendChat(d) {
+  msgs.innerHTML = '';
+  const messages = d.messages || [];
+  const events = d.events || [];
+  if (!messages.length && !events.length) {
+    addDiv('friend-event', '<i>还没有和该好友的 clone 对话记录。</i>');
+    return;
+  }
+  renderTranscript(messages, d.asks || []);
+  events.forEach(row => {
+    if (row.kind === 'transfer')
+      addDiv('msg friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+    else if (row.kind === 'task')
+      addDiv('msg friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+    else if (row.kind === 'result')
+      addDiv('msg friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+  });
+  placeAskCards(); // re-seat pending asks after the transcript repaint
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+/* ---------- agent tray (live subagent bubbles + bottom-sheet replay) ---------- */
+const agents = {};         // live spec id -> {layer, goal, replyFormat, status, history}
+const specByCall = {};     // live tool_call id -> spec id
+
+function agentBubble(id) {
+  const tray = document.getElementById('agent-tray');
+  let el = tray.querySelector('[data-agent="' + id + '"]');
+  if (el) return el;
+  el = document.createElement('div');
+  el.className = 'agent-bubble';
+  el.dataset.agent = id;
+  el.dataset.st = 'running';
+  el.innerHTML = '<span class="st"></span><span class="nm">' + escapeHtml(agents[id].goal.slice(0, 24)) + '</span>';
+  el.addEventListener('click', () => openAgentModal(id));
+  tray.appendChild(el);
+  if (motionOn()) gsap.from(el, { opacity: 0, y: 10, duration: 0.3, ease: 'power3.out', clearProps: 'all' });
+  return el;
+}
+function setAgentStatus(id, st) {
+  if (!agents[id]) return;
+  agents[id].status = st;
+  const el = agentBubble(id);
+  el.dataset.st = st;
+  if (st !== 'running') setTimeout(() => el.remove(), 12000); // finished: fade out of the tray
+}
+function agentEvent(id, ev) {
+  const el = document.getElementById('agent-tray').querySelector('[data-agent="' + id + '"]');
+  if (el && ev && ev.kind) el.querySelector('.nm').textContent = String(ev.text || ev.kind).slice(0, 24);
+}
+function openAgentModal(id) {
+  const a = agents[id];
+  if (!a) return;
+  const ov = document.getElementById('agent-modal-overlay');
+  const evs = (a.history || []).slice(-30).map(ev =>
+    '<div class="am-ev">' + escapeHtml((ev.kind || '?') + ' · ' + String(ev.text || '').slice(0, 300)) + '</div>').join('');
+  ov.innerHTML = '<div id="agent-modal"><h3>' + escapeHtml(a.layer || 'subagent') + '</h3>'
+    + '<div class="am-goal">' + escapeHtml(a.goal) + '</div>'
+    + '<div class="am-status">' + escapeHtml(a.status) + (a.replyFormat ? ' · 回复格式: ' + escapeHtml(a.replyFormat) : '') + '</div>'
+    + (evs || '<div class="am-ev">（暂无事件）</div>') + '</div>';
+  ov.classList.add('show');
+  ov.onclick = e => { if (e.target === ov) { ov.classList.remove('show'); ov.innerHTML = ''; } };
+}
 
 /* ---------- drawer gestures (right-swipe open, left-swipe close) ---------- */
 const drawer = document.getElementById('drawer'), scrim = document.getElementById('drawer-scrim');
@@ -755,6 +940,7 @@ drawer.addEventListener('touchend', () => {
 /* ---------- wiring ---------- */
 document.getElementById('btn-new-session').addEventListener('click', newSession);
 document.getElementById('session-filter').addEventListener('input', renderSessionList);
+document.getElementById('btn-back').addEventListener('click', leaveFriendView);
 btn.addEventListener('click', send);
 function autoGrow() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px'; }
 input.addEventListener('input', autoGrow);
@@ -782,3 +968,5 @@ loadSessions().then(() => {
   else renderSessionList();
 });
 pollPendingAsks();
+loadPeers();
+setInterval(loadPeers, 5000);
