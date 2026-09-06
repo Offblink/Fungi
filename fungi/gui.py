@@ -795,6 +795,9 @@ class MobilePage(QWidget):
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(12)
 
+        title = SubtitleLabel("手机端")
+        root.addWidget(title)
+
         hint = BodyLabel(
             "发起或加入房间后，用手机相机扫码即可在手机上打开移动版 WebUI。\n"
             "手机连不上时检查 Windows 防火墙（公用网络常拦 Python 入站）；换网络后点「刷新二维码」。"
