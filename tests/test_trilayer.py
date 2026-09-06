@@ -2,13 +2,21 @@
 
 import json
 import time
+
 import fungi.agent as fungi_agent
 from fungi.agent import Agent
 from fungi.config import Config
 from fungi.events import FnSink
 from fungi.llm import LLMResult
-from fungi.tools import L3_TOOL_NAMES
-from fungi.trilayer import MAX_SPAWNS_PER_TURN, TaskSpec, TriLayer, task_brief
+from fungi.tools import L3_TOOL_NAMES, tool_defs
+from fungi.trilayer import (
+    BACKGROUND_SCHEMA,
+    MAX_SPAWNS_PER_TURN,
+    SPAWN_SCHEMA,
+    TaskSpec,
+    TriLayer,
+    task_brief,
+)
 
 CFG = Config(api_key="k", endpoint="e", model="m")
 
@@ -312,9 +320,28 @@ def test_every_tool_description_is_a_plain_string():
     """A tuple description (trailing comma inside parens) serializes to a JSON
     array, which strict providers (GLM 1210) reject as an invalid parameter -
     the whole turn 400s. Assert the type at the source for every schema."""
-    from fungi.tools import tool_defs
-    from fungi.trilayer import BACKGROUND_SCHEMA, SPAWN_SCHEMA
-
-    schemas = [SPAWN_SCHEMA, BACKGROUND_SCHEMA] + tool_defs()
+    schemas = [SPAWN_SCHEMA, BACKGROUND_SCHEMA, *tool_defs()]
     for s in schemas:
         assert isinstance(s["function"]["description"], str), s["function"]["name"]
+
+
+def test_background_runs_command_directly_without_an_llm():
+    """`background` executes the command on a worker thread - no subagent, no
+    extra LLM round-trips - and reports the output via spawn_done."""
+
+    def counting_llm(_messages, _tools):
+        raise AssertionError("background must not invoke the LLM")
+
+    got: list = []
+    tl = TriLayer(
+        CFG, FnSink(lambda _t, _c: None), llm=counting_llm,
+        spawn_done=lambda rec: got.append(rec),
+    )
+    out = tl.bound_background(1).fn({"command": "echo bg-direct"})
+    assert out.startswith("dispatched (id=")
+    for _ in range(50):
+        if got:
+            break
+        time.sleep(0.2)
+    assert got and got[0]["status"] == "done"
+    assert "bg-direct" in got[0]["answer"]

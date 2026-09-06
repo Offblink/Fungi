@@ -229,34 +229,83 @@ class TriLayer:
     def bound_background(self, parent_layer: int) -> BoundTool:
         """The `background` tool: spawn's async UX with a command-only surface.
 
-        Accepts one shell command, runs it on an L2 task agent (the full async
-        machinery: instant dispatch, [background report] re-activation, /stop
-        kill), and the command's output is the only thing that comes back.
+        Accepts one shell command and runs it DIRECTLY on a worker thread (no
+        subagent, no extra LLM calls). Instant 'dispatched' return, the output
+        comes back via the [background report] re-activation, /stop kills it.
         """
 
         def _run(args: dict, call_id: str | None = None) -> str:
+            from fungi.tools.shell import tool_bash  # noqa: PLC0415 (Qt-free, cheap)
+
             command = str(args.get("command") or "").strip()
             if not command:
                 return "ERROR: Missing required argument: command"
-            cwd = str(args.get("cwd") or "").strip()
-            return self._spawn(
-                {
-                    "goal": (
-                        "Run this exact shell command with your bash tool and report"
-                        f" its output.\ncommand: {command}"
-                        + (f"\nworking directory: {cwd}" if cwd else "")
-                    ),
-                    "reply_format": (
-                        "The command's verbatim terminal output (stdout + stderr);"
-                        " if it failed, the error text and exit code."
-                    ),
-                    "constraints": (
-                        "Run only this command; do not inspect, fix, or extend anything."
-                    ),
-                },
-                parent_layer,
-                call_id,
-                tool="background",
+            cwd = str(args.get("cwd") or "").strip() or None
+
+            with self._lock:
+                if self._active >= MAX_SPAWNS_PER_TURN:
+                    return f"ERROR: background limit reached ({MAX_SPAWNS_PER_TURN} per turn)."
+                self._active += 1
+            record = {
+                "id": uuid.uuid4().hex[:6],
+                "call_id": call_id,
+                "layer": parent_layer + 1,
+                "tool": "background",
+                "goal": command if len(command) <= 200 else command[:200] + "…",
+                "reply_format": "command output",
+                "status": "running",
+                "events": [],
+            }
+            self.subagents[record["id"]] = record
+            with contextlib.suppress(Exception):  # parent stream may be closed
+                self.sink.emit(
+                    "agent_spawn",
+                    {
+                        "id": record["id"],
+                        "call_id": call_id,
+                        "layer": record["layer"],
+                        "tool": "background",
+                        "goal": record["goal"],
+                        "reply_format": "command output",
+                    },
+                )
+                self.sink.emit(
+                    "agent_status", {"id": record["id"], "status": "running"}
+                )
+
+            def _bg() -> None:
+                answer = tool_bash(command, cwd=cwd, should_abort=self._should_abort)
+                status = "failed" if answer.startswith("ERROR:") else "done"
+                if self._should_abort is not None and self._should_abort():
+                    # Stopped while running: mark it, never re-activate (same
+                    # contract as the spawn path - stop means stop).
+                    status = "aborted"
+                record["status"] = status
+                record["answer"] = answer
+                with contextlib.suppress(Exception):
+                    self.sink.emit(
+                        "agent_status", {"id": record["id"], "status": status}
+                    )
+                with self._lock:
+                    self._active -= 1
+                if status != "aborted" and self._spawn_done is not None:
+                    with contextlib.suppress(Exception):
+                        self._spawn_done(
+                            {
+                                "id": record["id"],
+                                "goal": record["goal"],
+                                "status": status,
+                                "answer": answer,
+                            }
+                        )
+
+            threading.Thread(
+                target=_bg, daemon=True, name=f"background-{record['id']}"
+            ).start()
+            return (
+                f"dispatched (id={record['id']}). The command runs in the"
+                " BACKGROUND - do not wait for it and do not run it again; its"
+                " output arrives as the input of a new turn."
             )
 
         return BoundTool(schema=BACKGROUND_SCHEMA, fn=_run, with_call_id=True)
