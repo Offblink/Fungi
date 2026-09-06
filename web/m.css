@@ -123,11 +123,16 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 #friends-empty{padding:14px 16px;color:var(--dim);font-size:0.76rem;text-align:center}
 /* ---- agent tray + modal ---- */
 main{position:relative}
-#agent-tray{position:absolute;top:8px;right:8px;z-index:30;display:flex;flex-direction:column;align-items:flex-end;gap:0.45rem;max-width:72%;padding:0;pointer-events:none}
+#agent-tray{position:absolute;top:8px;right:8px;z-index:30;display:flex;flex-direction:column;align-items:flex-end;gap:0.45rem;padding:0;pointer-events:none}
 #agent-tray .agent-bubble{pointer-events:auto}
 #agent-tray:empty{display:none}
-.agent-bubble{display:flex;align-items:center;gap:0.4rem;background:var(--tool-bg);border:1px solid var(--tool-border);border-radius:999px;padding:0.35rem 0.75rem;font-size:0.72rem;color:var(--tool-accent);cursor:pointer;white-space:nowrap;font-family:var(--mono)}
-.agent-bubble .st{width:7px;height:7px;border-radius:50%;background:#f59e0b;flex-shrink:0}
+.agent-bubble{position:relative;width:40px;height:40px;border-radius:50%;background:var(--surface);border:2px solid var(--tool-accent);display:flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:700;color:var(--text2);cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.15)}
+.agent-bubble .lb{pointer-events:none}
+.agent-bubble .st{position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;background:var(--tool-accent);border:2px solid var(--surface)}
+.agent-bubble[data-st="running"] .st{background:#22c55e;animation:breath 1.4s ease-in-out infinite}
+.agent-bubble[data-st="done"] .st{background:#22c55e}
+.agent-bubble[data-st="failed"] .st{background:#ef4444}
+.agent-bubble[data-st="aborted"] .st{background:#ef4444}
 .agent-bubble[data-st="done"] .st{background:#16a34a}
 .agent-bubble[data-st="error"] .st{background:#dc2626}
 #agent-modal-overlay{display:none;position:fixed;inset:0;z-index:90;background:rgba(10,12,30,0.55);backdrop-filter:blur(6px);align-items:flex-end;justify-content:center}
@@ -175,3 +180,4 @@ html[data-theme="dark"] .ic-sun{display:block}
 
 /* server-injected [background report] user message: a muted system note */
 .msg.sys-note{align-self:center;max-width:94%;background:transparent;color:var(--dim);font-size:0.72rem;font-family:var(--mono);border:1px dashed var(--border);padding:0.45rem 0.7rem;border-radius:var(--radius);white-space:pre-wrap}
+@keyframes breath{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.75)}}

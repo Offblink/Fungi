@@ -1046,7 +1046,9 @@ function agentBubble(id) {
   el.className = 'agent-bubble';
   el.dataset.agent = id;
   el.dataset.st = 'running';
-  el.innerHTML = '<span class="st"></span><span class="nm">' + escapeHtml(agents[id].goal.slice(0, 24)) + '</span>';
+  const a = agents[id];
+  const label = a.tool === 'background' ? 'Bg' : 'L' + (a.layer || 2);
+  el.innerHTML = '<span class="lb">' + label + '</span><span class="st"></span>';
   el.addEventListener('click', () => openAgentModal(id));
   tray.appendChild(el);
   if (motionOn()) gsap.from(el, { opacity: 0, y: 10, duration: 0.3, ease: 'power3.out', clearProps: 'all' });
@@ -1098,7 +1100,7 @@ function openAgentModal(id) {
       ? r.type + ' \u00B7 ' + r.text
       : evLine(r.ev)) + '</div>').join('');
   ov.innerHTML = '<div id="agent-modal"><div class="agent-modal-head"><h3>'
-    + escapeHtml('L' + (a.layer || '?') + ' · ' + String(a.goal || '').slice(0, 40))
+    + escapeHtml((a.tool === 'background' ? 'Bg' : 'L' + (a.layer || '?')) + ' · ' + String(a.goal || '').slice(0, 40))
     + '</h3><button id="agent-modal-close">\u2715</button></div>'
     + '<div class="am-goal">' + escapeHtml(a.goal) + '</div>'
     + '<div class="am-status">' + escapeHtml(a.status) + (a.replyFormat ? ' · 回复格式: ' + escapeHtml(a.replyFormat) : '') + '</div>'
