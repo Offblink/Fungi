@@ -6,6 +6,7 @@ Layer rules (see docs/spec.md 2.3):
 """
 
 import inspect
+from collections.abc import Callable
 
 from fungi.tools.files import tool_edit, tool_read, tool_write
 from fungi.tools.search import tool_glob, tool_grep
@@ -145,7 +146,7 @@ def tool_defs(names: frozenset[str] | set[str] | None = None) -> list[dict]:
     return [TOOLS[name]["schema"] for name in TOOLS if name in selected]
 
 
-def dispatch(name: str, args: dict) -> str:
+def dispatch(name: str, args: dict, should_abort: Callable[[], bool] | None = None) -> str:
     tool = TOOLS.get(name)
     if tool is None:
         return f"ERROR: Unknown tool: {name}"
@@ -154,6 +155,10 @@ def dispatch(name: str, args: dict) -> str:
             return f"ERROR: Missing required argument: {required}"
     accepted = inspect.signature(tool["fn"]).parameters
     kwargs = {k: v for k, v in args.items() if k in accepted}
+    # cooperative cancellation: tools that declare `should_abort` (long-running
+    # ones like video) get the agent's abort predicate injected automatically
+    if should_abort is not None and "should_abort" in accepted:
+        kwargs["should_abort"] = should_abort
     try:
         result = tool["fn"](**kwargs)
     except (OSError, ValueError, TypeError) as exc:

@@ -10,13 +10,17 @@ which VidSense already requires.
 """
 
 import base64
+import contextlib
 import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from ..config import PROJECT_ROOT, load_config
@@ -151,7 +155,9 @@ def _demo_video() -> Path:
     return dest
 
 
-def tool_video(path: str) -> str:
+def tool_video(
+    path: str, should_abort: Callable[[], bool] | None = None
+) -> str | ImageRead:
     """Understand a local video: transcript + scenes + attached keyframes."""
     root = _vidsense_root()
     if not root:
@@ -206,22 +212,56 @@ def tool_video(path: str) -> str:
             env["HF_HUB_OFFLINE"] = "1"
         env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 [sys.executable, "-m", "vidsense.cli", str(work), "--no-api"],
                 cwd=str(root),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
-                timeout=_VIDEO_TIMEOUT_S,
                 env=env,
+                start_new_session=os.name != "nt",  # own group: killpg on abort
             )
-        except subprocess.TimeoutExpired:
-            return f"ERROR: VidSense timed out after {_VIDEO_TIMEOUT_S:.0f}s"
+        except OSError as exc:
+            return f"ERROR: {exc}"
+
+        def _kill_tree() -> None:
+            """VidSense may spawn its own children (ffmpeg); kill the whole tree."""
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        capture_output=True,
+                        timeout=10,
+                    )
+                else:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            with contextlib.suppress(OSError):
+                proc.kill()
+
+        deadline = time.monotonic() + _VIDEO_TIMEOUT_S
+        stdout_data = stderr_data = ""
+        try:
+            while True:
+                # cooperative cancellation: stop takes effect within ~1s, not
+                # after the whole (potentially 30-minute) call
+                if should_abort is not None and should_abort():
+                    _kill_tree()
+                    return "ERROR: cancelled by user"
+                try:
+                    stdout_data, stderr_data = proc.communicate(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() >= deadline:
+                        _kill_tree()
+                        return f"ERROR: VidSense timed out after {_VIDEO_TIMEOUT_S:.0f}s"
         except OSError as exc:
             return f"ERROR: {exc}"
         if proc.returncode != 0:
-            tail = (proc.stderr or proc.stdout or "").strip()[-800:]
+            tail = (stderr_data or stdout_data or "").strip()[-800:]
             return f"ERROR: VidSense failed:\n{tail}"
 
         card_path = root / "output" / "json" / f"{work.stem}_eventcard.json"

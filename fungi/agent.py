@@ -199,10 +199,16 @@ class Agent:
                 return str(bound.fn(args))
             except Exception as exc:
                 return f"ERROR: {exc}"
-        return tools.dispatch(name, args)
+        return tools.dispatch(name, args, should_abort=self._aborted)
 
     def _run_tool_call(self, tc: dict, messages: list[dict]) -> None:
         name = tc["function"]["name"]
+        if self._aborted():  # stop already pressed: don't launch another tool
+            self.sink.emit("tool_result", {"content": "(Aborted)", "id": tc["id"]})
+            messages.append(
+                {"role": "tool", "tool_call_id": tc["id"], "content": "(Aborted)"}
+            )
+            return
         raw_args = tc["function"]["arguments"]
         args, parse_error = parse_tool_args(raw_args)
         self.sink.emit("tool", {"name": name, "args": raw_args, "id": tc["id"]})

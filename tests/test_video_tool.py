@@ -2,6 +2,7 @@
 
 import base64
 import json
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from fungi.agent import _tool_content
 from fungi.config import Config
-from fungi.tools import dispatch, tool_defs
+from fungi.tools import TOOLS, dispatch, tool_defs
 from fungi.tools import video as video_mod
 from fungi.tools.files import ImageRead
 from fungi.tools.video import tool_video
@@ -176,13 +177,13 @@ def test_video_cjk_path_runs_on_ascii_copy(vidsense_env, tmp_path, monkeypatch):
     cjk = tmp_path / "中文视频.mp4"
     cjk.write_bytes(video.read_bytes())
     argvs = []
-    real_run = vt.subprocess.run
+    real_popen = vt.subprocess.Popen
 
     def spy(argv, **kw):
         argvs.append(argv)
-        return real_run(argv, **kw)
+        return real_popen(argv, **kw)
 
-    monkeypatch.setattr(vt.subprocess, "run", spy)
+    monkeypatch.setattr(vt.subprocess, "Popen", spy)
     out = tool_video(str(cjk))
     assert isinstance(out, ImageRead)
     assert "[    0.0-    5.0] hello world" in out
@@ -268,3 +269,95 @@ def test_demo_video_generates_once_then_caches(tmp_path, monkeypatch):
     assert first == second == tmp_path / "data" / "demo_video.mp4"
     assert len(calls) == 1 and calls[0][0] == "C:/ffmpeg/ffmpeg.exe"
     assert any("testsrc2" in a for a in calls[0]) and any("sine" in a for a in calls[0])
+
+
+
+class _FakeVidsenseProc:
+    """Stand-in for BOTH the main VidSense proc (communicate always times out)
+    and the taskkill child that _kill_tree spawns via subprocess.run (run()
+    uses it as a context manager and calls poll() afterwards)."""
+
+    returncode = 0
+
+    def __init__(self, cmd, killed=None):
+        self.pid = 4242
+        self.cmd = cmd
+        self.args = cmd
+        self.killed = killed if killed is not None else []
+        self._main = "taskkill" not in cmd
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def communicate(self, *_args, **_kw):
+        if self._main:
+            raise subprocess.TimeoutExpired(cmd="vidsense", timeout=1)
+        return "", ""
+
+    def poll(self):
+        return 0
+
+    def kill(self):
+        self.killed.append(self.pid)
+
+
+def test_video_cancelled_midrun_kills_process_tree(vidsense_env, monkeypatch):
+    """should_abort -> VidSense subprocess tree killed within a poll tick."""
+    _root, video = vidsense_env
+    spawned = []
+    killed = []
+
+    def fake_popen(cmd, **_kw):
+        spawned.append(cmd)
+        return _FakeVidsenseProc(cmd, killed)
+
+    monkeypatch.setattr("fungi.tools.video.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("fungi.tools.video.time.monotonic", lambda: 0.0)
+    out = tool_video(str(video), should_abort=lambda: True)
+    assert out == "ERROR: cancelled by user"
+    assert spawned[0][1:3] == ["-m", "vidsense.cli"] and killed == [4242]
+
+
+def test_video_still_times_out_when_not_aborted(vidsense_env, monkeypatch):
+    _root, video = vidsense_env
+    ticks = iter([0.0] * 3 + [video_mod._VIDEO_TIMEOUT_S + 1])
+    monkeypatch.setattr("fungi.tools.video.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr(
+        "fungi.tools.video.subprocess.Popen", lambda cmd, **_kw: _FakeVidsenseProc(cmd)
+    )
+    out = tool_video(str(video))
+    assert out.startswith("ERROR: VidSense timed out")
+
+
+
+def test_dispatch_injects_should_abort_only_when_accepted(monkeypatch):
+    """Tools declaring `should_abort` get the predicate; others stay untouched."""
+
+    captured = {}
+
+    def fake_video(path, should_abort=None):
+        captured["abort"] = should_abort
+        captured["path"] = path
+        return "ok"
+
+    monkeypatch.setitem(
+        TOOLS, "video", {"schema": TOOLS["video"]["schema"], "fn": fake_video}
+    )
+    out = dispatch("video", {"path": "x"}, should_abort=lambda: True)
+    assert out == "ok" and captured["abort"]() is True
+
+    captured_plain = {}
+
+    def fake_read(path):
+        captured_plain["called"] = True
+        captured_plain["path"] = path
+        return "text"
+
+    monkeypatch.setitem(
+        TOOLS, "read", {"schema": TOOLS["read"]["schema"], "fn": fake_read}
+    )
+    assert dispatch("read", {"path": "x"}, should_abort=lambda: True) == "text"
+    assert captured_plain == {"called": True, "path": "x"}
