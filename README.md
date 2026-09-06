@@ -19,6 +19,8 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 
 串起来读：**MnemeNet 给了为什么（agent 要延续、要沉淀），Psi 给了多小才够（一晚上读完），YESIR 给了骨架（TriLayer 编排），Face 给了房间长什么样，Around 提醒了别做什么（过度设计），Gasp-Design 给了这一切怎么动。** Fungi 把这些放进一张 LAN 网络：让每台主机上的 Orchestrator 拥有记忆、技能和彼此。
 
+血缘第七个成员不是先行者，是长出来的第一个器官：[VidSense](https://github.com/Offblink/VidSense)。六个先行给了骨相与动相，VidSense 给的是感官——Fungi 的 video 工具经它把一段视频（本地文件或 B站链接）变成「可理解的内容」：faster-whisper 转写 + CLIP 关键帧建立事实依据，再交视觉大模型综合理解。视频理解不靠 Fungi 自己，靠这个亲戚。
+
 几条具体的继承：
 
 - **WebUI 视觉语言一脉相承**：Psi 的 `agent.ps1` 内嵌前端奠定，YESIR 原样复用，Fungi 继续沿用并扩展（好友视图、暗色主题、ask 卡片）。
