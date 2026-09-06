@@ -24,10 +24,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install pytest
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest
+          python -m pip install pytest pillow
 
       # GUI/tray tests call pytest.importorskip on qfluentwidgets/PyQt6, which is
       # not installed here — they skip gracefully; everything else is stdlib.
