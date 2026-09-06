@@ -164,27 +164,37 @@ def tool_video(
         return _NOT_CONFIGURED
     missing = [name for name, ok in _video_ready().items() if not ok]
     if missing:
-        if set(missing) <= _HEALABLE:
-            steps = []
-            if "huggingface_hub" in missing:
-                steps.append("`pip install huggingface_hub`")
+        pip_pkgs = []
+        if "ffmpeg" in missing:
+            pip_pkgs.append("static-ffmpeg")  # ships ffmpeg+ffprobe executables
+        for mod, pkg in (
+            ("huggingface_hub", "huggingface_hub"),
+            ("torch", "torch"),
+            ("transformers", "transformers"),
+            ("faster_whisper", "faster-whisper"),
+            ("opencv", "opencv-python"),
+        ):
+            if mod in missing:
+                pip_pkgs.append(pkg)
+        steps = []
+        if pip_pkgs:
             steps.append(
-                "`python scripts/download_video_models.py` in Fungi's root "
-                "(downloads via hf-mirror.com)"
+                "pip install " + " ".join(pip_pkgs)
+                + " -i https://pypi.tuna.tsinghua.edu.cn/simple"
             )
-            return (
-                "ERROR: video not ready, missing: "
-                + ", ".join(missing)
-                + ". Run "
-                + " and ".join(steps)
-                + " - the GUI download button does both automatically; the tool "
-                "never downloads on demand."
+        if any(m in missing for m in _VIDEO_MODELS):
+            steps.append(
+                "python scripts/download_video_models.py in Fungi's root "
+                "(HF models via hf-mirror.com)"
             )
         return (
-            "ERROR: VidSense runtime components missing: "
-            + ", ".join(missing)
-            + ". Install VidSense's Python deps (torch, transformers, "
-            "faster-whisper, opencv-python) and put ffmpeg/ffprobe on PATH."
+            "ERROR: video not ready, missing: " + ", ".join(missing)
+            + ". Tell the user what is missing and offer to set it up; install "
+            "ONLY after the user agrees (a few GB may be downloaded):\n"
+            + "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))
+            + "\nInstall into the global Python (VidSense runs under Fungi's "
+            "own interpreter), then re-verify with `video` path \"demo\" and "
+            "report the honest result. The tool never downloads on demand."
         )
     if path == "demo":  # built-in self-test clip: one successful call proves
         try:            # the whole pipeline (ffmpeg, VidSense, models, LLM)

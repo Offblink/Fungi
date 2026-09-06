@@ -212,16 +212,21 @@ def test_video_missing_model_refuses_and_points_to_downloader(
     assert "download_video_models.py" in out and "whisper" in out
 
 
-def test_video_missing_non_healable_runtime_reports_manual_install(
+def test_video_missing_non_healable_offers_opt_in_setup_recipe(
     vidsense_env, monkeypatch
 ):
-    """torch/ffmpeg etc. can't be auto-healed: point at VidSense's deps."""
+    """torch/ffmpeg missing: opt-in recipe (user agrees first), pip + mirror,
+    no model-download step when weights are all cached."""
     _root, video = vidsense_env
     ready = dict(_ALL_READY) | {"torch": False, "ffmpeg": False}
     monkeypatch.setattr("fungi.tools.video._video_ready", lambda: ready)
     out = tool_video(str(video))
-    assert out.startswith("ERROR: VidSense runtime components missing")
-    assert "torch" in out and "ffmpeg" in out and "download_video_models" not in out
+    assert out.startswith("ERROR: video not ready, missing: ffmpeg, torch")
+    assert "ONLY after the user agrees" in out          # 不强制装
+    assert "static-ffmpeg" in out                        # ffmpeg 经 pip 配齐
+    assert "tuna.tsinghua.edu.cn" in out                 # 镜像
+    assert "download_video_models" not in out            # 权重都在: 无脚本步骤
+    assert "faster-whisper" not in out                   # 没缺就不装
 
 
 def test_model_cached_reads_hf_snapshot_layout(tmp_path, monkeypatch):
