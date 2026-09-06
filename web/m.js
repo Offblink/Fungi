@@ -48,6 +48,8 @@ function updateScrollBtn() {
   if (!b) return;
   if (isNearBottom(msgs)) b.classList.remove('visible'); else b.classList.add('visible');
 }
+document.getElementById('scroll-bottom').addEventListener('click', () => { msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); });
+msgs.addEventListener('scroll', updateScrollBtn);
 function motionOn() { return window.gsap && !matchMedia('(prefers-reduced-motion: reduce)').matches; }
 function msgIn(node, kind) {
   if (!motionOn()) return;
