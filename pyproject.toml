@@ -43,4 +43,5 @@ testpaths = ["tests"]
 [tool.ruff.lint.per-file-ignores]
 # Chinese UI literals (tray menu / notifications / GUI) are intentional
 "fungi/tray.py" = ["RUF001", "RUF002", "RUF003"]
+"fungi/update.py" = ["RUF001", "RUF002", "RUF003"]
 "fungi/gui.py" = ["RUF001", "RUF002", "RUF003"]

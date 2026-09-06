@@ -1,8 +1,8 @@
 """GUI launcher smoke: three pages construct offscreen; validation logic holds."""
 
 import os
-
 import pytest
+import time
 
 pytest.importorskip("qfluentwidgets", reason="PyQt6-Fluent-Widgets (qfluentwidgets) not installed")
 
@@ -554,3 +554,92 @@ def test_config_page_frozen_exe_falls_back_to_path_python(monkeypatch):
     monkeypatch.setattr(gui.shutil, "which", lambda _name: "C:/Python/python.exe")
     page_gui = gui.ConfigPage.__new__(gui.ConfigPage)  # 不触 Qt: 只测纯函数
     assert page_gui._python_cmd() == "C:/Python/python.exe"
+
+
+def test_config_page_download_btn_hidden_when_nothing_to_heal(window, monkeypatch):
+    """用户定调: 没有可自愈缺失 -> 下载按钮整体隐藏 (不是灰着)。"""
+    page = window.cfg_page
+    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready())
+    page._check_video_models()
+    assert not page.download_btn.isVisibleTo(page)
+    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(torch=False))
+    page._check_video_models()
+    assert not page.download_btn.isVisibleTo(page)  # 不可自愈 -> 也不给按钮
+    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(CLIP=False))
+    page._check_video_models()
+    assert page.download_btn.isVisibleTo(page)  # 有可自愈缺失 -> 出现
+
+
+def _apply_check(window, monkeypatch, status):
+    page = window.cfg_page
+    monkeypatch.setattr("fungi.gui.update.check", lambda: status)
+    page._upd_thread = None
+    page._upd_busy = False
+    page.check_update()
+    for _ in range(300):
+        QApplication.processEvents()
+        if page._upd_thread is None:
+            break
+        time.sleep(0.01)
+    return page
+
+
+def test_config_page_update_button_appears_only_when_behind(window, monkeypatch):
+    """自动检查但绝不自动更新: 落后才亮按钮, 已是最新/出错 -> 没有按钮。"""
+    page = _apply_check(window, monkeypatch, {
+        "mode": "exe", "current": "0.1.1", "latest": "v0.2.0",
+        "behind": True, "asset_url": "https://x/fungi-v0.2.0-windows-x64.zip",
+        "error": None,
+    })
+    assert page.update_btn.isVisibleTo(page)
+    assert "下载并更新" in page.update_btn.text()
+    assert "v0.2.0" in page.update_status.text()
+
+    page = _apply_check(window, monkeypatch, {
+        "mode": "exe", "current": "9.9.9", "latest": "v0.2.0",
+        "behind": False, "asset_url": None, "error": None,
+    })
+    assert not page.update_btn.isVisibleTo(page)
+    assert "已是最新" in page.update_status.text()
+
+
+def test_config_page_update_click_git_mode_pulls(window, monkeypatch):
+    """点按钮才更新: git 模式走 update_source 线程; 拉取后复检回到"已是最新"。"""
+    states = iter([
+        {"mode": "git", "current": "0.1.1", "latest": "v0.2.0",
+         "behind": True, "asset_url": None, "error": None},
+        {"mode": "git", "current": "0.2.0", "latest": "v0.2.0",
+         "behind": False, "asset_url": None, "error": None},
+    ])
+    monkeypatch.setattr("fungi.gui.update.check", lambda: next(states))
+    page = window.cfg_page
+    page._upd_thread = None
+    page._upd_busy = False
+    page.check_update()
+    for _ in range(300):
+        QApplication.processEvents()
+        if page._upd_thread is None:
+            break
+        time.sleep(0.01)
+    assert page.update_btn.isVisibleTo(page)
+
+    pulls = []
+    def fake_pull():
+        pulls.append(1)
+        return True, "fast-forward"
+    monkeypatch.setattr("fungi.gui.update.update_source", fake_pull)
+    page._do_update()
+    assert page._upd_busy
+    for _ in range(300):
+        QApplication.processEvents()
+        if not page._upd_busy:
+            break
+        time.sleep(0.01)
+    for _ in range(300):
+        QApplication.processEvents()
+        if "已是最新" in page.update_status.text():
+            break
+        time.sleep(0.01)
+    assert pulls  # pull 确实跑过
+    assert "已是最新" in page.update_status.text()
+    assert not page.update_btn.isVisibleTo(page)  # 更新完按钮退场

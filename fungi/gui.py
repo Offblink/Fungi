@@ -11,8 +11,10 @@ same range for a hub that accepts the token (wrong-token hubs are skipped).
 Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
+import contextlib
 import io
 import os
+import pathlib
 import re
 import secrets
 import shutil
@@ -23,6 +25,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 
 from PyQt5.QtCore import QSettings, QSharedMemory, Qt, QTimer, pyqtSignal
@@ -57,6 +60,7 @@ from qfluentwidgets import (
 # The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
 # not installed and its import name would clobber this one), so the GUI rides
 # PyQt5; the fluent components are the same library Face uses (same look).
+from . import update
 from .config import (
     DEFAULT_API_KEY,
     DEFAULT_ENDPOINT,
@@ -869,6 +873,10 @@ def _hf_hub_missing() -> bool:
 class ConfigPage(QWidget):
     """模型配置：迁移自 WebUI 的配置弹窗（api_key / endpoint / model）。"""
 
+    update_checked = pyqtSignal(object)
+    update_progress = pyqtSignal(int, int)
+    update_finished = pyqtSignal(object)
+
     def __init__(self, window):
         super().__init__()
         self.window_ref = window
@@ -909,6 +917,17 @@ class ConfigPage(QWidget):
         self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
         self.download_btn.clicked.connect(self._download_models)
         root.addWidget(self.download_btn)
+
+        # 软件更新：自动检查，落后才亮按钮（不自动更新）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("软件更新"))
+        self.update_status = BodyLabel()
+        self.update_status.setWordWrap(True)
+        root.addWidget(self.update_status)
+        self.update_btn = PrimaryPushButton(FluentIcon.SYNC, "下载并更新")
+        self.update_btn.clicked.connect(self._do_update)
+        self.update_btn.hide()
+        root.addWidget(self.update_btn)
         root.addStretch(1)
         self.status = BodyLabel()
         self.status.setWordWrap(True)
@@ -925,20 +944,31 @@ class ConfigPage(QWidget):
         self._dl_timer = QTimer(self)
         self._dl_timer.setInterval(1000)
         self._dl_timer.timeout.connect(self._poll_download)
+        self.update_checked.connect(self._apply_update_status)
+        self.update_progress.connect(self._on_update_progress)
+        self.update_finished.connect(self._on_update_finished)
+        self._upd_thread: threading.Thread | None = None
+        self._upd_busy = False
+        self._upd_status: dict | None = None
+        with contextlib.suppress(Exception):
+            update.cleanup_old_install()  # 上次原地更新留下的 .old（新进程无锁可删）
         self._check_video_models()
+        self.check_update()  # GUI 启动即自动检查，落后才亮按钮
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         super().showEvent(event)
         # 模型可能在别处（命令行）补装了；下载中则保持进度文案不动
         if self._dl_proc is None:
             self._check_video_models()
+        if not self._upd_busy:
+            self.check_update()
 
     def _check_video_models(self) -> None:
         try:
             ready = _video_ready()
         except OSError as exc:
             self.video_status.setText(f"视频模型状态检查失败：{exc}")
-            self.download_btn.setEnabled(False)
+            self.download_btn.hide()
             return
         marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
         missing = [name for name, ok in ready.items() if not ok]
@@ -947,12 +977,13 @@ class ConfigPage(QWidget):
             hint = (
                 "点「下载缺失模型」自动补齐"
                 if healable
-                else "需手动安装 VidSense 依赖（torch/transformers/faster-whisper/opencv、ffmpeg）"
+                else "需手动安装 VidSense 依赖"
             )
             self.video_status.setText(f"{marks}\n缺 {'、'.join(missing)}，{hint}")
         else:
             self.video_status.setText(f"{marks}\n已就绪，video 工具可用")
-        # 只有可自愈缺失（依赖/模型）才给下载；下载进行中不允许重复点
+        # 只有可自愈缺失才亮下载按钮（不需要就没有按钮）；下载进行中禁点
+        self.download_btn.setVisible(bool(healable))
         self.download_btn.setEnabled(bool(healable) and self._dl_proc is None)
 
     def _python_cmd(self) -> str | None:
@@ -1052,6 +1083,97 @@ class ConfigPage(QWidget):
             "已保存", "模型配置已写入 config.json", duration=2500, parent=self.window_ref
         )
 
+    def check_update(self) -> None:
+        """后台线程查 GitHub Releases；结果经信号回 GUI 线程。"""
+        if self._upd_busy or self._upd_thread is not None:
+            return
+        self.update_status.setText("正在检查更新…")
+        self._upd_thread = threading.Thread(target=self._upd_check_worker, daemon=True)
+        self._upd_thread.start()
+
+    def _upd_check_worker(self) -> None:
+        self.update_checked.emit(update.check())
+
+    def _apply_update_status(self, status: dict) -> None:
+        self._upd_thread = None
+        self._upd_status = status
+        self.update_btn.hide()
+        if status.get("error"):
+            self.update_status.setText(status["error"])
+            return
+        cur, latest = status["current"], status["latest"]
+        if not status["behind"]:
+            self.update_status.setText(f"已是最新（v{cur}）")
+            return
+        mode = status["mode"]
+        self.update_btn.setText(
+            "下载并更新" if mode == "exe"
+            else "git 拉取更新" if mode == "git"
+            else "打开下载页"
+        )
+        self.update_status.setText(f"当前 v{cur}，最新 {latest}")
+        self.update_btn.show()
+
+    def _do_update(self) -> None:
+        status = self._upd_status
+        if not status or not status["behind"] or self._upd_busy:
+            return
+        mode = status["mode"]
+        # 无 exe 资产或非冻结环境又没 git：退化为打开 Releases 页
+        if mode == "none" or (mode == "exe" and not status.get("asset_url")):
+            webbrowser.open(update.RELEASES_PAGE)
+            return
+        self._upd_busy = True
+        self.update_btn.setEnabled(False)
+        if mode == "git":
+            self.update_status.setText("正在 git pull --ff-only …")
+            threading.Thread(target=self._upd_git_worker, daemon=True).start()
+        else:
+            self.update_status.setText("正在下载更新包…")
+            threading.Thread(
+                target=self._upd_exe_worker, args=(status["asset_url"],), daemon=True
+            ).start()
+
+    def _upd_git_worker(self) -> None:
+        ok, out = update.update_source()
+        self.update_finished.emit({"mode": "git", "ok": ok, "out": out})
+
+    def _upd_exe_worker(self, asset_url: str) -> None:
+        try:
+            exe = update.update_exe(
+                asset_url,
+                progress=lambda done, total: self.update_progress.emit(done, total),
+            )
+        except Exception as exc:  # 网络/磁盘/坏 zip——都不能带崩 GUI
+            self.update_finished.emit({"mode": "exe", "ok": False, "out": str(exc)})
+            return
+        self.update_finished.emit({"mode": "exe", "ok": True, "out": "", "exe": str(exe)})
+
+    def _on_update_progress(self, done: int, total: int) -> None:
+        def mb(n: int) -> str:
+            return f"{n / (1024 * 1024):.1f} MB"
+
+        self.update_status.setText(
+            f"正在下载更新包… {mb(done)}" + (f" / {mb(total)}" if total else "")
+        )
+
+    def _on_update_finished(self, res: dict) -> None:
+        self._upd_busy = False
+        self.update_btn.setEnabled(True)
+        if not res["ok"]:
+            self.update_status.setText(f"更新失败：{res['out']}")
+            InfoBar.error(
+                "更新失败", "详见模型配置页状态行", duration=4000, parent=self.window_ref
+            )
+            return
+        if res["mode"] == "git":
+            self.update_btn.hide()
+            self.check_update()  # 拉取后 pyproject 已是新版本 -> 复检回到"已是最新"
+            return
+        self.update_status.setText("更新包已就位，正在重启…")
+        update.relaunch(pathlib.Path(res["exe"]))
+        QApplication.instance().quit()
+
 
 class FungiGui(FluentWindow):
     def __init__(self):
@@ -1134,11 +1256,6 @@ class FungiGui(FluentWindow):
             self.hide()
             if self._tray is None:
                 self.update_tray()
-            self._tray.notify(
-                "Fungi 已转入托盘",
-                "房间仍在后台运行。",
-            )
-            return
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)
