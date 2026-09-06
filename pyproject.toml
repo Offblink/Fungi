@@ -8,7 +8,7 @@ dependencies = ["segno>=1.6", "pillow>=10.0"]
 [tool.ruff]
 target-version = "py313"
 line-length = 100
-extend-exclude = ["web", "sessions", "docs"]
+extend-exclude = ["web", "sessions", "docs", "vidsense"]  # vidsense = vendored upstream snapshot, never linted/reformatted
 
 [tool.ruff.lint]
 select = [

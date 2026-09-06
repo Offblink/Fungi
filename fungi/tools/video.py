@@ -1,4 +1,4 @@
-"""Video understanding via an optional VidSense checkout (subprocess, isolated).
+"""Video understanding via the vendored VidSense package (subprocess, isolated).
 
 VidSense runs its LOCAL pipeline only (--no-api, stock behavior): ffmpeg/ffprobe
 extract, faster-whisper transcript, CLIP scenes/MMR keyframes -> event card
@@ -23,37 +23,13 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ..config import PROJECT_ROOT, load_config
+from ..config import PROJECT_ROOT
 from .files import ImageRead
 
 _VIDEO_TIMEOUT_S = 1800.0  # CPU laptops transcribe+CLIP a long video slowly
 _MAX_TEXT_CHARS = 20000
 _MAX_KEYFRAMES = 12  # mirror vidsense API_MAX_KEYFRAMES; tokens are not free
 
-def _vidsense_default_target() -> Path:
-    """Where a fresh VidSense checkout belongs: inside the Fungi install, so
-    it never lands somewhere silly just because Fungi itself moved."""
-    return PROJECT_ROOT / "Skill" / "VidSense"
-
-
-def _not_configured() -> str:
-    """Actionable guidance. The clone target is computed here so a stale
-    vidsense_dir never silently redirects a fresh install to a bad place."""
-    cfg = load_config()
-    target = _vidsense_default_target()
-    configured = ""
-    if cfg.vidsense_dir and Path(cfg.vidsense_dir) != target:
-        configured = (
-            f'\nNote: config.json vidsense_dir points to "{cfg.vidsense_dir}" '
-            "but has no checkout — either clone to the target above or fix that path."
-        )
-    return (
-        "ERROR: VidSense not found - the video pipeline needs its checkout. "
-        "You have shell access; offer to run this and install ONLY after the "
-        f'user agrees:\n`git clone --depth 1 https://github.com/Offblink/VidSense "{target}"`'
-        + configured
-        + "\nAfter cloning, missing Python deps are reported on the next call."
-    )
 # HF models the local pipeline needs. The tool never downloads on demand;
 # scripts/download_video_models.py pre-seeds the cache (via hf-mirror.com).
 _VIDEO_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -127,22 +103,6 @@ def _video_ready() -> dict[str, bool]:
     return ready
 
 
-def _vidsense_root() -> Path | None:
-    """Explicit config wins; otherwise well-known layouts: inside the Fungi
-    install first, then the legacy beside-Fungi layout."""
-    cfg = load_config()
-    candidates = []
-    if cfg.vidsense_dir:
-        candidates.append(Path(cfg.vidsense_dir))
-    candidates += [
-        _vidsense_default_target(),
-        PROJECT_ROOT.parent.parent / "Skill" / "VidSense",
-        Path.home() / "Desktop" / "Vibe Coding" / "useful" / "基于LLM" / "Skill" / "VidSense",
-    ]
-    for c in candidates:
-        if (c / "vidsense" / "cli.py").is_file():
-            return c
-    return None
 
 
 def _demo_video() -> Path:
@@ -177,9 +137,7 @@ def tool_video(
     path: str, should_abort: Callable[[], bool] | None = None
 ) -> str | ImageRead:
     """Understand a local video: transcript + scenes + attached keyframes."""
-    root = _vidsense_root()
-    if not root:
-        return _not_configured()
+    root = PROJECT_ROOT  # vendored vidsense/ package lives at the repo root
     missing = [name for name, ok in _video_ready().items() if not ok]
     if missing:
         pip_pkgs = []
@@ -220,8 +178,8 @@ def tool_video(
         except (OSError, subprocess.SubprocessError) as exc:
             return f"ERROR: could not generate the built-in demo clip: {exc}"
     else:
-        video = Path(path).resolve()  # resolve against Fungi's cwd: the VidSense
-        if not video.is_file():       # subprocess runs with cwd=vidsense_dir
+        video = Path(path).resolve()  # resolve against Fungi's cwd: the vidsense
+        if not video.is_file():       # subprocess runs with cwd=PROJECT_ROOT
             return f"ERROR: File not found: {video}"
     with tempfile.TemporaryDirectory(prefix="fungi-video-") as tmp:
         # ffmpeg on this box fails to decode inputs whose path contains CJK
@@ -238,7 +196,6 @@ def tool_video(
             # weights are fully cached; skipping the mirror's HEAD checks cuts
             # model load from minutes to seconds on CN networks (measured 150s -> 15s)
             env["HF_HUB_OFFLINE"] = "1"
-        env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
         try:
             proc = subprocess.Popen(
                 [sys.executable, "-m", "vidsense.cli", str(work), "--no-api"],

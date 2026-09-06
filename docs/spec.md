@@ -196,7 +196,7 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 | `skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent；通讯 clone 只读 |
 
 仓库根另有 `inbox/`（send_file 收件，`<来源主机>/` 子目录）与 `config.json`（模型、
-vidsense_dir）；用户级配置在 `~/.fungi/`（`webui_token`=WebUI 门禁、
+展示昵称）；用户级配置在 `~/.fungi/`（`webui_token`=WebUI 门禁、
 `consent_rules.json`=好友同意模式开关）。以上全部不入库。
 
 **会话目录统一**：单机模式原本写仓库根 `sessions/`，与房间模式的 `data/sessions/`

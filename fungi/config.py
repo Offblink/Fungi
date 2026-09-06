@@ -34,9 +34,6 @@ class Config:
     # File transfer: per-file size cap and the local landing directory.
     max_file_mb: int = 200
     inbox_dir: str = ""  # empty -> PROJECT_ROOT / "inbox"
-    # Optional VidSense checkout (git clone of Offblink/VidSense): enables the
-    # `video` tool. Empty = tool reports it is not configured.
-    vidsense_dir: str = ""
     # Presentation nickname shown to friends; never used on the wire.
     display: str = ""
     # >0: send max_tokens on every completion (0 = provider default). Rationale:
@@ -80,8 +77,6 @@ def load_config(path: Path | None = None) -> Config:
             cfg.max_file_mb = int(data["max_file_mb"])
         if data.get("inbox_dir"):
             cfg.inbox_dir = str(data["inbox_dir"])
-        if data.get("vidsense_dir"):
-            cfg.vidsense_dir = str(data["vidsense_dir"])
         if data.get("display"):
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
@@ -112,8 +107,6 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["max_file_mb"] = cfg.max_file_mb
     if cfg.inbox_dir:
         data["inbox_dir"] = cfg.inbox_dir
-    if cfg.vidsense_dir:
-        data["vidsense_dir"] = cfg.vidsense_dir
     if cfg.display:
         data["display"] = cfg.display
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")
