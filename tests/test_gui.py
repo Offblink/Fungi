@@ -539,7 +539,7 @@ def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
     assert "依赖" in page.video_status.text()
     page._poll_download()  # 依赖装完 -> 链到模型下载
     assert len(spawned) == 2 and spawned[1][-1].endswith("download_video_models.py")
-    assert "视频模型" in page.video_status.text()
+    assert "VidSense" in page.video_status.text()
     monkeypatch.setattr(
         "fungi.gui._video_ready", lambda: _ready()
     )

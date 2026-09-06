@@ -279,8 +279,8 @@ HELP_SECTIONS = [
      "关闭窗口不停房间：转入托盘后台；点击或右键托盘图标可回主界面，菜单可开 WebUI、退出。"
      "再次启动程序也会唤起主界面（单实例）。"
      "只有托盘「退出」或页面「离开房间」才真正停房。"),
-    ("模型配置与文件",
-     "模型配置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
+    ("设置与文件",
+     "设置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
     ("更多文档",
      "细节见仓库 README 与 docs/spec.md。"),
 ]
@@ -886,7 +886,7 @@ class ConfigPage(QWidget):
         root.setContentsMargins(48, 32, 48, 32)
         root.setSpacing(14)
 
-        title = SubtitleLabel("模型配置")
+        title = SubtitleLabel("设置")
         root.addWidget(title)
 
         self.key_edit = LineEdit()
@@ -910,7 +910,7 @@ class ConfigPage(QWidget):
 
         # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
         root.addSpacing(10)
-        root.addWidget(SubtitleLabel("视频模型（VidSense）"))
+        root.addWidget(SubtitleLabel("VidSense"))
         self.video_status = BodyLabel()
         self.video_status.setWordWrap(True)
         root.addWidget(self.video_status)
@@ -967,7 +967,7 @@ class ConfigPage(QWidget):
         try:
             ready = _video_ready()
         except OSError as exc:
-            self.video_status.setText(f"视频模型状态检查失败：{exc}")
+            self.video_status.setText(f"VidSense 状态检查失败：{exc}")
             self.download_btn.hide()
             return
         marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
@@ -1014,7 +1014,7 @@ class ConfigPage(QWidget):
             self._dl_steps.append(
                 ("依赖 huggingface_hub", [py, "-m", "pip", "install", "huggingface_hub"])
             )
-        self._dl_steps.append(("视频模型", [py, str(script)]))
+        self._dl_steps.append(("VidSense", [py, str(script)]))
         self._start_next_dl_step()
 
     def _start_next_dl_step(self) -> None:
@@ -1045,7 +1045,7 @@ class ConfigPage(QWidget):
         self._check_video_models()
         if code == 0:
             InfoBar.success(
-                "下载完成", "视频模型已就绪", duration=2500, parent=self.window_ref
+                "下载完成", "VidSense 已就绪", duration=2500, parent=self.window_ref
             )
         else:
             InfoBar.error(
@@ -1163,7 +1163,7 @@ class ConfigPage(QWidget):
         if not res["ok"]:
             self.update_status.setText(f"更新失败：{res['out']}")
             InfoBar.error(
-                "更新失败", "详见模型配置页状态行", duration=4000, parent=self.window_ref
+                "更新失败", "详见设置页状态行", duration=4000, parent=self.window_ref
             )
             return
         if res["mode"] == "git":
@@ -1186,7 +1186,7 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self.host_page, FluentIcon.HOME, "发起房间")
         self.addSubInterface(self.join_page, FluentIcon.PEOPLE, "加入房间")
         self.addSubInterface(self.mobile_page, FluentIcon.QRCODE, "手机端")
-        self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "模型配置")
+        self.addSubInterface(self.cfg_page, FluentIcon.SETTING, "设置")
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
         self.setWindowTitle("Fungi")
         self.resize(900, 560)  # sidebar layout needs a little width for the nav
