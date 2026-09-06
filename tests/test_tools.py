@@ -3,6 +3,8 @@
 import base64
 import io
 import json
+import threading
+import time
 
 import pytest
 from PIL import Image
@@ -266,3 +268,21 @@ def test_agent_upgrades_image_tool_result_to_multimodal(tmp_path):
     assert parts[1]["type"] == "image_url"
     assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert _tool_content("plain") == "plain"  # non-image results untouched
+
+
+def test_bash_abort_kills_running_command_quickly():
+    """A stop press must cancel a running bash command within a poll tick,
+    not wait out the command (up to BASH_TIMEOUT)."""
+    from fungi.tools.shell import tool_bash
+
+    flag = {"on": False}
+
+    def _flip():
+        time.sleep(0.6)
+        flag["on"] = True
+
+    threading.Thread(target=_flip, daemon=True).start()
+    start = time.time()
+    out = tool_bash("ping -n 30 127.0.0.1 >nul", should_abort=lambda: flag["on"])
+    assert out == "ERROR: cancelled by user"
+    assert time.time() - start < 5, "abort waited out the command instead of killing it"
