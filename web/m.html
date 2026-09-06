@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#f0f2f8">
+<title>Fungi</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="/m.css">
+</head><body>
+<div id="rescan-overlay"><div class="rescan-card">
+  <div class="rescan-icon">&#x26A0;</div>
+  <p>链接已失效或 token 不对。</p>
+  <p class="rescan-hint">请回到电脑端 GUI「手机端」页重新扫码。</p>
+</div></div>
+<div id="app">
+  <main id="chat-page">
+    <header id="topbar">
+      <button id="btn-menu" title="会话列表">&#x2630;</button>
+      <div id="title-wrap">
+        <strong id="session-title">Fungi</strong>
+        <span id="model-name"></span>
+      </div>
+      <button id="theme-switch" title="切换深浅主题">&#x2699;</button>
+    </header>
+    <div id="chat-wrap">
+      <div id="messages"></div>
+      <button id="scroll-bottom" title="回到底部">&#x2193;</button>
+    </div>
+    <div id="asks-banner"></div>
+    <div id="status"></div>
+    <div id="input-area">
+      <textarea id="input" rows="1" placeholder="输入消息…" autocomplete="off"></textarea>
+      <button id="btn-send" title="发送">&#x2191;</button>
+    </div>
+    <div id="drawer-scrim"></div>
+  </main>
+  <aside id="drawer">
+    <div class="drawer-header">
+      <div class="drawer-brand"><span class="dot"></span><strong>Fungi</strong></div>
+      <button id="btn-new-session">&#xFF0B; 新会话</button>
+    </div>
+    <div class="drawer-filter"><input type="text" id="session-filter" placeholder="筛选会话…" autocomplete="off" spellcheck="false"></div>
+    <div id="session-list"><div id="session-list-empty">还没有会话。<br>点「＋ 新会话」开始。</div></div>
+    <div class="drawer-foot">桌面端功能（好友 / 子代理 / 文件）请在电脑上使用</div>
+  </aside>
+</div>
+<script src="/vendor/gsap.min.js"></script>
+<script src="/m.js"></script>
+</body></html>
