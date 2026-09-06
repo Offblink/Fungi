@@ -923,7 +923,7 @@ function openAgentModal(id) {
 const drawer = document.getElementById('drawer'), scrim = document.getElementById('drawer-scrim');
 const chatPage = document.getElementById('chat-page');
 let drawerOpen = false, drag = null;
-const DRAG_OPEN_EDGE = 36; // px from the left edge that starts an open-drag
+const DRAG_OPEN_EDGE = 48; // px from the left edge that starts an open-drag
 function drawerW() { return drawer.offsetWidth; }
 function setDrawer(x, scrimOp) {
   gsap.set(drawer, { x });
@@ -952,8 +952,11 @@ function closeDrawer() { applyDrawer(false); }
 scrim.addEventListener('click', closeDrawer);
 document.getElementById('btn-menu').addEventListener('click', openDrawer);
 chatPage.addEventListener('touchstart', e => {
-  if (drag) return;
   const t = e.touches[0];
+  // NO "if (drag) return" guard: a gesture the webview swallows (WeChat X5's
+  // native edge handling often fires no end/cancel at all) used to wedge
+  // drag truthy forever and silently kill every later swipe. A new touch
+  // always supersedes stale state.
   if (!drawerOpen && t.clientX > DRAG_OPEN_EDGE) return; // open: left-edge swipe only
   drag = { x0: t.clientX, y0: t.clientY, base: drawerOpen ? 0 : -drawerW(), w: drawerW(), locked: null, lastX: t.clientX, lastT: performance.now(), vx: 0 };
 }, { passive: true });
