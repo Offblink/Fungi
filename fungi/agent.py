@@ -11,6 +11,7 @@ from fungi import skills, tools
 from fungi.config import Config
 from fungi.events import EmitFn, Sink
 from fungi.llm import LLMAbortedError, LLMError, LLMResult, stream_chat
+from fungi.tools.files import ImageRead
 
 MAX_TOOL_ROUNDS = 100
 TRUNCATE_TOOL_RESULT = 16000
@@ -31,6 +32,7 @@ shell commands, search code, and access the web. Core rules:
 - BEFORE any task: use `glob` to see directory structure. NEVER `bash dir` or `bash ls`.
 - To find files or code: use `grep`. NEVER `bash find` or `bash findstr`.
 - To read a file: use `read`. NEVER `bash type` or `bash cat`.
+  Images (png/jpg/webp/gif) read as attached pictures you can see and describe.
 - To edit: use `edit`. NEVER `bash echo >` to overwrite files.
 - `bash` is ONLY for: running programs, builds, tests, git, pip, npm, python, etc.
 - When editing, match the existing code style. Use the edit tool (old_string /
@@ -207,7 +209,9 @@ class Agent:
         else:
             output = self._dispatch(name, args, call_id=tc["id"])
         self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
-        messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output})
+        messages.append(
+            {"role": "tool", "tool_call_id": tc["id"], "content": _tool_content(output)}
+        )
 
     def run(self, messages: list[dict]) -> LLMResult:
         """Drive one user turn to completion, mutating `messages` in place."""
@@ -323,7 +327,21 @@ class Agent:
             thread.join()
         for (tc, _args, _err), output in zip(parsed, outputs, strict=True):
             self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
-            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": output})
+            messages.append(
+                {"role": "tool", "tool_call_id": tc["id"], "content": _tool_content(output)}
+            )
+
+def _tool_content(output: str):
+    """Image reads arrive as an ImageRead (a str subclass carrying the pixel
+    data URL): upgrade the tool message to OpenAI multimodal content so a
+    vision model actually sees the picture. Everything else stays a string."""
+    if isinstance(output, ImageRead):
+        return [
+            {"type": "text", "text": str(output)},
+            {"type": "image_url", "image_url": {"url": output.data_url}},
+        ]
+    return output
+
 
 def _truncate(text: str, limit: int = TRUNCATE_TOOL_RESULT) -> str:
     if len(text) <= limit:

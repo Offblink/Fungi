@@ -1,10 +1,15 @@
 """Tests for base tools (offline: files, shell, search)."""
 
+import base64
+import io
 import json
+
+import pytest
+from PIL import Image
 
 import fungi.tools.shell as shell_mod
 from fungi.tools import BASE_TOOL_NAMES, dispatch, tool_defs
-from fungi.tools.files import tool_edit, tool_read, tool_write
+from fungi.tools.files import ImageRead, tool_edit, tool_read, tool_write
 from fungi.tools.search import tool_glob, tool_grep
 from fungi.tools.shell import tool_bash
 from fungi.tools.webtools import tool_web  # noqa: F401 (exercises import wiring)
@@ -121,9 +126,99 @@ def test_dispatch_filters_extra_kwargs(tmp_path):
 
 
 def test_tool_defs_shape():
-
     defs = tool_defs()
     assert {d["function"]["name"] for d in defs} == set(BASE_TOOL_NAMES)
     for d in defs:
         assert d["type"] == "function"
         json.dumps(d)  # must be JSON-serializable for the API
+
+
+def _png_bytes(w=4, h=4, mode="RGB", color=(200, 30, 30)):
+    buf = io.BytesIO()
+    Image.new(mode, (w, h), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_read_image_attaches_pixels(tmp_path):
+    file = tmp_path / "photo.png"
+    file.write_bytes(_png_bytes())
+    out = tool_read(str(file))
+    assert isinstance(out, ImageRead)
+    assert "photo.png" in out
+    head, _, b64 = out.data_url.partition("base64,")
+    assert head == "data:image/png;"
+    assert base64.b64decode(b64) == _png_bytes()
+
+
+def test_read_image_mime_follows_content_not_extension(tmp_path):
+    """Field case: a file wearing .jpg that is really a PNG must not be
+    labelled image/jpeg."""
+    file = tmp_path / "img_moment.jpg"
+    file.write_bytes(_png_bytes())
+    out = tool_read(str(file))
+    assert out.data_url.startswith("data:image/png;")
+
+
+def test_read_large_image_downscales_to_jpeg(tmp_path):
+    file = tmp_path / "big.png"
+    file.write_bytes(_png_bytes(w=2448, h=2448))
+    out = tool_read(str(file))
+    assert isinstance(out, ImageRead)
+    assert out.data_url.startswith("data:image/jpeg;")
+    assert "1568x1568" in out  # thumbnail bounded, never upscaled
+    assert len(out.data_url) < 2448 * 2448  # re-encode beat raw base64
+
+
+def test_read_corrupt_image_reports_instead_of_mojibake(tmp_path):
+    file = tmp_path / "broken.jpg"
+    file.write_bytes(b"this is not an image at all")
+    out = tool_read(str(file))
+    assert not isinstance(out, ImageRead)
+    assert "could not be decoded" in out
+
+
+def test_read_image_rejects_line_selector(tmp_path):
+    file = tmp_path / "photo.png"
+    file.write_bytes(_png_bytes())
+    assert tool_read(f"{file}:2-3").startswith("ERROR: Images are attached whole")
+
+
+def test_rgba_transparency_composites_onto_white_not_black(tmp_path):
+    file = tmp_path / "alpha.png"
+    file.write_bytes(_png_bytes(mode="RGBA", color=(255, 0, 0, 0)))  # fully transparent red
+    out = tool_read(str(file))
+    assert isinstance(out, ImageRead)
+    assert out.data_url.startswith("data:image/png;")  # small+small: rides as-is
+
+
+def test_agent_upgrades_image_tool_result_to_multimodal(tmp_path):
+    from fungi.agent import Agent, _tool_content
+    from fungi.config import Config
+    from fungi.events import FnSink
+    from fungi.llm import LLMResult
+
+    class FakeLLM:
+        def __init__(self, results):
+            self.results = list(results)
+            self.calls = []
+
+        def __call__(self, messages, tool_defs):
+            self.calls.append(messages)
+            return self.results.pop(0)
+
+    img = tmp_path / "photo.png"
+    img.write_bytes(_png_bytes())
+    results = [
+        LLMResult(content=None, tool_calls=[{"id": "t1", "function": {"name": "read", "arguments": json.dumps({"path": str(img)})}}]),
+        LLMResult(content="it is red"),
+    ]
+    fake = FakeLLM(results)
+    agent = Agent(Config(api_key="k", endpoint="e", model="m"), FnSink(lambda _t, _c: None), llm=fake)
+    agent.run([{"role": "user", "content": "看这张图"}])
+    tool_msg = fake.calls[1][3]  # system, user, assistant(tool_calls), tool
+    assert tool_msg["role"] == "tool"
+    parts = tool_msg["content"]
+    assert parts[0]["type"] == "text"
+    assert parts[1]["type"] == "image_url"
+    assert parts[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert _tool_content("plain") == "plain"  # non-image results untouched

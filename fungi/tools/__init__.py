@@ -28,7 +28,9 @@ TOOLS: dict[str, dict] = {
     "read": {
         "schema": _schema(
             "read",
-            "Read a file, numbered lines. Append `:N` for one line, `:N-M` for a range.",
+            "Read a file, numbered lines. Append `:N` for one line, `:N-M` for a "
+            "range. Image files (png/jpg/jpeg/webp/gif/bmp) are returned as "
+            "attached pictures visible to vision models instead of text.",
             {
                 "path": {
                     "type": "string",
@@ -140,4 +142,6 @@ def dispatch(name: str, args: dict) -> str:
         result = tool["fn"](**kwargs)
     except (OSError, ValueError, TypeError) as exc:
         return f"ERROR: {exc}"
-    return str(result)
+    # ImageRead (str subclass) must survive: str() would flatten it and the
+    # agent loop would lose the pixels attached to the result.
+    return result if isinstance(result, str) else str(result)
