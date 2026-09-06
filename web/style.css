@@ -262,3 +262,6 @@ html.motion-on .agent-bubble{animation:none}
 /* live spectate rows (in-flight comm clone turn in the friend view) */
 .msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
 .msg.reasoning.friend-live{box-shadow:none}
+
+/* server-injected [background report] user message: a muted system note, not a chat bubble */
+.msg.sys-note{align-self:center;max-width:94%;background:transparent;color:var(--dim);font-size:0.78rem;font-family:var(--mono);border:1px dashed var(--border);padding:0.5rem 0.8rem;border-radius:var(--radius);white-space:pre-wrap}

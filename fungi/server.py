@@ -231,7 +231,22 @@ class WebUIRuntime:
         return SYSTEM_PROMPT
 
     def build_agent(self, sink: Sink, should_abort) -> Agent:
-        return TriLayer(load_config(), sink, should_abort=should_abort).build_orchestrator(sink)
+        sid = getattr(sink, "session_id", None) or ""
+        # Fresh event per turn: /stop pops+sets it to kill this turn's
+        # background subagents; a new turn must start with a clean one.
+        bg_abort = threading.Event()
+        _BG_ABORTS[sid] = bg_abort
+
+        def _abort() -> bool:
+            return bool(should_abort and should_abort()) or bg_abort.is_set()
+
+        layer = TriLayer(
+            load_config(),
+            sink,
+            should_abort=_abort,
+            spawn_done=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
+        )
+        return layer.build_orchestrator(sink)
 
     def route_answer(self, ask_id: str, value: str | list[str]) -> bool:
         """Resolve an /answer submission. Default: in-process inquire only."""
@@ -269,6 +284,15 @@ _TURNS_LOCK = threading.Lock()
 # finishing would otherwise overwrite its saved context (last-writer-wins).
 _SESSION_LOCKS: dict[str, threading.Lock] = {}
 _SESSION_LOCKS_GUARD = threading.Lock()
+
+# Finished background subagents awaiting re-activation: session_id ->
+# [{"id","goal","status","answer"}]. Fed from spawn threads (TriLayer
+# spawn_done), drained atomically by /resume which injects them as a new
+# turn's input.
+_PENDING_SPAWNS: dict[str, list[dict]] = {}
+# Per-turn background aborts: /stop pops+sets the session's event so
+# already-dispatched background subagents die with the turn.
+_BG_ABORTS: dict[str, threading.Event] = {}
 
 # Tombstones for sessions deleted while a turn was still running: the turn's
 # exit-path save must not resurrect the file the user just deleted.
@@ -436,6 +460,11 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self._send_json(self.runtime.comm_log(host))
         elif route == "/events":
             self._handle_events((parse_qs(url.query).get("sessionId") or [None])[0])
+        elif route == "/spawn-pending":
+            sid = (parse_qs(url.query).get("sessionId") or [None])[0]
+            with _TURNS_LOCK:
+                items = list(_PENDING_SPAWNS.get(sid or "") or [])
+            self._send_json({"pending": len(items), "items": items})
         else:
             self._send_json({"error": "not found"}, status=404)
 
@@ -454,9 +483,14 @@ class YesSirHandler(BaseHTTPRequestHandler):
             sid = str(data.get("sessionId") or "")
             with _TURNS_LOCK:
                 events = _ACTIVE_TURNS.pop(sid, set())
+                bg = _BG_ABORTS.pop(sid, None)
             for event in events:
                 event.set()
-            self._send_json({"ok": bool(events)})
+            if bg is not None:
+                bg.set()  # kill background subagents of already-ended turns too
+            self._send_json({"ok": bool(events) or bg is not None})
+        elif url.path == "/resume":
+            self._handle_resume()
         elif url.path == "/answer":
             data = self._read_body()
             value = data.get("value")
@@ -556,7 +590,40 @@ class YesSirHandler(BaseHTTPRequestHandler):
             return
         self._run_turn(session_id, user_msg=None, messages=messages)
 
-    def _run_turn(self, session_id: str | None, user_msg: str | None, messages=None) -> None:
+    def _handle_resume(self) -> None:
+        """Re-activate a session whose background subagent(s) finished: pop the
+        pending reports atomically and run a turn with them injected."""
+        data = self._read_body()
+        sid = str(data.get("sessionId") or "")
+        with _TURNS_LOCK:
+            items = _PENDING_SPAWNS.pop(sid, None)
+        if not items:
+            self._send_json({"ok": True, "injected": 0})
+            return
+        if _session_lock(sid).locked():
+            # A turn is running: hand the reports back so the client retries
+            # after it ends (pop-then-409 keeps results from being lost).
+            with _TURNS_LOCK:
+                _PENDING_SPAWNS.setdefault(sid, []).extend(items)
+            self._send_json({"busy": True}, status=409)
+            return
+        self._run_turn(sid, user_msg=None, resume_items=items)
+
+    @staticmethod
+    def _spawn_report(items: list[dict]) -> str:
+        rows = "\n".join(
+            f"- id={i['id']} ({i['status']}) goal: {str(i['goal'])[:120]}\n"
+            f"  report: {str(i['answer'])[:2000]}"
+            for i in items
+        )
+        return (
+            "[background report] Subagent task(s) you dispatched have finished. "
+            "This note is for you - the user sees your reply, not this note.\n"
+            + rows
+        )
+
+    def _run_turn(self, session_id: str | None, user_msg: str | None, messages=None,
+                  resume_items: list[dict] | None = None) -> None:
         if messages is None and not session_id:
             # Generate before registering: /stop keys on the real session id.
             session_id = self.runtime.new_session_id()
@@ -586,6 +653,15 @@ class YesSirHandler(BaseHTTPRequestHandler):
                         messages = [{"role": "system", "content": self.runtime.new_session_prompt()}]
                     if user_msg is not None:
                         messages.append({"role": "user", "content": user_msg})
+                if resume_items:
+                    # Patch the persisted spawn records with their final
+                    # status/answer, then inject the report as this turn's input.
+                    for rec in (stored or {}).get("subagents", []) if isinstance(stored, dict) else []:
+                        for item in resume_items:
+                            if rec.get("id") == item["id"]:
+                                rec["status"] = item["status"]
+                                rec["answer"] = item["answer"]
+                    messages.append({"role": "user", "content": self._spawn_report(resume_items)})
                 messages = repair_tool_gaps(messages)
 
                 # Persist at turn start: the user message must be on disk while

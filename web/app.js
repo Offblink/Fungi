@@ -180,7 +180,11 @@ function renderTranscript(messages, asks) {
   let toolBlocks = {};
   const askQueue = (asks || []).slice(); // replayed in order at their inquire call site (legacy ask_user too)
   for (const m of messages || []) {
-    if (m.role === 'user') addDiv('user', marked.parse(m.content || ''));
+    if (m.role === 'user') {
+      const c = String(m.content || '');
+      if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      else addDiv('user', marked.parse(c));
+    }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
@@ -490,6 +494,26 @@ async function retryTurn() {
   if (currentSessionId === sid) input.focus();
 }
 
+/* Background subagent(s) finished: re-activate the session with a resume
+   turn whose server-injected input is their reports. Polled; a report that
+   lands while a turn runs is retried on a later tick (server 409s if busy). */
+async function resumeIfPending() {
+  if (processing || turn || !currentSessionId) return;
+  try {
+    const r = await fetch('/spawn-pending?sessionId=' + encodeURIComponent(currentSessionId));
+    const d = await r.json();
+    if (!d.pending) return;
+    processing = true;
+    abortCtrl = new AbortController(); stopRequested = false;
+    turn = { sessionId: currentSessionId, entries: [] };
+    sessionDirty = true;
+    btn.disabled = true;
+    status.textContent = 'Background task finished - continuing...';
+    _liveCount = 0; window.fungiMotion?.waveOn?.(status);
+    renderTurnLive();
+    await pumpStream('/resume', { sessionId: currentSessionId });
+  } catch (e) {}
+}
 
 /* A session's turn may still be running server-side (the client reloaded or
    switched away): /events replays what was missed, then streams live. */
@@ -998,7 +1022,8 @@ async function pollPendingAsks() {
   } catch (e) {}
 }
 setInterval(pollPendingAsks, 3000);
-pollPendingAsks();
+setInterval(resumeIfPending, 3000);
+resumeIfPending();
 
 /* ---------- config modal ---------- */
 (async () => {

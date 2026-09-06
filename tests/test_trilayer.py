@@ -1,6 +1,7 @@
 """TriLayer orchestration tests, driven by a routing FakeLLM (no network)."""
 
 import json
+import time
 
 import fungi.agent as fungi_agent
 from fungi.agent import Agent
@@ -53,7 +54,21 @@ def make_trilayer() -> tuple[TriLayer, list, RoutingFakeLLM]:
     events: list = []
     sink = FnSink(lambda t, c: events.append((t, c)))
     fake = RoutingFakeLLM()
-    return TriLayer(CFG, sink, llm=fake), events, fake
+    results: list = []  # spawn_done capture: background reports land here
+    tl = TriLayer(CFG, sink, llm=fake, spawn_done=results.append)
+    tl._results = results
+    return tl, events, fake
+
+
+def _settle(tl: TriLayer, timeout: float = 10.0) -> None:
+    """Wait until every background spawn thread has finished."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with tl._lock:
+            if tl._active == 0:
+                return
+        time.sleep(0.01)
+    raise AssertionError("background spawns did not settle in time")
 
 
 def test_full_chain_l1_spawns_l2_spawns_l3():
@@ -74,12 +89,16 @@ def test_full_chain_l1_spawns_l2_spawns_l3():
     orchestrator.run(messages)
 
     tool_results = [m["content"] for m in messages if m["role"] == "tool"]
-    assert "L2 done using worker output" in tool_results
+    assert all(r.startswith("dispatched (id=") for r in tool_results)  # async: no inline answers
+    _settle(tl)
+    answers = {r["goal"]: r["answer"] for r in tl._results}
+    assert answers["do GOAL_A"] == "L2 done using worker output"
+    assert answers["GOAL_B basic step"] == "the number is 42"
     # Both bubbles are visible at top level: the L2 spawn and the nested L3 spawn.
     spawn_events = [c for t, c in events if t == "agent_spawn"]
     assert [e["layer"] for e in spawn_events] == [2, 3]
     statuses = [c["status"] for t, c in events if t == "agent_status"]
-    assert "done" in statuses
+    assert statuses.count("done") == 2
 
 
 def test_l3_toolset_is_restricted():
@@ -106,6 +125,7 @@ def test_l3_agent_gets_l3_prompt_and_no_spawn():
     # Drive the internal path directly: L2 spawning L3.
     fake.scripts["L2:GOAL_A"] = [LLMResult(content="done")]
     tl.bound_spawn(2).fn({"goal": "GOAL_A", "reply_format": "done marker"})
+    _settle(tl)
     assert fake.call_log == ["L3"]
     assert "spawn" not in fake.requested_tool_defs[0]
 
@@ -119,8 +139,9 @@ def test_json_contract_retry_then_success():
             LLMResult(content='{"found": true}'),
         ],
     }
-    answer = tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": 'JSON {"found": bool}'})
-    assert answer == '{"found": true}'
+    tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": 'JSON {"found": bool}'})
+    _settle(tl)
+    assert tl._results[0]["answer"] == '{"found": true}'
 
 
 def test_json_contract_fails_after_retries():
@@ -129,7 +150,9 @@ def test_json_contract_fails_after_retries():
         "L1": [LLMResult(content="noted the failure")],
         "L2:GOAL_A": [LLMResult(content="still not json")] * 3,
     }
-    answer = tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": 'JSON {"ok": bool}'})
+    tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": 'JSON {"ok": bool}'})
+    _settle(tl)
+    answer = tl._results[0]["answer"]
     assert answer.startswith("FAIL: reply is not valid JSON")
     statuses = [c["status"] for t, c in events if t == "agent_status"]
     assert statuses[-1] == "failed"
@@ -155,7 +178,11 @@ def test_parallel_spawns_both_answered():
     orchestrator.run(messages)
 
     tool_results = [m["content"] for m in messages if m["role"] == "tool"]
-    assert "reply A" in tool_results and "reply B" in tool_results
+    assert all(r.startswith("dispatched (id=") for r in tool_results)
+    _settle(tl)
+    answers = {r["goal"]: r["answer"] for r in tl._results}
+    assert answers["task GOAL_A part"] == "reply A"
+    assert answers["task GOAL_B part"] == "reply B"
     assert len([c for t, c in events if t == "agent_spawn"]) == 2
 
 
@@ -210,6 +237,7 @@ def test_spawn_records_history_with_call_id():
         ],
     }
     tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": "worker reply"}, "call-xyz")
+    _settle(tl)
 
     assert len(tl.subagents) == 1
     record = next(iter(tl.subagents.values()))
@@ -230,6 +258,7 @@ def test_parallel_spawns_record_distinct_histories():
     }
     tl.bound_spawn(1).fn({"goal": "GOAL_A", "reply_format": "reply A"}, "call-a")
     tl.bound_spawn(1).fn({"goal": "GOAL_B", "reply_format": "reply B"}, "call-b")
+    _settle(tl)
 
     assert len(tl.subagents) == 2
     call_ids = {r["call_id"] for r in tl.subagents.values()}

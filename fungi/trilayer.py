@@ -7,6 +7,7 @@ format; the lower agent executes strictly within that scope and MUST answer in
 the requested format. Final answers flow back as the spawn tool result.
 """
 
+import contextlib
 import json
 import threading
 import uuid
@@ -28,8 +29,12 @@ L1_ADDENDUM = """
 
 ## TriLayer dispatch
 You are the L1 Orchestrator — the only layer that talks to the user. For
-substantial subtasks (research, multi-file work, independent checks) use the
-`spawn` tool to dispatch an L2 Task Agent instead of doing everything inline.
+substantial subtasks (research, multi-file work, independent checks, anything
+slow) use the `spawn` tool to dispatch an L2 Task Agent instead of doing
+everything inline. spawn is ASYNC: it returns immediately and the subagent
+runs in the background — this is also how you run work in the background
+while staying responsive. You will be re-activated with its report as the
+input of a new turn.
 When spawning you MUST write:
 - goal: what the subagent should accomplish (self-contained, no references to
   this conversation),
@@ -53,7 +58,9 @@ dispatched a task to you with an explicit goal and a required reply format.
 
 Execute the task with your tools. You may use the `spawn` tool to dispatch an
 L3 Worker for basic sub-steps (single file operations, single commands,
-single lookups) — never for whole-task delegation.
+single lookups) — never for whole-task delegation. spawn is async: it returns
+at once and the worker reports back via a re-activation, so you may end your
+reply while it runs.
 
 Discipline (mandatory):
 - Do exactly what the goal says. Do NOT widen the scope, touch unrelated
@@ -155,6 +162,7 @@ class TriLayer:
         child_tool_names: frozenset[str] | None = None,
         child_extra_tools: dict[str, BoundTool] | None = None,
         skill_save: bool = False,
+        spawn_done: Callable[[dict], None] | None = None,
     ) -> None:
         """child_tool_names/child_extra_tools: when set, spawned subagents use
         this surface instead of the native defaults — a clone's spawn inherits
@@ -170,6 +178,11 @@ class TriLayer:
         self._skill_save = skill_save
         self._active = 0
         self._lock = threading.Lock()
+        # Called from the background thread when a subagent finishes:
+        # {"id","goal","status","answer"}. The WebUI runtime wires this to the
+        # session's pending-results registry — the resume turn injects the
+        # report and re-activates the session. None (tests) = fire nowhere.
+        self._spawn_done = spawn_done
         # spec_id -> {id, call_id, layer, goal, reply_format, status, events: [...]}
         self.subagents: dict[str, dict] = {}
         self.asks: list[dict] = []  # completed inquire records (for persistence)
@@ -283,20 +296,52 @@ class TriLayer:
             },
         )
         self.sink.emit("agent_status", {"id": spec.id, "status": "running"})
-        try:
-            answer = self._run_task(spec)
-            failed = answer.startswith("FAIL")
-            status = "failed" if failed else "done"
-            self.sink.emit("agent_status", {"id": spec.id, "status": status})
+        if self._spawn_done is None:
+            # Synchronous contract (comm clones, direct tool use): no
+            # re-activation channel exists, so the caller waits for the answer.
+            try:
+                answer = self._run_task(spec)
+                status = "failed" if answer.startswith("FAIL") else "done"
+            except Exception as exc:
+                answer = f"FAIL: subagent crashed: {exc}"
+                status = "failed"
             record["status"] = status
-            return answer
-        except Exception as exc:
-            self.sink.emit("agent_status", {"id": spec.id, "status": "failed"})
-            record["status"] = "failed"
-            return f"FAIL: subagent crashed: {exc}"
-        finally:
+            self.sink.emit("agent_status", {"id": spec.id, "status": status})
             with self._lock:
                 self._active -= 1
+            return answer
+        # Async contract (user-facing WebUI sessions): return at once, the
+        # report comes back via spawn_done -> /resume re-activation.
+        thread = threading.Thread(
+            target=self._run_bg, args=(spec, record), daemon=True, name=f"spawn-{spec.id}"
+        )
+        thread.start()
+        return (
+            f"dispatched (id={spec.id}). It runs in the BACKGROUND - do not wait "
+            "for it and do not repeat the task yourself; keep responding or end "
+            "your turn. When it finishes, this session is automatically "
+            "re-activated with its report as the input of a new turn."
+        )
+
+    def _run_bg(self, spec: TaskSpec, record: dict) -> None:
+        """Background body of a spawn: run, finalize the record, notify."""
+        try:
+            answer = self._run_task(spec)
+            status = "failed" if answer.startswith("FAIL") else "done"
+        except Exception as exc:  # a crashed child must not kill the session
+            answer = f"FAIL: subagent crashed: {exc}"
+            status = "failed"
+        record["status"] = status
+        record["answer"] = answer
+        with contextlib.suppress(Exception):  # parent turn's HTTP stream may be closed
+            self.sink.emit("agent_status", {"id": spec.id, "status": status})
+        with self._lock:
+            self._active -= 1
+        if self._spawn_done is not None:
+            with contextlib.suppress(Exception):
+                self._spawn_done(
+                    {"id": spec.id, "goal": record["goal"], "status": status, "answer": answer}
+                )
 
     def _run_task(self, spec: TaskSpec) -> str:
         child_sink = FnSink(lambda t, c, _sid=spec.id: self._record_event(_sid, t, c))

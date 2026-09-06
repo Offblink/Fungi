@@ -283,7 +283,11 @@ function renderTranscript(messages, asks) {
   let toolBlocks = {};
   const askQueue = (asks || []).slice();
   for (const m of messages || []) {
-    if (m.role === 'user') addDiv('user', marked.parse(m.content || ''));
+    if (m.role === 'user') {
+      const c = String(m.content || '');
+      if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      else addDiv('user', marked.parse(c));
+    }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
@@ -388,6 +392,26 @@ async function retryTurn() {
   _liveCount = 0;
   renderTurnLive();
   await pumpStream(api('/retry'), { sessionId: sid });
+}
+
+/* Background subagent(s) finished: re-activate the session with a resume
+   turn whose server-injected input is their reports (desktop contract). */
+async function resumeIfPending() {
+  if (processing && turn) return;
+  if (!currentSessionId) return;
+  try {
+    const r = await fetchJSON('/spawn-pending?sessionId=' + encodeURIComponent(currentSessionId));
+    const d = await r.json();
+    if (!d.pending) return;
+    processing = true;
+    abortCtrl = new AbortController(); stopRequested = false;
+    turn = { sessionId: currentSessionId, entries: [] };
+    sessionDirty = true;
+    status.textContent = 'Background task finished - continuing...';
+    _liveCount = 0;
+    renderTurnLive();
+    await pumpStream(api('/resume'), { sessionId: currentSessionId });
+  } catch (e) { if (e.message !== 'unauthorized') console.error(e); }
 }
 /* A session's turn may still run server-side (reload / switch): /events
    replays the tape, then streams live. */
@@ -818,7 +842,8 @@ async function pollPendingAsks() {
     });
   } catch (e) {}
 }
-setInterval(pollPendingAsks, 3000);
+setInterval(resumeIfPending, 3000);
+resumeIfPending();
 
 /* ---------- friends: room members + read-only comm clone conversations ---------- */
 let friendView = null;   // host name while viewing a friend conversation

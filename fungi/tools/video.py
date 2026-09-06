@@ -30,13 +30,30 @@ _VIDEO_TIMEOUT_S = 1800.0  # CPU laptops transcribe+CLIP a long video slowly
 _MAX_TEXT_CHARS = 20000
 _MAX_KEYFRAMES = 12  # mirror vidsense API_MAX_KEYFRAMES; tokens are not free
 
-_NOT_CONFIGURED = (
-    "ERROR: VidSense not found — drop the Offblink/VidSense checkout beside Fungi "
-    "(<install root>/Skill/VidSense) or set \"vidsense_dir\" in config.json. "
-    "Needs ffmpeg/ffprobe on PATH + torch, transformers, faster-whisper, "
-    "opencv-python in Fungi's Python."
-)
+def _vidsense_default_target() -> Path:
+    """Where a fresh VidSense checkout belongs: inside the Fungi install, so
+    it never lands somewhere silly just because Fungi itself moved."""
+    return PROJECT_ROOT / "Skill" / "VidSense"
 
+
+def _not_configured() -> str:
+    """Actionable guidance. The clone target is computed here so a stale
+    vidsense_dir never silently redirects a fresh install to a bad place."""
+    cfg = load_config()
+    target = _vidsense_default_target()
+    configured = ""
+    if cfg.vidsense_dir and Path(cfg.vidsense_dir) != target:
+        configured = (
+            f'\nNote: config.json vidsense_dir points to "{cfg.vidsense_dir}" '
+            "but has no checkout — either clone to the target above or fix that path."
+        )
+    return (
+        "ERROR: VidSense not found - the video pipeline needs its checkout. "
+        "You have shell access; offer to run this and install ONLY after the "
+        f'user agrees:\n`git clone --depth 1 https://github.com/Offblink/VidSense "{target}"`'
+        + configured
+        + "\nAfter cloning, missing Python deps are reported on the next call."
+    )
 # HF models the local pipeline needs. The tool never downloads on demand;
 # scripts/download_video_models.py pre-seeds the cache (via hf-mirror.com).
 _VIDEO_MODELS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -111,13 +128,14 @@ def _video_ready() -> dict[str, bool]:
 
 
 def _vidsense_root() -> Path | None:
-    """Explicit config wins; otherwise well-known layouts. The dev checkout
-    sits beside Fungi: <root>/Harness/Fungi -> <root>/Skill/VidSense."""
+    """Explicit config wins; otherwise well-known layouts: inside the Fungi
+    install first, then the legacy beside-Fungi layout."""
     cfg = load_config()
     candidates = []
     if cfg.vidsense_dir:
         candidates.append(Path(cfg.vidsense_dir))
     candidates += [
+        _vidsense_default_target(),
         PROJECT_ROOT.parent.parent / "Skill" / "VidSense",
         Path.home() / "Desktop" / "Vibe Coding" / "useful" / "基于LLM" / "Skill" / "VidSense",
     ]
@@ -161,7 +179,7 @@ def tool_video(
     """Understand a local video: transcript + scenes + attached keyframes."""
     root = _vidsense_root()
     if not root:
-        return _NOT_CONFIGURED
+        return _not_configured()
     missing = [name for name, ok in _video_ready().items() if not ok]
     if missing:
         pip_pkgs = []

@@ -35,7 +35,7 @@ from .hub.app import Hub
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
 from .protocol import Envelope
-from .server import WebUIRuntime, make_webui_server
+from .server import _BG_ABORTS, _PENDING_SPAWNS, WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
 from .trilayer import TriLayer
@@ -556,14 +556,24 @@ class RoomRuntime(WebUIRuntime):
         if delegate_tools is not None:
             delegate_tools.abort_fn = should_abort
         tools = dict(clone.tools)
+        sid = getattr(sink, "session_id", None) or ""
+        # Fresh event per turn: /stop pops+sets it to kill this turn's
+        # background subagents; a new turn starts with a clean one.
+        bg_abort = threading.Event()
+        _BG_ABORTS[sid] = bg_abort
+
+        def _abort() -> bool:
+            return bool(should_abort and should_abort()) or bg_abort.is_set()
+
         trilayer = TriLayer(
             self.room.cfg,
             sink,
             llm=self.room.llm,
-            should_abort=should_abort,
+            should_abort=_abort,
             child_tool_names=clone.child_tool_names,
             child_extra_tools=clone.child_extra_tools,
             skill_save=clone.skill_save,
+            spawn_done=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
         )
         # inquire rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).

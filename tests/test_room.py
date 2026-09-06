@@ -965,3 +965,74 @@ def test_tape_grace_pop_does_not_kill_next_turns_tape(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         room.stop()
+
+
+def test_background_spawn_report_reactivates_session(tmp_path):
+    """Async spawn end-to-end: /chat returns dispatched at once, the finished
+    subagent lands in the pending registry, and /resume injects its report as
+    a new turn's input while updating the persisted spawn record."""
+    import urllib.request
+
+    from fungi.llm import LLMResult
+    from fungi.server import _PENDING_SPAWNS
+
+    orch_calls: list = []
+
+    def routed_llm(messages, _tools):
+        first_user = next((m["content"] for m in messages if m["role"] == "user"), "")
+        if first_user.startswith("## Goal"):
+            return LLMResult(content="42")  # the child task agent
+        orch_calls.append(1)
+        if len(orch_calls) == 1:
+            return LLMResult(tool_calls=[{
+                "id": "t1",
+                "type": "function",
+                "function": {
+                    "name": "spawn",
+                    "arguments": json.dumps({"goal": "count slowly", "reply_format": "a number"}),
+                },
+            }])
+        return LLMResult(content="the answer is 42")
+
+    room = RoomServer(
+        "alpha", CFG, NullSink(), "tok", tmp_path / "data",
+        llm=routed_llm, rules_path=tmp_path / "rules.json",
+    )
+    room.start()
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        body = _post(port, "/chat", {"message": "fan out", "sessionId": None}).read().decode("utf-8")
+        sid = next(
+            json.loads(line)["content"]
+            for line in body.splitlines()
+            if line and json.loads(line)["type"] == "sessionId"
+        )
+        assert sid
+        assert _wait(lambda: len(_PENDING_SPAWNS.get(sid, [])) == 1), \
+            "finished background spawn never reached the pending registry"
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/spawn-pending?sessionId={sid}", timeout=10
+        ) as resp:
+            assert json.loads(resp.read())["pending"] == 1
+
+        resume_body = _post(port, "/resume", {"sessionId": sid}).read().decode("utf-8")
+        assert '"done"' in resume_body
+
+        stored = room.webui_runtime().sessions_load(sid)
+        report = next(m for m in stored["messages"] if m["role"] == "user"
+                      and m["content"].startswith("[background report]"))
+        assert "42" in report["content"]
+        rec = stored["subagents"][0]
+        assert rec["status"] == "done" and rec["answer"] == "42"
+        assert stored["messages"][-1]["content"] == "the answer is 42"
+
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/spawn-pending?sessionId={sid}", timeout=10
+        ) as resp:
+            assert json.loads(resp.read())["pending"] == 0  # drained by the resume
+    finally:
+        server.shutdown()
+        server.server_close()
+        room.stop()
