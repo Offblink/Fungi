@@ -121,11 +121,6 @@ GitHub Actions（windows-latest + Python 3.13）：
 
 - **Release（`.github/workflows/release.yml`）**：打 tag 触发（如 `git tag v0.1.1 && git push origin v0.1.1`）——先过同一 pytest 门禁，再打源码 zip 与 Windows exe（PyInstaller，`assets/fungi.ico` 图标）并创建 GitHub Release（自动生成 release notes）。zip 只含 tracked 文件，`config.json`（真实 key）不入档。
 
-## v1 已知边界
-
-- LAN 内明文 HTTP，不做传输加密；房间 token 做鉴权。
-- ask 超时默认 600s，目前写死在代码，尚未暴露到 config.json。
-
 ## 文档
 
 设计定稿见 [`docs/`](docs/)：[spec.md](docs/spec.md)（规格与术语）、[architecture.md](docs/architecture.md)（立项脑暴 / 架构决策 / 阶段计划）、[webui-ux.md](docs/webui-ux.md)（WebUI UX 设计与实施记录）。
