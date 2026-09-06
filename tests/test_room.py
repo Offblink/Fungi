@@ -451,9 +451,9 @@ def test_comm_log_http_route_returns_full_payload(server_room):
     server = make_webui_server(0, room.webui_runtime())
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        host, port = server.server_address[:2]
+        port = server.server_address[1]
         with urllib.request.urlopen(
-            f"http://{host}:{port}/comm-log?host=beta", timeout=5.0
+            f"http://127.0.0.1:{port}/comm-log?host=beta", timeout=5.0
         ) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
     finally:

@@ -8,10 +8,12 @@ card answers back out as answer envelopes.
 """
 
 import json
+import secrets
 import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fungi import session
@@ -30,6 +32,52 @@ _mime = {
     ".css": "text/css; charset=utf-8",
     ".json": "application/json",
 }
+
+
+def _webui_token() -> str:
+    """LAN access token: generated once and persisted, so QR codes and mobile
+    bookmarks survive restarts."""
+    path = Path.home() / ".fungi" / "webui_token"
+    try:
+        t = path.read_text(encoding="utf-8").strip()
+        if t:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(24)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(t, encoding="utf-8")
+    except OSError:
+        pass
+    return t
+
+
+WEBUI_TOKEN = _webui_token()
+
+
+def lan_ip() -> str:
+    """Best-effort LAN address (routing lookup only, no packet sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "127.0.0.1"
+
+
+def lan_payload(port: int, loopback: bool) -> dict:
+    """QR material for the GUI page. The token is a LAN secret: it is only
+    ever echoed to callers already on the loopback (i.e. the desktop itself)."""
+    payload = {"ip": lan_ip(), "port": port}
+    if loopback:
+        payload["token"] = WEBUI_TOKEN
+        payload["url"] = f"http://{payload['ip']}:{payload['port']}/m?t={WEBUI_TOKEN}"
+    return payload
 
 
 RETRY_STRIP_PREFIXES = ("(LLM error:", "(Hit max tool rounds", "(Aborted")
@@ -243,6 +291,20 @@ class YesSirHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {}
 
+    def _authorized(self) -> bool:
+        """Loopback clients (desktop WebUI, GUI) pass freely; LAN clients must
+        carry the QR token in the query string (?t=...)."""
+        if self.client_address[0] in ("127.0.0.1", "::1"):
+            return True
+        q = parse_qs(urlparse(self.path).query)
+        return (q.get("t") or [""])[0] == WEBUI_TOKEN
+
+    def _gate(self) -> bool:
+        if self._authorized():
+            return True
+        self._send_json({"error": "unauthorized — rescan the QR code"}, status=403)
+        return False
+
     def _send_static(self, filename: str) -> None:
         path = WEB_DIR / filename
         if not path.is_file():
@@ -259,12 +321,16 @@ class YesSirHandler(BaseHTTPRequestHandler):
 
     # ---- GET --------------------------------------------------------------
     def do_GET(self):
+        if not self._gate():
+            return
         self.runtime.touch()  # anyone still polling = someone is looking
         url = urlparse(self.path)
         route = url.path
         if route == "/":
             self._send_static("index.html")
-        elif route in ("/app.js", "/style.css", "/motion.js"):
+        elif route == "/m":
+            self._send_static("m.html")
+        elif route in ("/app.js", "/style.css", "/motion.js", "/m.css", "/m.js"):
             self._send_static(route.lstrip("/"))
         elif (
             route.startswith("/vendor/") and "/" not in route[8:] and ".." not in route
@@ -274,6 +340,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_json({"model": load_config().model})
         elif route == "/config-status":
             self._send_json({"configured": load_config().configured})
+        elif route == "/lan":
+            loopback = self.client_address[0] in ("127.0.0.1", "::1")
+            self._send_json(lan_payload(self.server.server_address[1], loopback))
         elif route == "/asks":
             self._send_json({"asks": self.runtime.pending_asks()})
         elif route == "/sessions":
@@ -318,6 +387,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
 
     # ---- POST -------------------------------------------------------------
     def do_POST(self):
+        if not self._gate():
+            return
         self.runtime.touch()
         url = urlparse(self.path)
         if url.path == "/chat":
@@ -390,6 +461,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
 
     # ---- DELETE -----------------------------------------------------------
     def do_DELETE(self):
+        if not self._gate():
+            return
         url = urlparse(self.path)
         if url.path == "/session":
             session_id = (parse_qs(url.query).get("id") or [None])[0]
@@ -575,7 +648,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
 def make_webui_server(port: int | None, runtime: WebUIRuntime) -> ThreadingHTTPServer:
     """Build (not start) the WebUI server; room mode embeds this in-process."""
     handler = type("BoundHandler", (YesSirHandler,), {"runtime": runtime})
-    return ThreadingHTTPServer(("127.0.0.1", _free_port(port)), handler)
+    return ThreadingHTTPServer(("0.0.0.0", _free_port(port)), handler)
 
 
 def _free_port(preferred: int | None) -> int:

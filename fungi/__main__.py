@@ -66,16 +66,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _lan_ip() -> str:
     """Best-effort LAN address for the printed join command."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))  # routing lookup only, no packet sent
-            return sock.getsockname()[0]
-    except OSError:
-        pass
-    try:
-        return socket.gethostbyname(socket.gethostname())
-    except OSError:
-        return "127.0.0.1"
+    from fungi.server import lan_ip  # noqa: PLC0415 (lazy: server import is heavy)
+
+    return lan_ip()
 
 
 def run_room(args: argparse.Namespace) -> int:
