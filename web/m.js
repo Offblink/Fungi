@@ -969,6 +969,13 @@ scrim.addEventListener('click', closeDrawer);
 document.getElementById('btn-menu').addEventListener('click', openDrawer);
 chatPage.addEventListener('touchstart', e => {
   const t = e.touches[0];
+  // TEMP X5 DIAGNOSTIC: prove whether edge touches reach the page at all and
+  // how the gesture progresses (起 started / 移 moving / 终 ended / 夺 stolen).
+  // Remove once the real-device right-swipe issue is closed.
+  if (!drawerOpen && t && t.clientX <= 120) {
+    window.__swDiag = { x0: t.clientX, dx: 0, ended: '' };
+    status.textContent = '↔起 x=' + Math.round(t.clientX) + ' y=' + Math.round(t.clientY);
+  }
   // NO "if (drag) return" guard: a gesture the webview swallows (WeChat X5's
   // native edge handling often fires no end/cancel at all) used to wedge
   // drag truthy forever and silently kill every later swipe. A new touch
@@ -979,6 +986,10 @@ chatPage.addEventListener('touchstart', e => {
 chatPage.addEventListener('touchmove', e => {
   if (!drag) return;
   const t = e.touches[0];
+  if (window.__swDiag) {
+    window.__swDiag.dx = t.clientX - window.__swDiag.x0;
+    status.textContent = '↔移 dx=' + Math.round(window.__swDiag.dx);
+  }
   const dx = t.clientX - drag.x0, dy = t.clientY - drag.y0;
   if (drag.locked === null) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
@@ -1002,8 +1013,14 @@ function settleDrag(velSign) {
   const opened = x > -d.w / 2 || (d.vx || 0) * velSign > 0.35;
   applyDrawer(opened);
 }
-chatPage.addEventListener('touchend', () => { if (drag) settleDrag(1); }, { passive: true });
-chatPage.addEventListener('touchcancel', () => { if (drag) settleDrag(1); }, { passive: true });
+chatPage.addEventListener('touchend', () => {
+  if (window.__swDiag) { window.__swDiag.ended = 'end'; status.textContent = '↔终 dx=' + Math.round(window.__swDiag.dx); }
+  if (drag) settleDrag(1);
+}, { passive: true });
+chatPage.addEventListener('touchcancel', () => {
+  if (window.__swDiag) { window.__swDiag.ended = 'cancel'; status.textContent = '↔夺 dx=' + Math.round(window.__swDiag.dx); }
+  if (drag) settleDrag(1);
+}, { passive: true });
 // drawer-side left swipe (finger starts on the drawer itself)
 drawer.addEventListener('touchstart', e => {
   const t = e.touches[0];
