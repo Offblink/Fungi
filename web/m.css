@@ -134,3 +134,29 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 #agent-modal .am-goal{color:var(--text2);font-size:0.8rem;margin-bottom:0.7rem;white-space:pre-wrap}
 #agent-modal .am-status{font-size:0.74rem;font-family:var(--mono);color:var(--accent2);margin-bottom:0.6rem}
 #agent-modal .am-ev{font-size:0.74rem;font-family:var(--mono);color:var(--text2);padding:0.4rem 0;border-top:1px solid var(--border-light);white-space:pre-wrap;word-break:break-word}
+/* ---- confirm modal ---- */
+#confirm-overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(10,12,30,0.45);backdrop-filter:blur(8px);align-items:center;justify-content:center}
+#confirm-overlay.show{display:flex}
+#confirm-modal{background:var(--surface);border-radius:var(--radius-lg);padding:1.4rem 1.4rem 1.1rem;width:88vw;max-width:360px;box-shadow:0 16px 56px rgba(0,0,0,0.4);border:1px solid var(--border-light)}
+#confirm-modal h2{font-size:1rem;font-weight:600;margin-bottom:0.3rem;color:var(--text)}
+#confirm-modal p{font-size:0.84rem;color:var(--text2);margin:0;line-height:1.55;word-break:break-word}
+#confirm-modal .confirm-actions{display:flex;gap:0.6rem;margin-top:1.2rem}
+#confirm-modal .confirm-actions button{flex:1;padding:0.7rem 1rem;border-radius:var(--radius-xs);font-weight:600;font-size:0.85rem;cursor:pointer;border:none;font-family:var(--font);min-height:44px}
+#confirm-modal #confirm-cancel{background:transparent;color:var(--dim)}
+#confirm-modal #confirm-ok{background:var(--accent);color:var(--on-accent)}
+#confirm-modal #confirm-ok.danger{background:var(--error-text)}
+/* ---- session rename ---- */
+.session-row input.rename-input{flex:1;background:var(--bg);border:1px solid var(--accent);border-radius:var(--radius-xs);color:var(--text);font-family:var(--font);font-size:0.85rem;padding:5px 9px;outline:none;min-width:0}
+/* ---- theme wash ---- */
+.motion-theme-wash{position:fixed;inset:0;z-index:300;pointer-events:none}
+.motion-theme-wash.light{background:radial-gradient(130% 130% at 50% 0%,#fdf2f8 0%,#f0f2f8 55%,#e8ebf5 100%)}
+.motion-theme-wash.dark{background:radial-gradient(130% 130% at 50% 0%,#1a3a37 0%,#12141c 60%)}
+/* ---- theme switch icons (sun visible in dark = go light, moon in light = go dark) ---- */
+#theme-switch{width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+.theme-ic{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:none}
+html[data-theme="light"] .ic-moon{display:block}
+html[data-theme="dark"] .ic-sun{display:block}
+/* horizontal drawer swipes must survive over the scrollable transcript */
+#chat-wrap,#messages{touch-action:pan-y}
+/* touch targets for row actions: >= 40px */
+.session-row-act{font-size:16px;padding:9px 11px}

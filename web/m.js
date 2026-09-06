@@ -160,6 +160,58 @@ async function deleteSession(id) {
   } catch (e) {}
 }
 
+/* ---------- confirm modal (desktop showConfirm contract) ---------- */
+let _confirmState = null;
+function showConfirm(opts) {
+  const overlay = document.getElementById('confirm-overlay');
+  const ok = document.getElementById('confirm-ok');
+  document.getElementById('confirm-title').textContent = opts.title || '确认？';
+  document.getElementById('confirm-message').textContent = opts.message || '';
+  ok.textContent = opts.confirmText || '确定';
+  document.getElementById('confirm-cancel').textContent = opts.cancelText || '取消';
+  ok.classList.toggle('danger', !!opts.danger);
+  _confirmState = { onConfirm: opts.onConfirm, danger: !!opts.danger };
+  overlay.classList.add('show');
+}
+function closeConfirm(confirmed) {
+  const overlay = document.getElementById('confirm-overlay');
+  if (!overlay.classList.contains('show')) return;
+  overlay.classList.remove('show');
+  const state = _confirmState;
+  _confirmState = null;
+  if (confirmed && state && state.onConfirm) state.onConfirm();
+}
+document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));
+document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
+document.getElementById('confirm-overlay').addEventListener('click', e => {
+  if (e.target.id === 'confirm-overlay') closeConfirm(false);
+});
+
+/* ---------- rename (desktop startRename/finishRename contract) ---------- */
+function startRename(row, s) {
+  const titleEl = row.querySelector('.session-row-title');
+  const old = titleEl.textContent;
+  const inp = document.createElement('input');
+  inp.className = 'rename-input'; inp.value = s.title || old;
+  inp.addEventListener('blur', () => finishRename(row, s, inp, old));
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') inp.blur();
+    if (e.key === 'Escape') { row.replaceChild(titleEl, inp); titleEl.textContent = old; }
+  });
+  row.replaceChild(inp, titleEl); inp.focus(); inp.select();
+}
+async function finishRename(row, s, inp, old) {
+  const newTitle = inp.value.trim();
+  if (!newTitle || newTitle === old) { renderSessionList(); return; }
+  try {
+    await fetch(api('/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: s.id, title: newTitle, messages: [] }) });
+    s.title = newTitle;
+    if (s.id === currentSessionId) document.getElementById('session-title').textContent = newTitle;
+  } catch (e) {}
+  renderSessionList();
+}
+
 /* Drawer list: keyed rows survive re-render so GSAP stagger doesn't rebuild everything */
 function renderSessionList() {
   const list = document.getElementById('session-list');
@@ -174,10 +226,20 @@ function renderSessionList() {
     row.className = 'session-row' + (s.id === currentSessionId ? ' active' : '');
     row.innerHTML = '<span class="session-row-title">' + escapeHtml(s.title || 'Untitled') + '</span>'
       + '<span class="session-row-meta">' + fmtDate(s.created) + (s.running ? ' \u25cf' : '') + '</span>'
+      + '<button class="session-row-act ren" title="重命名">&#9998;</button>'
       + '<button class="session-row-act del" title="删除">&#10005;</button>';
+    row.querySelector('.session-row-act.ren').addEventListener('click', e => {
+      e.stopPropagation(); startRename(row, s);
+    });
     row.querySelector('.session-row-act.del').addEventListener('click', e => {
       e.stopPropagation();
-      if (confirm('删除会话「' + (s.title || 'Untitled') + '」？不可恢复。')) deleteSession(s.id);
+      showConfirm({
+        title: '删除会话',
+        message: '「' + (s.title || 'Untitled') + '」将被永久删除，不可恢复。',
+        confirmText: '删除',
+        danger: true,
+        onConfirm: () => deleteSession(s.id)
+      });
     });
     row.addEventListener('click', () => switchSession(s.id));
     list.appendChild(row);
@@ -868,6 +930,7 @@ function setDrawer(x, scrimOp) {
   gsap.set(scrim, { opacity: scrimOp });
 }
 function applyDrawer(open, opts = {}) {
+  const wasOpen = drawerOpen;
   drawerOpen = open;
   const dur = opts.instant ? 0 : 0.42;
   gsap.to(drawer, { x: open ? 0 : -drawerW(), duration: dur, ease: open ? 'power3.out' : 'power3.in', overwrite: 'auto' });
@@ -876,7 +939,10 @@ function applyDrawer(open, opts = {}) {
     onStart: () => { if (open) scrim.style.pointerEvents = 'auto'; },
     onComplete: () => { if (!open) scrim.style.pointerEvents = 'none'; },
   });
-  if (open && opts.instant !== true && motionOn()) {
+  // Stagger only on a real closed->open transition: replaying it on every
+  // drawer touchend would shift rows 24px under a finger and suppress the
+  // synthesized click on the row buttons.
+  if (open && !wasOpen && opts.instant !== true && motionOn()) {
     const rows = drawer.querySelectorAll('.session-row');
     if (rows.length) gsap.from(rows, { opacity: 0, x: -24, duration: 0.38, stagger: 0.035, ease: 'power3.out', clearProps: 'all', overwrite: 'auto' });
   }
@@ -913,6 +979,14 @@ chatPage.addEventListener('touchend', () => {
   const opened = x > -d.w / 2 || d.vx > 0.35;
   applyDrawer(opened);
 }, { passive: true });
+chatPage.addEventListener('touchcancel', () => {
+  // The browser claimed the gesture (scrolling): settle the drawer where it
+  // was heading, or a stalled drag would wedge the state.
+  if (!drag) return;
+  drag = null;
+  const x = parseFloat(gsap.getProperty(drawer, 'x'));
+  applyDrawer(x > -drawerW() / 2);
+}, { passive: true });
 // drawer-side left swipe (finger starts on the drawer itself)
 drawer.addEventListener('touchstart', e => {
   const t = e.touches[0];
@@ -933,9 +1007,13 @@ drawer.addEventListener('touchmove', e => {
 drawer.addEventListener('touchend', () => {
   const sw = drawer._sw; drawer._sw = null;
   if (!sw || !drawerOpen) return;
+  // A clean tap (row buttons!) must not re-run the drawer settle: the row
+  // entrance shift would move the button away and swallow the click.
+  if (Math.abs(sw.lastX - sw.x0) < 8 && Math.abs(sw.vx) < 0.1) return;
   const x = parseFloat(gsap.getProperty(drawer, 'x'));
   applyDrawer(!(x < -drawerW() / 2 || sw.vx < -0.35));
 }, { passive: true });
+drawer.addEventListener('touchcancel', () => { drawer._sw = null; }, { passive: true });
 
 /* ---------- wiring ---------- */
 document.getElementById('btn-new-session').addEventListener('click', newSession);
@@ -951,10 +1029,30 @@ if (window.visualViewport) {
 /* theme: light default, persisted (same key as desktop) */
 function applyTheme(t) { document.documentElement.setAttribute('data-theme', t); document.querySelector('meta[name="theme-color"]').content = t === 'dark' ? '#12141c' : '#f0f2f8'; }
 try { applyTheme(localStorage.getItem('fungi-theme') === 'dark' ? 'dark' : 'light'); } catch (e) { applyTheme('light'); }
-document.getElementById('theme-switch').addEventListener('click', () => {
+document.getElementById('theme-switch').addEventListener('click', function () {
   const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-  try { localStorage.setItem('fungi-theme', next); } catch (e) {}
+  const apply = () => {
+    applyTheme(next);
+    try { localStorage.setItem('fungi-theme', next); } catch (e) {}
+  };
+  // Day-night wash: an accent-tinted circle expands from the switch, the
+  // color flip happens once covered, then the wash fades (desktop themeTo).
+  if (!motionOn()) { apply(); return; }
+  const wash = document.createElement('div');
+  wash.className = 'motion-theme-wash ' + next;
+  const r = this.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  const R = Math.hypot(Math.max(cx, innerWidth - cx), Math.max(cy, innerHeight - cy)) + 40;
+  wash.style.clipPath = 'circle(0px at ' + cx + 'px ' + cy + 'px)';
+  document.body.appendChild(wash);
+  gsap.to(wash, {
+    clipPath: 'circle(' + R + 'px at ' + cx + 'px ' + cy + 'px)',
+    duration: 0.34, ease: 'power2.in',
+    onComplete: () => {
+      apply();
+      gsap.to(wash, { opacity: 0, duration: 0.3, ease: 'power1.out', delay: 0.06, onComplete: () => wash.remove() });
+    }
+  });
 });
 
 /* ---------- boot ---------- */
