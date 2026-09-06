@@ -1,6 +1,6 @@
 """Clone base: transports + the inbox/turn thread model.
 
-Thread model (design.md): the loop thread polls the transport and dispatches
+Thread model (docs/architecture.md): the loop thread polls the transport and dispatches
 control envelopes (answer/result/err) immediately — that is what wakes blocked
 asks while a turn is running. Turn envelopes (chat/task/transfer) are queued
 to a single worker thread, keeping turns serial per clone.

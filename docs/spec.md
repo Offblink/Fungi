@@ -2,7 +2,7 @@
 
 > 定位：以 YESIR 为基座的 LAN 多主机 Orchestrator 协作网络。server 发起房间，client 直连 server，client 间流量由 server relay。存储统一在 server 主机。核心洞见：(1) 通讯 Orchestrator 之间自主交流仅限 `public/`，其他目录需征求同意；(2) 用户仅与本机 Orchestrator 交流，跨主机事务交由通讯 Orchestrator 处理。
 
-> 2026-09-03 评审定案：无 Redis（见 brainstorm 修订记录）；托盘栈 PyQt6；consent 裁决者为目录属主 host 的用户。
+> 2026-09-03 评审定案：无 Redis（见 docs/architecture.md 的 Brainstorm 修订记录）；托盘栈 PyQt6；consent 裁决者为目录属主 host 的用户。
 
 ## 1. 术语与实体
 

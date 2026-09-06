@@ -133,4 +133,4 @@ GitHub Actions（windows-latest + Python 3.13）：
 
 ## 文档
 
-设计定稿见 [`docs/`](docs/)：[spec.md](docs/spec.md)（规格与术语）、[design.md](docs/design.md)（架构决策）、[brainstorm.md](docs/brainstorm.md)、[plan.md](docs/plan.md)。
+设计定稿见 [`docs/`](docs/)：[spec.md](docs/spec.md)（规格与术语）、[architecture.md](docs/architecture.md)（立项脑暴 / 架构决策 / 阶段计划）、[webui-ux.md](docs/webui-ux.md)（WebUI UX 设计与实施记录）。
