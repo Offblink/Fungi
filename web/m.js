@@ -536,7 +536,7 @@ function handleTurnEvent(obj) {
     }
     case 'agent_spawn':
       agents[obj.content.id] = {
-        layer: obj.content.layer, goal: obj.content.goal,
+        layer: obj.content.layer, tool: obj.content.tool, goal: obj.content.goal,
         replyFormat: obj.content.reply_format || '', status: 'running', history: [],
       };
       if (obj.content.call_id) specByCall[obj.content.call_id] = obj.content.id;
@@ -570,6 +570,12 @@ function handleTurnEvent(obj) {
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
+      if (t.aborted) {
+        // stop means stop: killed background tasks never send a final status
+        Object.keys(agents).forEach(id => {
+          if (agents[id].status === 'running') setAgentStatus(id, 'aborted');
+        });
+      }
       status.textContent = t.aborted ? '已中止。'
         : (failed ? '回合失败。' : '');
       if (viewing) reloadSessionFromServer();

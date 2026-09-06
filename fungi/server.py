@@ -664,6 +664,12 @@ class YesSirHandler(BaseHTTPRequestHandler):
                             if rec.get("id") == item["id"]:
                                 rec["status"] = item["status"]
                                 rec["answer"] = item["answer"]
+                    # Their own agent_status events went to the (already
+                    # closed) spawning turn's stream, so the frontend bubbles
+                    # would never close: re-emit the final status here, on the
+                    # live resume stream.
+                    for item in resume_items:
+                        sink.emit("agent_status", {"id": item["id"], "status": item["status"]})
                     messages.append({"role": "user", "content": self._spawn_report(resume_items)})
                 messages = repair_tool_gaps(messages)
 

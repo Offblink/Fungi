@@ -366,13 +366,13 @@ function setAgentStatus(id, st) {
   if (b) {
     b.classList.remove('running', 'done', 'failed');
     b.classList.add(st);
-    if (st === 'done' || st === 'failed') {
+    if (st === 'done' || st === 'failed' || st === 'aborted') {
       // bubbles are transient: only visible while the subagent runs
       setTimeout(() => { b.remove(); }, 1500);
     }
   }
   if (a.eventsEl) {
-    const label = { done: '\u2714 finished', failed: '\u2718 failed' }[st];
+    const label = { done: '\u2714 finished', failed: '\u2718 failed', aborted: '\u25A0 stopped' }[st];
     if (label) a.eventsEl.insertAdjacentHTML('beforeend', '<div class="ev final-ev">' + label + '</div>');
   }
 }
@@ -658,8 +658,13 @@ function handleTurnEvent(obj) {
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
-      status.textContent = t.aborted ? 'Aborted. Press Alt+R to continue.'
-        : (failed ? 'Turn failed. Press Alt+R to retry.' : '');
+      if (t.aborted) {
+        // stop means stop: background subagents/commands were killed - their
+        // final agent_status events had no live stream to ride on
+        Object.keys(agents).forEach(id => {
+          if (agents[id].status === 'running') setAgentStatus(id, 'aborted');
+        });
+      }
       if (viewing) reloadSessionFromServer();
       else loadSessions(); // the finished turn landed in a background session
       break;
