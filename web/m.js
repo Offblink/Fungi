@@ -381,7 +381,21 @@ function reattachIfRunning(sid) {
   renderTurnLive();
   pumpStream(api('/events?sessionId=' + encodeURIComponent(sid)), null, 'GET');
 }
+/* A stream that dies without a done event (user hard-abort, network drop,
+   server crash) leaves live-node cards whose content never reached a disk-
+   backed render. Reconcile with the persisted transcript immediately, then
+   resume streaming if the turn still runs server-side — otherwise the cards
+   vanish at the next renderTurnLive (new send / reattach), with no done ever
+   arriving to reload them. */
+async function recoverAfterDrop(sid) {
+  if (!sid) return;
+  await reloadSessionFromServer();
+  if (turn || processing) return; // user already started something else
+  await loadSessions();           // fresh s.running for the reattach check
+  reattachIfRunning(sid);
+}
 async function pumpStream(url, body, method = 'POST') {
+  const sid = turn ? turn.sessionId : null; // the stream may die mid-turn
   try {
     const opts = { method, signal: abortCtrl.signal };
     if (body !== null) {
@@ -413,11 +427,13 @@ async function pumpStream(url, body, method = 'POST') {
     if (e.name === 'AbortError') status.textContent = '已中止。';
     else status.textContent = '错误：' + e.message;
     turn = null;
+    recoverAfterDrop(sid);
   }
   if (turn) {
     // Stream ended without a done event: never leave a phantom live turn.
     status.textContent = '连接中断。';
     turn = null;
+    recoverAfterDrop(sid);
   }
   processing = false; setBusy(false);
 }

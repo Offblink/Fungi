@@ -504,7 +504,21 @@ function reattachIfRunning(sid) {
   renderTurnLive();
   pumpStream('/events?sessionId=' + encodeURIComponent(sid), null, 'GET');
 }
+/* A stream that dies without a done event (user hard-abort, network drop,
+   server crash) leaves live-node cards whose content never reached a disk-
+   backed render. Reconcile with the persisted transcript immediately, then
+   resume streaming if the turn still runs server-side — otherwise the cards
+   vanish at the next renderTurnLive (new send / reattach), with no done ever
+   arriving to reload them. */
+async function recoverAfterDrop(sid) {
+  if (!sid) return;
+  await reloadSessionFromServer();
+  if (turn || processing) return; // user already started something else
+  await loadSessions();           // fresh s.running for the reattach check
+  reattachIfRunning(sid);
+}
 async function pumpStream(url, body, method = 'POST') {
+  const sid = turn ? turn.sessionId : null; // the stream may die mid-turn
   try {
     const opts = { method, signal: abortCtrl.signal };
     if (body !== null) {
@@ -533,12 +547,14 @@ async function pumpStream(url, body, method = 'POST') {
     if (e.name === 'AbortError') status.textContent = 'Aborted.';
     else status.textContent = 'Error: ' + e.message;
     turn = null;
+    recoverAfterDrop(sid);
   }
   if (turn) {
     // Stream ended without a done event (server died mid-turn): the UI used
     // to stay stuck on "Writing..." with a phantom live turn.
     status.textContent = 'Connection lost. Press Alt+R to retry.';
     turn = null;
+    recoverAfterDrop(sid);
   }
   processing = false; btn.disabled = false;
   window.fungiMotion?.waveOff?.();
