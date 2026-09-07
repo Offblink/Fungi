@@ -107,9 +107,6 @@ server 启动后最小化到系统托盘；未决同意请求以 WebUI 卡片呈
 # 全量门禁：ruff --fix → format → 复检 → pytest（267 passed）
 powershell -File scripts/check.ps1
 
-# 三进程冒烟（1 server + 2 client，FakeLLM，~18s；--real 走真实 LLM ~90s，--keep 留数据调试）
-python scripts/smoke_fungi.py
-
 # 自测钩子：托盘 + 卡片应答 + 阻塞解除全链路，~7s 出 "FUNGI SELFTEST OK"
 FUNGI_SELFTEST=1 python -m fungi --server --token x --data %TEMP%\fungi-selftest
 ```

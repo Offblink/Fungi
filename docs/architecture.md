@@ -124,7 +124,7 @@ fungi/
   tools/                    # 移植自 YESIR + 路径守卫包装
   tray.py                   # PyQt5 托盘：运行时画图标 + fluent 菜单 + showMessage 通知
   web/                      # YESIR web 移植 + consent 卡片
-scripts/check.ps1  scripts/smoke_fungi.py
+scripts/check.ps1
 tests/
 ```
 
@@ -193,6 +193,6 @@ Qt 与后台线程交互经信号桥（洞见 `_Bridge` 同构，queued 连接�
 
 ## Phase 5: E2E
 
-- localhost 三进程冒烟脚本（scripts/smoke_fungi.py）：server + 2 clients，FakeLLM，跑通自主交流 + consent + delegate。
+- localhost 三进程冒烟（单机 127.0.0.1 模拟三主机）：server + 2 clients，FakeLLM，跑通自主交流 + consent + delegate；曾以 scripts/smoke_fungi.py 落地，2026-09-07 已删除，链路由 pytest 契约测试覆盖。
 - 真实 LLM 冒烟（ZAI_API_KEY 配方）；真机 LAN 手动测试清单（README 编辑需用户明示）。
 - 验收：冒烟脚本绿；手动清单留待用户执行。
