@@ -334,9 +334,14 @@ async function finishRename(row, s, inp) {
 }
 
 /* ---------- sidebar wiring ---------- */
-function toggleSidebar() { document.getElementById('sidebar').classList.toggle('collapsed'); }
-document.getElementById('sidebar-toggle').addEventListener('click', toggleSidebar);
-document.getElementById('hamburger-sidebar').addEventListener('click', toggleSidebar);
+const burger = document.getElementById('hamburger-sidebar');
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const collapsed = sb.classList.toggle('collapsed');
+  burger.textContent = collapsed ? '\u276E' : '\u276F'; /* hidden: <, shown: > */
+}
+burger.addEventListener('click', toggleSidebar);
+burger.textContent = document.getElementById('sidebar').classList.contains('collapsed') ? '\u276E' : '\u276F';
 document.getElementById('session-filter').addEventListener('input', renderSessionList);
 document.getElementById('btn-new-session').addEventListener('click', () => newSession());
 
