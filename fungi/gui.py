@@ -65,7 +65,6 @@ from qfluentwidgets import (
 from . import update
 from .config import (
     DEFAULT_API_KEY,
-    DEFAULT_ENDPOINT,
     PROJECT_ROOT,
     load_config,
     save_config,
@@ -901,7 +900,7 @@ class ConfigPage(QWidget):
 
         self.endpoint_edit = LineEdit()
         self.endpoint_edit.setFixedWidth(360)
-        self.endpoint_edit.setPlaceholderText(f"接口地址（默认 {DEFAULT_ENDPOINT}）")
+        self.endpoint_edit.setPlaceholderText("接口地址（留空 = 保持不变）")
         root.addWidget(_row("接口地址", self.endpoint_edit))
 
         self.model_edit = LineEdit()
