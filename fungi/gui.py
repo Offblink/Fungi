@@ -922,6 +922,25 @@ class ConfigPage(QWidget):
         self.download_btn.clicked.connect(self._download_models)
         root.addWidget(self.download_btn)
 
+        # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("实验性"))
+        diary_title_row = QHBoxLayout()
+        diary_title_row.addWidget(BodyLabel("日记"))
+        diary_title_row.addStretch(1)
+        self.diary_switch = SwitchButton()
+        # setChecked BEFORE connecting: checkedChanged fires on programmatic
+        # changes too, and _toggle_diary pops an InfoBar that needs window_ref.
+        self.diary_switch.setChecked(load_config().diary)
+        self.diary_switch.checkedChanged.connect(self._toggle_diary)
+        root.addLayout(diary_title_row)
+        diary_hint = BodyLabel(
+            "让 Orchestrator 写自己的私人日记（data/diary/）。\n"
+            "内容只有它自己能看：界面不展示，它被问到也会守口如瓶。关闭后工具与记忆注入一并移除。"
+        )
+        diary_hint.setWordWrap(True)
+        root.addWidget(diary_hint)
+
         # 软件更新：自动检查，落后才亮按钮（不自动更新）
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("软件更新"))
@@ -951,24 +970,6 @@ class ConfigPage(QWidget):
         self.update_checked.connect(self._apply_update_status)
         self.update_progress.connect(self._on_update_progress)
         self.update_finished.connect(self._on_update_finished)
-        root.addSpacing(10)
-        diary_row = QHBoxLayout()
-        diary_col = QVBoxLayout()
-        diary_col.addWidget(SubtitleLabel("日记（实验性）"))
-        diary_hint = BodyLabel(
-            "让 Orchestrator 写自己的私人日记（data/diary/）。内容只有它自己"
-            "能看：界面不展示，它被问到也会守口如瓶。关闭后工具与记忆注入一并移除。"
-        )
-        diary_hint.setWordWrap(True)
-        diary_col.addWidget(diary_hint)
-        diary_row.addLayout(diary_col, 1)
-        self.diary_switch = SwitchButton()
-        self.diary_switch.setChecked(load_config().diary)
-        self.diary_switch.checkedChanged.connect(self._toggle_diary)
-        diary_row.addWidget(self.diary_switch)
-        root.addLayout(diary_row)
-        root.addSpacing(10)
-        root.addWidget(SubtitleLabel("软件更新"))
         self._upd_thread: threading.Thread | None = None
         self._upd_busy = False
         self._upd_status: dict | None = None
