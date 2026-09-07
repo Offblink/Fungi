@@ -336,7 +336,7 @@ async function finishRename(row, s, inp) {
 /* ---------- sidebar wiring ---------- */
 const burger = document.getElementById('hamburger-sidebar');
 function toggleSidebar() {
-  const sb = document.getElementById('sidebar');
+  const collapsed = document.getElementById('sidebar').classList.toggle('collapsed');
   burger.textContent = collapsed ? '\u276F' : '\u276E'; /* collapsed: > (reopen), open: < (collapse) */
 }
 burger.addEventListener('click', toggleSidebar);
