@@ -337,11 +337,10 @@ async function finishRename(row, s, inp) {
 const burger = document.getElementById('hamburger-sidebar');
 function toggleSidebar() {
   const sb = document.getElementById('sidebar');
-  const collapsed = sb.classList.toggle('collapsed');
-  burger.textContent = collapsed ? '\u276E' : '\u276F'; /* hidden: <, shown: > */
+  burger.textContent = collapsed ? '\u276F' : '\u276E'; /* collapsed: > (reopen), open: < (collapse) */
 }
 burger.addEventListener('click', toggleSidebar);
-burger.textContent = document.getElementById('sidebar').classList.contains('collapsed') ? '\u276E' : '\u276F';
+burger.textContent = document.getElementById('sidebar').classList.contains('collapsed') ? '\u276F' : '\u276E';
 document.getElementById('session-filter').addEventListener('input', renderSessionList);
 document.getElementById('btn-new-session').addEventListener('click', () => newSession());
 
