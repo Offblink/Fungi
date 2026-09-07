@@ -76,6 +76,37 @@ class BoundTool:
 PRIVATE_TOOLS = frozenset({"diary"})
 
 
+def public_messages(messages: list[dict]) -> list[dict]:
+    """Session-transcript view of a turn: PRIVATE_TOOLS calls (diary reads
+    and writes) are the agent's inner life. The live stream already suppresses
+    their card events, but the end-of-turn re-render reads the persisted
+    messages, where the assistant message itself carries tool_calls - so the
+    persistence boundary must strip them too. The LLM context keeps them (the
+    API requires the pairing); they are stateless tool calls, nothing is lost.
+    """
+    private_ids: set[str] = set()
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        tcs = m.get("tool_calls") if role == "assistant" else None
+        if role == "tool" and m.get("tool_call_id") in private_ids:
+            continue
+        if tcs:
+            visible = [tc for tc in tcs if tc.get("function", {}).get("name") not in PRIVATE_TOOLS]
+            if len(visible) == len(tcs):
+                out.append(m)
+                continue
+            private_ids.update(
+                tc["id"] for tc in tcs if tc.get("function", {}).get("name") in PRIVATE_TOOLS
+            )
+            if not visible:
+                continue  # the turn's only calls were private: drop wholesale
+            out.append({**m, "tool_calls": visible})
+            continue
+        out.append(m)
+    return out
+
+
 def wrap_reasoning_events(sink: Sink) -> tuple[EmitFn, dict]:
     """Delta callback that brackets the first/last reasoning delta with
     reasoning_start / reasoning_end so the UI can render a live block."""

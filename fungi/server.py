@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fungi import session
-from fungi.agent import SYSTEM_PROMPT, Agent
+from fungi.agent import SYSTEM_PROMPT, Agent, public_messages
 from fungi.config import PROJECT_ROOT, RESOURCE_ROOT, load_config, save_config
 from fungi.events import Sink
 from fungi.hub.app import safe_name
@@ -681,7 +681,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self.runtime.sessions_save(
                     session_id,
                     session.get_session_title(messages),
-                    messages,
+                    public_messages(messages),
                     subagents=prior,
                     asks=prior_asks,
                 )
@@ -706,7 +706,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
                         self.runtime.sessions_save(
                             session_id,
                             session.get_session_title(messages),
-                            messages,
+                            public_messages(messages),
                             subagents=prior + new_subs,
                             asks=prior_asks + new_asks,
                         )
