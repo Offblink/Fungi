@@ -38,6 +38,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QScrollArea,
     QShortcut,
+    QSizePolicy,
     QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
@@ -926,14 +927,21 @@ class ConfigPage(QWidget):
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("实验性"))
         diary_title_row = QHBoxLayout()
-        diary_title_row.addWidget(BodyLabel("Diary"))
-        diary_title_row.addStretch(1)
+        diary_lbl = BodyLabel("Diary")
+        # SwitchButton's default size policy is Expanding: without pinning
+        # both widgets to Fixed the switch drifts to mid-row instead of
+        # sitting right next to the label.
+        diary_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        diary_title_row.addWidget(diary_lbl)
+        diary_title_row.addSpacing(8)
         self.diary_switch = SwitchButton()
+        self.diary_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         # setChecked BEFORE connecting: checkedChanged fires on programmatic
         # changes too, and _toggle_diary pops an InfoBar that needs window_ref.
         self.diary_switch.setChecked(load_config().diary)
         diary_title_row.addWidget(self.diary_switch)
         self.diary_switch.checkedChanged.connect(self._toggle_diary)
+        diary_title_row.addStretch(1)
         root.addLayout(diary_title_row)
         diary_hint = BodyLabel(
             "让 Orchestrator 写自己的私人日记（data/diary/）。\n"
