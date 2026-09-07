@@ -926,12 +926,13 @@ class ConfigPage(QWidget):
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("实验性"))
         diary_title_row = QHBoxLayout()
-        diary_title_row.addWidget(BodyLabel("日记"))
+        diary_title_row.addWidget(BodyLabel("Diary"))
         diary_title_row.addStretch(1)
         self.diary_switch = SwitchButton()
         # setChecked BEFORE connecting: checkedChanged fires on programmatic
         # changes too, and _toggle_diary pops an InfoBar that needs window_ref.
         self.diary_switch.setChecked(load_config().diary)
+        diary_title_row.addWidget(self.diary_switch)
         self.diary_switch.checkedChanged.connect(self._toggle_diary)
         root.addLayout(diary_title_row)
         diary_hint = BodyLabel(
