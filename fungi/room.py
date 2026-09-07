@@ -28,8 +28,10 @@ from .cards import AskCards
 from .clone.base import Clone, LocalTransport, RemoteTransport
 from .clone.comm import build_comm_clone
 from .clone.local import build_local_clone
-from .config import Config
+from .config import Config, load_config
 from .consent_rules import ConsentRules
+from .diary import bound as diary_bound
+from .diary import section as diary_section
 from .events import Sink
 from .hub.app import Hub
 from .hub.client import HubClient, HubError
@@ -585,9 +587,18 @@ class RoomRuntime(WebUIRuntime):
             on_answer=trilayer.asks.append,
             should_abort=should_abort,
         )
+        # Experimental private diary: re-read the flag every turn so the
+        # settings switch applies without a restart (self.room.cfg is the
+        # cached room-start snapshot). Local clone only — comm clones never
+        # get the diary (their turns go through clone/base.build_agent).
+        if load_config().diary:
+            tools["diary"] = diary_bound()["diary"]
+            prompt = clone.system_prompt + diary_section()
+        else:
+            prompt = clone.system_prompt
         return trilayer.build_clone_agent(
             sink,
-            system_prompt=clone.system_prompt,
+            system_prompt=prompt,
             extra_tools=tools,
             tool_names=clone.tool_names,
             model=clone.model,
