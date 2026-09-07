@@ -39,6 +39,9 @@ class Config:
     # >0: send max_tokens on every completion (0 = provider default). Rationale:
     # reasoning-heavy turns can die at the provider's output cap with an empty reply.
     max_tokens: int = 0
+    # Experimental private diary (data/diary/): attach the diary tool and
+    # inject the diary history into the L1 prompt. Off = the feature is absent.
+    diary: bool = False
 
     @property
     def configured(self) -> bool:
@@ -81,6 +84,7 @@ def load_config(path: Path | None = None) -> Config:
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
             cfg.max_tokens = int(data["max_tokens"])
+        cfg.diary = bool(data.get("diary", False))
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -107,6 +111,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["max_file_mb"] = cfg.max_file_mb
     if cfg.inbox_dir:
         data["inbox_dir"] = cfg.inbox_dir
+    if cfg.diary:
+        data["diary"] = True
     if cfg.display:
         data["display"] = cfg.display
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")

@@ -10,11 +10,12 @@ the requested format. Final answers flow back as the spawn tool result.
 import contextlib
 import json
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fungi import skills, tools
+from fungi import diary, skills, tools
 from fungi.agent import SYSTEM_PROMPT, Agent, BoundTool
 from fungi.config import Config
 from fungi.events import FnSink, Sink
@@ -110,6 +111,16 @@ BACKGROUND_SCHEMA = {
             "properties": {
                 "command": {"type": "string", "description": "The exact shell command to run"},
                 "cwd": {"type": "string", "description": "Working directory (optional)"},
+                "timeout": {
+                    "type": "number",
+                    "description": (
+                        "Optional wall-clock cap in seconds. When it expires the"
+                        " command is killed and the report carries the partial"
+                        " output plus a timeout note. Give it ONLY when you know"
+                        " a reasonable upper bound for a slow command; omit = no"
+                        " limit."
+                    ),
+                },
             },
             "required": ["command"],
         },
@@ -145,6 +156,15 @@ SPAWN_SCHEMA = {
                     "type": "string",
                     "description": "Hard boundaries, e.g. files it may touch (optional)",
                 },
+                "timeout": {
+                    "type": "number",
+                    "description": (
+                        "Optional wall-clock cap in seconds. When it expires the"
+                        " subagent is aborted and the report carries whatever it"
+                        " produced plus a timeout note. Give it ONLY for tasks"
+                        " with a known reasonable upper bound; omit = no limit."
+                    ),
+                },
             },
             "required": ["goal", "reply_format"],
         },
@@ -161,6 +181,8 @@ class TaskSpec:
     context: str = ""
     constraints: str = ""
     parent_id: str | None = None
+    # Optional wall-clock cap in seconds; None = run until done or /stop.
+    timeout: float | None = None
 
 
 def task_brief(spec: TaskSpec) -> str:
@@ -241,6 +263,11 @@ class TriLayer:
             if not command:
                 return "ERROR: Missing required argument: command"
             cwd = str(args.get("cwd") or "").strip() or None
+            raw_timeout = args.get("timeout")
+            try:
+                timeout = float(raw_timeout) if raw_timeout else None
+            except (TypeError, ValueError):
+                return "ERROR: timeout must be a number of seconds"
 
             with self._lock:
                 if self._active >= MAX_SPAWNS_PER_TURN:
@@ -274,12 +301,30 @@ class TriLayer:
                 )
 
             def _bg() -> None:
-                answer = tool_bash(command, cwd=cwd, should_abort=self._should_abort)
-                status = "failed" if answer.startswith("ERROR:") else "done"
-                if self._should_abort is not None and self._should_abort():
+                started = time.monotonic()
+                deadline = started + timeout if timeout is not None else None
+                base = self._should_abort
+
+                def _abort() -> bool:
+                    if base is not None and base():
+                        return True
+                    return deadline is not None and time.monotonic() > deadline
+
+                answer = tool_bash(command, cwd=cwd, should_abort=_abort)
+                user_stopped = base is not None and base()
+                if deadline is not None and time.monotonic() > deadline and not user_stopped:
+                    status = "timeout"
+                    answer += (
+                        f"\n\n[timeout] The {timeout:.0f}s limit you set expired;"
+                        " the command was killed. Everything above is the output"
+                        " captured before the cutoff."
+                    )
+                elif user_stopped:
                     # Stopped while running: mark it, never re-activate (same
                     # contract as the spawn path - stop means stop).
                     status = "aborted"
+                else:
+                    status = "failed" if answer.startswith("ERROR:") else "done"
                 record["status"] = status
                 record["answer"] = answer
                 with contextlib.suppress(Exception):
@@ -312,20 +357,25 @@ class TriLayer:
 
     def build_orchestrator(self, sink: Sink) -> Agent:
         """The L1 agent, ready to run user turns."""
+        prompt = SYSTEM_PROMPT + L1_ADDENDUM + skills.section()
+        extra = {
+            "spawn": self.bound_spawn(1),
+            "background": self.bound_background(1),
+            "inquire": make_ask_tool(
+                sink, on_answer=self.asks.append, should_abort=self._should_abort
+            ),
+            **mcp_extra_tools(self.cfg.mcp_servers),
+            **skills.bound(),
+        }
+        if self.cfg.diary:  # experimental: private diary off by default
+            prompt += diary.section()
+            extra.update(diary.bound())
         agent = Agent(
             self.cfg,
             sink,
-            system_prompt=SYSTEM_PROMPT + L1_ADDENDUM + skills.section(),
-            extra_tools={
-                "spawn": self.bound_spawn(1),
-                "background": self.bound_background(1),
-                "inquire": make_ask_tool(
-                    sink, on_answer=self.asks.append, should_abort=self._should_abort
-                ),
-                **mcp_extra_tools(self.cfg.mcp_servers),
-                **skills.bound(),
-            },
-            parallel_tools={"spawn", "background"},
+            system_prompt=prompt,
+            extra_tools=extra,
+            parallel_tools={"spawn", "background", "diary"} if self.cfg.diary else {"spawn", "background"},
             llm=self._llm,
             model=self.cfg.model_for(1),
             should_abort=self._should_abort,
@@ -385,6 +435,11 @@ class TriLayer:
                 return f"ERROR: spawn limit reached ({MAX_SPAWNS_PER_TURN} per turn)."
             self._active += 1
 
+        raw_timeout = args.get("timeout")
+        try:
+            timeout = float(raw_timeout) if raw_timeout else None
+        except (TypeError, ValueError):
+            return "ERROR: timeout must be a number of seconds"
         spec = TaskSpec(
             id=uuid.uuid4().hex[:6],
             layer=child_layer,
@@ -392,6 +447,7 @@ class TriLayer:
             reply_format=reply_format,
             context=str(args.get("context") or ""),
             constraints=str(args.get("constraints") or ""),
+            timeout=timeout,
         )
         record = {
             "id": spec.id,
@@ -443,11 +499,23 @@ class TriLayer:
             "re-activated with its report as the input of a new turn."
         )
 
+    def _timed_out(self, spec: TaskSpec, started: float) -> bool:
+        """True when the spec's own deadline expired (user /stop is separate)."""
+        return spec.timeout is not None and time.monotonic() - started >= spec.timeout
+
     def _run_bg(self, spec: TaskSpec, record: dict) -> None:
         """Background body of a spawn: run, finalize the record, notify."""
+        started = time.monotonic()
         try:
             answer = self._run_task(spec)
             status = "failed" if answer.startswith("FAIL") else "done"
+            if self._timed_out(spec, started):
+                status = "timeout"
+                answer += (
+                    f"\n\n[timeout] The {spec.timeout:.0f}s limit you set expired;"
+                    " the subagent was aborted mid-task. Everything above is what"
+                    " it produced before the cutoff."
+                )
         except Exception as exc:  # a crashed child must not kill the session
             answer = f"FAIL: subagent crashed: {exc}"
             status = "failed"
@@ -474,7 +542,19 @@ class TriLayer:
                     {"id": spec.id, "goal": record["goal"], "status": status, "answer": answer}
                 )
 
+    def _child_abort(self, spec: TaskSpec, started: float) -> Callable[[], bool]:
+        """Abort predicate for one child run: user /stop OR the spec deadline."""
+        base = self._should_abort
+
+        def _abort() -> bool:
+            if base is not None and base():
+                return True
+            return self._timed_out(spec, started)
+
+        return _abort
+
     def _run_task(self, spec: TaskSpec) -> str:
+        started = time.monotonic()
         child_sink = FnSink(lambda t, c, _sid=spec.id: self._record_event(_sid, t, c))
         agent = Agent(
             self.cfg,
@@ -500,7 +580,7 @@ class TriLayer:
             parallel_tools={"spawn"},
             llm=self._llm,
             model=self.cfg.model_for(spec.layer),
-            should_abort=self._should_abort,
+            should_abort=self._child_abort(spec, started),
         )
         messages: list[dict] = [{"role": "user", "content": task_brief(spec)}]
         result = agent.run(messages)

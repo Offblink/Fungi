@@ -52,6 +52,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    SwitchButton,
     SystemTrayMenu,
     TitleLabel,
     ToolButton,
@@ -950,6 +951,24 @@ class ConfigPage(QWidget):
         self.update_checked.connect(self._apply_update_status)
         self.update_progress.connect(self._on_update_progress)
         self.update_finished.connect(self._on_update_finished)
+        root.addSpacing(10)
+        diary_row = QHBoxLayout()
+        diary_col = QVBoxLayout()
+        diary_col.addWidget(SubtitleLabel("日记（实验性）"))
+        diary_hint = BodyLabel(
+            "让 Orchestrator 写自己的私人日记（data/diary/）。内容只有它自己"
+            "能看：界面不展示，它被问到也会守口如瓶。关闭后工具与记忆注入一并移除。"
+        )
+        diary_hint.setWordWrap(True)
+        diary_col.addWidget(diary_hint)
+        diary_row.addLayout(diary_col, 1)
+        self.diary_switch = SwitchButton()
+        self.diary_switch.setChecked(load_config().diary)
+        self.diary_switch.checkedChanged.connect(self._toggle_diary)
+        diary_row.addWidget(self.diary_switch)
+        root.addLayout(diary_row)
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("软件更新"))
         self._upd_thread: threading.Thread | None = None
         self._upd_busy = False
         self._upd_status: dict | None = None
@@ -1084,6 +1103,18 @@ class ConfigPage(QWidget):
         self._refresh_status()
         InfoBar.success(
             "已保存", "模型配置已写入 config.json", duration=2500, parent=self.window_ref
+        )
+
+    def _toggle_diary(self, checked: bool) -> None:
+        """实验性日记开关：即时写盘，下一轮对话生效（agent 每轮重建）。"""
+        cfg = load_config()
+        cfg.diary = bool(checked)
+        save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "日记已开启，下一轮对话生效" if checked else "日记已关闭，下一轮对话生效",
+            duration=2500,
+            parent=self.window_ref,
         )
 
     def check_update(self) -> None:

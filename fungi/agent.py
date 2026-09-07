@@ -70,6 +70,12 @@ class BoundTool:
     with_call_id: bool = False  # fn also receives the tool_call id
 
 
+# Tools whose calls are the agent's inner life: no WebUI card, no transcript
+# event, nothing in the session replay. The user can learn about them only by
+# the agent choosing to say so (e.g. "I flipped through my diary").
+PRIVATE_TOOLS = frozenset({"diary"})
+
+
 def wrap_reasoning_events(sink: Sink) -> tuple[EmitFn, dict]:
     """Delta callback that brackets the first/last reasoning delta with
     reasoning_start / reasoning_end so the UI can render a live block."""
@@ -214,7 +220,9 @@ class Agent:
             return
         raw_args = tc["function"]["arguments"]
         args, parse_error = parse_tool_args(raw_args)
-        self.sink.emit("tool", {"name": name, "args": raw_args, "id": tc["id"]})
+        private = name in PRIVATE_TOOLS
+        if not private:
+            self.sink.emit("tool", {"name": name, "args": raw_args, "id": tc["id"]})
         if parse_error is not None:
             # Never dispatch with silently-emptied args: the tool's
             # "Required arguments" message would hide the real failure.
@@ -225,7 +233,8 @@ class Agent:
             )
         else:
             output = self._dispatch(name, args, call_id=tc["id"])
-        self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
+        if not private:
+            self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
         messages.append(
             {"role": "tool", "tool_call_id": tc["id"], "content": _tool_content(output)}
         )
