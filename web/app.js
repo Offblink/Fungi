@@ -1037,7 +1037,7 @@ const Mail = FC.initMail({
   badgeEl: document.getElementById('mail-badge'),
   displayOf,
   locale: 'en-US',
-  strings: { title: 'Mail', markRead: 'Mark read', back: 'Back', empty: 'No mail yet.' },
+  strings: { title: 'Amail', markRead: 'Mark read', back: 'Back', empty: 'No mail yet.' },
 });
 document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
 Mail.start();

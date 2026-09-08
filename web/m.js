@@ -1135,7 +1135,7 @@ const Mail = FC.initMail({
   badgeEl: document.getElementById('mail-badge'),
   displayOf,
   locale: 'zh-CN',
-  strings: { title: '邮件', markRead: '标记已读', back: '返回', empty: '暂无邮件' },
+  strings: { title: 'Amail', markRead: '标记已读', back: '返回', empty: '暂无邮件' },
 });
-document.getElementById('mail-entry').addEventListener('click', () => { Mail.open(); closeDrawer(); });
+document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
 Mail.start();
