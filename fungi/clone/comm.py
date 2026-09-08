@@ -45,6 +45,7 @@ def build_comm_clone(
     system_prompt: str | None = None,
     inbox_dir: Path | None = None,
     on_turn_end=None,
+    on_direct=None,
 ) -> Clone:
     addr = f"{host}:comm-{peer}"
     pending = PendingAsks()
@@ -78,6 +79,7 @@ def build_comm_clone(
         on_transfer=comm_tools.receive_transfer,
         on_chat_end=_chat_end,
         on_turn_end=on_turn_end,
+        on_direct=on_direct,
         # No native base tools: file work only via the guarded fs tools; the
         # spawned workers inherit exactly that surface (spec 6.1).
         tool_names=frozenset(),

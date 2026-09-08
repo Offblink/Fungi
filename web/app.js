@@ -1,5 +1,6 @@
 /* Fungi web UI */
 marked.setOptions({ breaks: true, gfm: true });
+const FC = window.FungiCommon;
 const msgs = document.getElementById('messages'), input = document.getElementById('input'),
   btn = document.getElementById('send'), status = document.getElementById('status'),
   tray = document.getElementById('agent-tray');
@@ -13,9 +14,7 @@ function setCurrentSession(id) {
 }
 
 /* ---------- helpers ---------- */
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+const escapeHtml = FC.escapeHtml;
 function addDiv(cls, html, id) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
@@ -36,50 +35,11 @@ function updateScrollBtn() {
 document.getElementById('scroll-bottom').addEventListener('click', () => { msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); });
 msgs.addEventListener('scroll', updateScrollBtn);
 
-function getSessionTitle(list) {
-  const u = list.find(m => m.role === 'user');
-  if (!u) return 'Empty';
-  const t = String(u.content).replace(/\s+/g, ' ').trim();
-  return t.length > 55 ? t.slice(0, 52) + '...' : t;
-}
+const getSessionTitle = list => FC.getSessionTitle(list, 55, 52);
 
-/* ---------- confirm modal ---------- */
-let _confirmState = null;
-function showConfirm(opts) {
-  const overlay = document.getElementById('confirm-overlay');
-  const ok = document.getElementById('confirm-ok');
-  document.getElementById('confirm-title').textContent = opts.title || 'Are you sure?';
-  document.getElementById('confirm-message').textContent = opts.message || '';
-  ok.textContent = opts.confirmText || 'OK';
-  document.getElementById('confirm-cancel').textContent = opts.cancelText || 'Cancel';
-  ok.classList.toggle('danger', !!opts.danger);
-  _confirmState = { onConfirm: opts.onConfirm, danger: !!opts.danger };
-  overlay.classList.add('show');
-  document.getElementById('confirm-cancel').focus();
-}
-function closeConfirm(confirmed) {
-  const overlay = document.getElementById('confirm-overlay');
-  if (!overlay.classList.contains('show')) return;
-  overlay.classList.remove('show');
-  const state = _confirmState;
-  _confirmState = null;
-  if (confirmed && state && state.onConfirm) state.onConfirm();
-}
-(function initConfirmModal() {
-  const overlay = document.getElementById('confirm-overlay');
-  document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));
-  document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
-  overlay.addEventListener('mousedown', e => { if (e.target === overlay) closeConfirm(false); });
-  document.addEventListener('keydown', e => {
-    if (!overlay.classList.contains('show')) return;
-    if (e.key === 'Escape') { e.preventDefault(); closeConfirm(false); }
-    // Enter confirms non-danger prompts only; destructive actions need a real click.
-    if (e.key === 'Enter' && _confirmState && !_confirmState.danger) {
-      e.preventDefault();
-      closeConfirm(true);
-    }
-  });
-})();
+/* ---------- confirm modal (shared impl in common.js) ---------- */
+FC.initConfirmModal({ keyboard: 'desktop' });
+const showConfirm = FC.showConfirm, closeConfirm = FC.closeConfirm;
 
 /* ---------- sessions ---------- */
 let _sessionsSeq = 0;
@@ -199,13 +159,9 @@ function renderTranscript(messages, asks) {
         else addDiv('assistant', marked.parse(m.content));
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
-        const d = document.createElement('div');
-        d.className = 'msg tool'; d.id = 'tool-' + tc.id;
-        const args = tc.function?.arguments || '';
-        const argsHtml = args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(args.length > 80 ? args.slice(0, 80) + '...' : args) + '</code>' : '';
-        d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(tc.function?.name || 'tool') + argsHtml + '</div><div class="tool-result"></div>';
+        const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 80 });
         msgs.appendChild(d);
-        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') makeSpawnBlockClickable(d, tc.id);
+        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId]);
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
           const rec = askQueue.shift();
           if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
@@ -214,7 +170,7 @@ function renderTranscript(messages, asks) {
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
-      if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(m.content || '') + '</pre>';
+      if (block) FC.fillToolResult(block, m.content || '');
       else addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>');
     }
   }
@@ -298,18 +254,7 @@ function renderSessionList() {
   if (window.fungiMotion && !window.fungiMotion.reduced && window.fungiMotion.listFlip) window.fungiMotion.listFlip(list, mutate);
   else mutate();
 }
-function fmtDate(d) {
-  if (!d) return '';
-  const diff = Date.now() - new Date(d).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'now';
-  if (m < 60) return m + 'm';
-  const h = Math.floor(m / 60);
-  if (h < 24) return h + 'h';
-  const days = Math.floor(h / 24);
-  if (days < 7) return days + 'd';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
+const fmtDate = d => FC.fmtDate(d, 'en-US');
 function startRename(row, s) {
   const titleEl = row.querySelector('.session-row-title');
   const old = titleEl.textContent;
@@ -428,14 +373,6 @@ function openAgentModal(id) {
     overlay.classList.remove('show'); a.eventsEl = null;
   });
   overlay.classList.add('show');
-}
-function makeSpawnBlockClickable(el, callId) {
-  el.classList.add('spawn-block');
-  el.title = 'Click to view subagent details';
-  el.addEventListener('click', () => {
-    const id = specByCall[callId] || archivedByCall[callId];
-    if (id) openAgentModal(id);
-  });
 }
 function registerArchived(subs) {
   archived = {};
@@ -629,7 +566,7 @@ function handleTurnEvent(obj) {
       const rec = t.entries.find(x => x.kind === 'tool' && x.id === obj.content.id)
         || [...t.entries].reverse().find(x => x.kind === 'tool' && !x.result);
       if (rec) rec.result = obj.content.content;
-      if (visible) { status.textContent = 'Thinking...'; const block = document.getElementById('tool-' + obj.content.id); if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(obj.content.content) + '</pre>'; else renderTurnLive(); }
+      if (visible) { status.textContent = 'Thinking...'; const block = document.getElementById('tool-' + obj.content.id); if (block) FC.fillToolResult(block, obj.content.content); else renderTurnLive(); }
       break;
     }
     case 'agent_spawn':
@@ -719,12 +656,10 @@ function renderTurnLive() {
       ad.innerHTML = marked.parse(e.content);
       msgs.appendChild(ad);
     } else if (e.kind === 'tool') {
-      const d = document.createElement('div');
-      d.className = 'msg tool live-node'; d.id = 'tool-' + e.id;
-      const argsHtml = e.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(e.args.length > 80 ? e.args.slice(0, 80) + '...' : e.args) + '</code>' : '';
-      d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(e.name) + argsHtml + '</div><div class="tool-result">' + (e.result ? '<pre>' + escapeHtml(e.result) + '</pre>' : '') + '</div>';
+      const d = FC.buildToolCard({ id: e.id, name: e.name, args: e.args, result: e.result }, { argsMax: 80 });
+      d.classList.add('live-node');
       msgs.appendChild(d);
-      if (e.name === 'spawn' || e.name === 'background') makeSpawnBlockClickable(d, e.id);
+      if (e.name === 'spawn' || e.name === 'background') FC.attachSpawnClick(d, e.id, callId => specByCall[callId] || archivedByCall[callId]);
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');
@@ -797,230 +732,47 @@ loadSessions().then(() => {
 });
 
 /* ---------- ask card (Inquire) ---------- */
-function saveAskCardState() {
-  const card = document.getElementById('ask-card');
-  if (!card) return null;
-  return (card._askQuestions || []).map((q, qi) => {
-    const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-    const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-    return { sel: sel ? sel.querySelector('b').textContent : null, val: inp ? inp.value : '' };
-  });
-}
-
-function askQuestionHtml(q, qi) {
-  const opts = (q.options || []).map(o =>
-    '<button type="button" class="ask-option" data-q="' + qi + '"><b>' + escapeHtml(o.label) + '</b>'
-    + (o.description ? '<br><span class="ask-desc">' + escapeHtml(o.description) + '</span>' : '') + '</button>').join('');
-  return '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
-    + '<div class="ask-options">' + opts + '</div>'
-    + (((q.options || []).length === 0 || q.allow_custom !== false)
-      ? '<input class="ask-input" data-q="' + qi + '" placeholder="' + ((q.options || []).length ? 'Or type your own...' : 'Your answer...') + '">'
-      : '');
-}
-
-function buildActiveAskCard(a, saved) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card live-node'; card.id = 'ask-card';
-  card._askId = a.id; card._askQuestions = a.questions;
-  card.innerHTML = a.questions.map((q, qi) => '<div class="ask-block">' + askQuestionHtml(q, qi) + '</div>').join('')
-    + '<div class="ask-actions"><button id="ask-submit">Submit</button></div>';
-  (saved || []).forEach((s, qi) => {
-    if (s.sel) card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => {
-      if (b.querySelector('b').textContent === s.sel) b.classList.add('selected');
-    });
-    if (s.val) { const inp = card.querySelector('.ask-input[data-q="' + qi + '"]'); if (inp) inp.value = s.val; }
-  });
-  card.querySelectorAll('.ask-option').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const qi = btn.dataset.q;
-      card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
-  });
-  card.querySelectorAll('.ask-input').forEach(inp => {
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') collectAskAnswers(card); });
-  });
-  card.querySelector('#ask-submit').addEventListener('click', () => collectAskAnswers(card));
-  return card;
-}
-
-function buildAnsweredAskCard(rec) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card answered';
-  if (rec.id) card.dataset.askId = rec.id;
-  const qs = rec.questions || [];
-  const ans = Array.isArray(rec.answers) ? rec.answers : (rec.answers != null ? [rec.answers] : null);
-  card.innerHTML = qs.map((q, qi) => {
-    const labels = (q.options || []).map(o => o.label);
-    const a = ans ? (ans[qi] ?? '') : '';
-    const isCustom = a && !labels.includes(a);
-    const opts = (q.options || []).map(o =>
-      '<button type="button" class="ask-option' + (!isCustom && o.label === a ? ' selected' : '') + '" style="cursor:default"><b>' + escapeHtml(o.label) + '</b>'
-      + (o.description ? '<br><span class="ask-desc">' + escapeHtml(o.description) + '</span>' : '') + '</button>').join('');
-    let row = '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
-      + '<div class="ask-options">' + opts + '</div>';
-    if (rec.status && rec.status !== 'answered') row += '<div class="ask-a">\u23F3 No answer</div>';
-    else if (isCustom || !labels.length) row += '<div class="ask-a">' + (a === 'no' ? '\u274C ' : '\u2705 ') + escapeHtml(a) + '</div>';
-    return '<div class="ask-block">' + row + '</div>';
-  }).join('');
-  return card;
-}
-
-function collectAskAnswers(card) {
-  const qs = card._askQuestions || [];
-  const vals = [];
-  for (let qi = 0; qi < qs.length; qi++) {
-    const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-    const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-    const label = sel ? sel.querySelector('b').textContent : '';
-    const note = inp ? inp.value.trim() : '';
-    // Selected option + typed note compose ("Label: note"); either alone
-    // stands as-is. No silent wiping in either direction.
-    const v = label && note ? label + ': ' + note : (label || note);
-    if (!v) { if (inp) { inp.focus(); inp.placeholder = 'Required'; } return; }
-    vals.push(v);
-  }
-  const rec = (turn && turn.entries || []).find(x => x.kind === 'ask' && x.id === card._askId);
-  if (rec) { rec.answers = vals; rec.active = false; }
-  const answered = buildAnsweredAskCard({ questions: qs, answers: vals, status: 'answered' });
-  answered.classList.add('live-node');
-  card.replaceWith(answered);
-  fetch('/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: card._askId, value: vals }) }).catch(() => {});
-}
-
+const Asks = FC.initAsks({
+  http: FC,
+  getTurn: () => turn,
+  labels: { submit: 'Submit', required: 'Required', customPlaceholder: 'Or type your own...', answerPlaceholder: 'Your answer...', noAnswer: '\u23F3 No answer' },
+});
+const saveAskCardState = Asks.saveAskCardState;
+const buildActiveAskCard = Asks.buildActiveAskCard;
+const buildAnsweredAskCard = Asks.buildAnsweredAskCard;
 function renderArchivedAsk(rec) {
-  msgs.appendChild(buildAnsweredAskCard(rec));
+  msgs.appendChild(Asks.buildAnsweredAskCard(rec));
 }
 
 
 /* ---------- pending card asks (consent / cross-host asks, out-of-band) ---------- */
-const pendingAskIds = new Set();
-const pendingAskCards = new Map(); // ask id -> {rec, el} while the card is live
-const resolvedAskCards = new Map(); // answered card asks: verdict stays visible
-function placeAskCards() {
-  // A pending ask belongs to the conversation that raised it: inline in the
-  // matching open friend view, otherwise the global banner. Answered cards
-  // follow the same rule until the durable transcript record (saved by the
-  // server) renders — that copy then replaces the floating one.
-  const banner = document.getElementById('asks-banner');
-  pendingAskCards.forEach(({ rec, el }) => {
-    if (friendView && rec.conv === friendView) {
-      const stick = isNearBottom(msgs); // measure before the card changes layout
-      msgs.appendChild(el);
-      if (stick) msgs.scrollTop = msgs.scrollHeight;
-      window.fungiMotion?.askCardIn?.(el);
-    } else if (el.parentElement !== banner) {
-      banner.appendChild(el);
-      window.fungiMotion?.askCardIn?.(el);
-    }
-  });
-  resolvedAskCards.forEach(({ rec, el }) => {
-    if (friendView && rec.conv === friendView) {
-      if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
-        el.remove();
-        resolvedAskCards.delete(rec.id);
-      } else { const stick = isNearBottom(msgs); msgs.appendChild(el); if (stick) msgs.scrollTop = msgs.scrollHeight; }
-    } else if (el.parentElement !== banner) {
-      banner.appendChild(el);
-    }
-  });
-}
-function buildPendingAskCard(a) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card pending-ask';
-  const fromRaw = String(a.from || a.src || 'remote host');
-  const from = escapeHtml(displayOf(fromRaw.split(':')[0]));
-  if (a.kind === 'consent') {
-    const q = a.questions[0] || { question: '(consent request)' };
-    card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + ' \u00b7 consent</div>'
-      + '<div class="ask-block"><div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div></div>'
-      + '<div class="ask-consent-actions"><input placeholder="自定义回复（可选，留空直接点允许/禁止）">'
-      + '<button class="ask-allow">允许</button>'
-      + '<button class="ask-deny">禁止</button><button class="ask-send">Send</button></div>'
-      + '<div class="ask-hint">· 需要长期放行？在好友会话顶部把滑块拨到「允许」</div>';
-    const inp = card.querySelector('input');
-    const send = v => answerPendingAsk(a, card, v);
-    card.querySelector('.ask-allow').addEventListener('click', () => send(inp.value.trim() ? 'yes: ' + inp.value.trim() : 'yes'));
-    card.querySelector('.ask-deny').addEventListener('click', () => send(inp.value.trim() ? 'no: ' + inp.value.trim() : 'no'));
-    const custom = () => { if (inp.value.trim()) send(inp.value.trim()); else inp.focus(); };
-    card.querySelector('.ask-consent-actions input').addEventListener('keydown', e => { if (e.key === 'Enter') custom(); });
-    card.querySelector('.ask-send').addEventListener('click', custom);
-  } else {
-    card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + '</div>'
-      + a.questions.map((q, qi) => '<div class="ask-block">' + askQuestionHtml(q, qi) + '</div>').join('')
-      + '<div class="ask-actions"><button class="ask-send">Submit</button></div>';
-    card.querySelectorAll('.ask-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const qi = btn.dataset.q;
-        card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-      });
-    });
-    card.querySelector('.ask-send').addEventListener('click', () => {
-      const qs = a.questions || [];
-      const vals = [];
-      for (let qi = 0; qi < qs.length; qi++) {
-        const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-        const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-        const label = sel ? sel.querySelector('b').textContent : '';
-        const note = inp ? inp.value.trim() : '';
-        // Same compose rule as live ask cards: option + typed note both
-        // survive ("Label: note"); no silent wiping in either direction.
-        const v = label && note ? label + ': ' + note : (label || note);
-        if (!v) { if (inp) { inp.focus(); inp.placeholder = 'Required'; } return; }
-        vals.push(v);
-      }
-      answerPendingAsk(a, card, vals.length === 1 ? vals[0] : vals);
-    });
-  }
-  return card;
-}
-function answerPendingAsk(a, card, value) {
-  fetch('/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: a.id, value }) }).catch(() => {});
-  pendingAskIds.delete(a.id);
-  pendingAskCards.delete(a.id);
-  // The verdict stays as a real answered card (same builder as the in-turn
-  // replay path) instead of evaporating after 8 seconds; the server also
-  // files it into the friend transcript so it survives reload.
-  const done = buildAnsweredAskCard({
-    id: a.id,
-    questions: a.questions,
-    answers: Array.isArray(value) ? value : [value],
-    status: 'answered',
-  });
-  const settle = () => {
-    card.replaceWith(done);
-    resolvedAskCards.set(a.id, { rec: a, el: done });
-  };
-  const M = window.fungiMotion;
-  if (M && !M.reduced && M.askResolved) {
-    const ok = value !== 'no';
-    M.askResolved(card, ok);
-    setTimeout(settle, 1000); // let the stamp read before collapsing
-  } else settle();
-}
-async function pollPendingAsks() {
-  try {
-    const d = await (await fetch('/asks')).json();
-    (d.asks || []).forEach(a => {
-      if (pendingAskIds.has(a.id)) return;
-      pendingAskIds.add(a.id);
-      const el = buildPendingAskCard(a);
-      pendingAskCards.set(a.id, { rec: a, el });
-      if (friendView && a.conv === friendView) {
-        const stick = isNearBottom(msgs);
-        msgs.appendChild(el);
-        if (stick) msgs.scrollTop = msgs.scrollHeight;
-        window.fungiMotion?.askCardIn?.(el);
-      } else {
-        document.getElementById('asks-banner').appendChild(el);
-        window.fungiMotion?.askCardIn?.(el);
-      }
-    });
-  } catch (e) {}
-}
+const PendingAsks = FC.initPendingAsks({
+  http: FC,
+  banner: () => document.getElementById('asks-banner'),
+  inlineHost: () => friendView,
+  msgs: () => msgs,
+  isNearBottom,
+  displayOf,
+  animatePlace: true,
+  motion: {
+    cardIn: el => window.fungiMotion?.askCardIn?.(el),
+    resolved: (card, ok, settle) => {
+      const M = window.fungiMotion;
+      if (M && !M.reduced && M.askResolved) {
+        M.askResolved(card, ok);
+        setTimeout(settle, 1000); // let the stamp read before collapsing
+      } else settle();
+    },
+  },
+  labels: {
+    fromFallback: 'remote host',
+    consentPlaceholder: '自定义回复（可选，留空直接点允许/禁止）',
+    consentHint: '· 需要长期放行？在好友会话顶部把滑块拨到「允许」',
+    allow: '允许', deny: '禁止', consentSend: 'Send', submit: 'Submit', required: 'Required',
+    customPlaceholder: 'Or type your own...', answerPlaceholder: 'Your answer...',
+  },
+});
+const placeAskCards = PendingAsks.place, pollPendingAsks = PendingAsks.poll;
 setInterval(pollPendingAsks, 3000);
 setInterval(resumeIfPending, 3000);
 resumeIfPending();
@@ -1278,3 +1030,14 @@ document.getElementById('theme-switch').addEventListener('click', function () {
   applyTheme(next);
   setTimeout(() => themeRoot.classList.remove('theme-anim'), 500);
 });
+
+/* ---------- mail (amail) ---------- */
+const Mail = FC.initMail({
+  http: FC,
+  badgeEl: document.getElementById('mail-badge'),
+  displayOf,
+  locale: 'en-US',
+  strings: { title: 'Mail', markRead: 'Mark read', back: 'Back', empty: 'No mail yet.' },
+});
+document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
+Mail.start();

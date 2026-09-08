@@ -33,10 +33,10 @@ from .consent_rules import ConsentRules
 from .diary import bound as diary_bound
 from .diary import section as diary_section
 from .events import Sink
-from .hub.app import Hub
+from .hub.app import Hub, safe_name
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
-from .protocol import Envelope
+from .protocol import Envelope, parse_addr
 from .server import _BG_ABORTS, _PENDING_SPAWNS, WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
@@ -142,6 +142,9 @@ class RoomBase:
         # when the durable transcript takes over.
         self._live_tapes: dict[str, list] = {}
         self._live_lock = threading.Lock()
+        # Courier-off transfers awaiting the user's card answer:
+        # envelope id -> (original transfer envelope, sender host).
+        self._direct_transfers: dict[str, tuple] = {}
 
     # ── clones ──
 
@@ -183,6 +186,7 @@ class RoomBase:
             on_turn_end=lambda env_type, messages, agent: self._record_comm_turn(
                 peer, env_type, messages, agent
             ),
+            on_direct=self._courier_direct,
         )
         with self._guard:
             self._clones[peer] = clone
@@ -268,6 +272,23 @@ class RoomBase:
             return  # replay/duplicate
 
     def _send_answer(self, ask: Envelope, value) -> None:
+        direct = self._direct_transfers.pop(ask.id, None)
+        if direct is not None:
+            env, src_host = direct
+            if value == "yes":
+                body = self._direct_download(env, src_host)
+            else:
+                body = {"ok": False, "error": "declined by the receiving user"}
+            self.local.transport.send(
+                Envelope(
+                    src=self.local_addr,
+                    dst=env.src,
+                    type="answer",
+                    body={"value": body},
+                    reply_to=env.id,
+                )
+            )
+            return
         self.local.transport.send(
             Envelope(
                 src=self.local_addr,
@@ -277,6 +298,74 @@ class RoomBase:
                 reply_to=ask.id,
             )
         )
+
+    # ── courier-off direct delivery (zero agent cost) ──
+
+    def _courier_direct(self, env: Envelope) -> bool:
+        """Clone.on_direct hook. Courier on (default) -> normal LLM turns.
+        Courier off -> chats land in the friend-view transcript and transfer
+        consents become cards directly; the local comm clone never wakes.
+        Returns True when the envelope was handled here."""
+        if load_config().courier:
+            return False  # re-read every envelope: the switch applies live
+        if env.type == "chat":
+            peer = parse_addr(env.src)[0]
+            self._record_comm_turn(
+                peer,
+                "chat",
+                [{"role": "user", "content": f"[{env.src}] {env.body.get('text', '')}"}],
+                None,
+            )
+            return True
+        if env.type == "transfer":
+            return self._direct_transfer(env)
+        return False
+
+    def _direct_transfer(self, env: Envelope) -> bool:
+        """Courier-off transfer: synthesize the consent ask ourselves (same
+        card pipeline as the courier path), remember the envelope so the
+        answer downloads the file without waking any agent."""
+        body = env.body
+        name = safe_name(str(body.get("name") or "file"))
+        size = body.get("size")
+        reason = str(body.get("reason") or "")
+        src_host, _role, _peer = parse_addr(str(body.get("from") or env.src))
+        ask = Envelope(
+            src=env.src,
+            dst=self.local_addr,
+            type="ask",
+            id=env.id,  # answer carries this id back to the waiting sender
+            body={
+                "from": env.src,
+                "action": "receive file",
+                "path": name,
+                "reason": reason,
+                "question": (
+                    f"{src_host} wants to send you a file: {name} "
+                    f"({size} bytes). Accept?\nReason: {reason}"
+                ),
+            },
+        )
+        self._direct_transfers[env.id] = (env, src_host)
+        self._on_ask(ask)
+        return True
+
+    def _direct_download(self, env: Envelope, src_host: str) -> dict:
+        """Courier-off accepted transfer: land the bytes like receive_transfer."""
+        body = env.body
+        dest_dir = Path(self.cfg.inbox_dir) / src_host if self.cfg.inbox_dir else Path("inbox") / src_host
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        stem, suffix = Path(safe_name(str(body.get("name") or "file"))).stem, Path(safe_name(str(body.get("name") or "file"))).suffix
+        dest = dest_dir / f"{stem}{suffix}"
+        n = 1
+        while dest.exists():
+            dest = dest_dir / f"{stem}-{n}{suffix}"
+            n += 1
+        try:
+            self.local.transport.download_transfer(str(body.get("id")), dest)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "saved": str(dest)}
 
     # ── WebUI ──
 
@@ -688,6 +777,20 @@ class RoomRuntime(WebUIRuntime):
                     }
                 )
         return out
+
+    # ── amail: this host's mailbox on the hub ──
+
+    def mail(self) -> dict:
+        room = self.room
+        if getattr(room, "hub", None) is not None:  # server role: direct
+            return room.hub.mail.list(room.host)
+        return room.client.mail()  # client role: hub HTTP
+
+    def mail_read(self, mail_id: str) -> dict:
+        room = self.room
+        if getattr(room, "hub", None) is not None:
+            return room.hub.mail.mark_read(room.host, mail_id)
+        return room.client.mail_read(mail_id)
 
     # ── consent slider (per-friend mode, visible + reversible) ──
     def consent_mode(self, host: str) -> str:

@@ -2,6 +2,7 @@
    turn entries model, /events tape reattach, ask-card re-mount discipline.
    Mobile-specific: right-swipe session drawer (2/3 width, GSAP drag), token gate. */
 marked.setOptions({ breaks: true, gfm: true });
+const FC = window.FungiCommon;
 const msgs = document.getElementById('messages'), input = document.getElementById('input'),
   btn = document.getElementById('btn-send'), status = document.getElementById('status'),
   banner = document.getElementById('asks-banner');
@@ -15,25 +16,18 @@ const TOKEN = (() => {
   if (q) { try { localStorage.setItem('fungi-token', q); } catch (e) {} return q; }
   try { return localStorage.getItem('fungi-token') || ''; } catch (e) { return ''; }
 })();
-function api(path) {
-  if (!TOKEN) return path;
-  return path + (path.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN);
-}
-function unauthorized() { document.getElementById('rescan-overlay').classList.remove('hide'); }
-async function fetchJSON(path, opts) {
-  const r = await fetch(api(path), opts);
-  if (r.status === 403) { unauthorized(); throw new Error('unauthorized'); }
-  return r;
-}
+FC.initHttp({
+  prefix: p => TOKEN ? p + (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(TOKEN) : p,
+  onUnauthorized: () => document.getElementById('rescan-overlay').classList.remove('hide'),
+});
+const api = FC.url, fetchJSON = FC.fetchJSON;
 
 /* ---------- helpers ---------- */
 function setCurrentSession(id) {
   currentSessionId = id;
   try { if (id) localStorage.setItem('fungi-session-m', id); else localStorage.removeItem('fungi-session-m'); } catch (e) {}
 }
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+const escapeHtml = FC.escapeHtml;
 function addDiv(cls, html, id) {
   const d = document.createElement('div');
   d.className = 'msg ' + cls;
@@ -55,12 +49,7 @@ function msgIn(node, kind) {
   if (!motionOn()) return;
   gsap.from(node, { opacity: 0, y: kind === 'user' ? 14 : 18, scale: 0.96, duration: 0.4, ease: 'power3.out', clearProps: 'all' });
 }
-function getSessionTitle(list) {
-  const u = list.find(m => m.role === 'user');
-  if (!u) return 'Empty';
-  const t = String(u.content).replace(/\s+/g, ' ').trim();
-  return t.length > 40 ? t.slice(0, 38) + '...' : t;
-}
+const getSessionTitle = list => FC.getSessionTitle(list, 40, 38);
 
 /* ---------- sessions ---------- */
 let _sessionsSeq = 0;
@@ -162,32 +151,9 @@ async function deleteSession(id) {
   } catch (e) {}
 }
 
-/* ---------- confirm modal (desktop showConfirm contract) ---------- */
-let _confirmState = null;
-function showConfirm(opts) {
-  const overlay = document.getElementById('confirm-overlay');
-  const ok = document.getElementById('confirm-ok');
-  document.getElementById('confirm-title').textContent = opts.title || '确认？';
-  document.getElementById('confirm-message').textContent = opts.message || '';
-  ok.textContent = opts.confirmText || '确定';
-  document.getElementById('confirm-cancel').textContent = opts.cancelText || '取消';
-  ok.classList.toggle('danger', !!opts.danger);
-  _confirmState = { onConfirm: opts.onConfirm, danger: !!opts.danger };
-  overlay.classList.add('show');
-}
-function closeConfirm(confirmed) {
-  const overlay = document.getElementById('confirm-overlay');
-  if (!overlay.classList.contains('show')) return;
-  overlay.classList.remove('show');
-  const state = _confirmState;
-  _confirmState = null;
-  if (confirmed && state && state.onConfirm) state.onConfirm();
-}
-document.getElementById('confirm-ok').addEventListener('click', () => closeConfirm(true));
-document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirm(false));
-document.getElementById('confirm-overlay').addEventListener('click', e => {
-  if (e.target.id === 'confirm-overlay') closeConfirm(false);
-});
+/* ---------- confirm modal (shared impl in common.js, mobile wiring) ---------- */
+FC.initConfirmModal({ title: '确认？', confirmText: '确定', cancelText: '取消' });
+const showConfirm = FC.showConfirm, closeConfirm = FC.closeConfirm;
 
 /* ---------- rename (desktop startRename/finishRename contract) ---------- */
 function startRename(row, s) {
@@ -251,18 +217,7 @@ function renderSessionList() {
   else empty.style.display = 'none';
   if (motionOn()) gsap.from(fresh, { opacity: 0, x: -26, duration: 0.35, stagger: 0.04, ease: 'power3.out', clearProps: 'all' });
 }
-function fmtDate(d) {
-  if (!d) return '';
-  const diff = Date.now() - new Date(d).getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return 'now';
-  if (m < 60) return m + 'm';
-  const h = Math.floor(m / 60);
-  if (h < 24) return h + 'h';
-  const days = Math.floor(h / 24);
-  if (days < 7) return days + 'd';
-  return new Date(d).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-}
+const fmtDate = d => FC.fmtDate(d, 'zh-CN');
 
 /* ---------- transcript render (full re-render = refresh-grade) ---------- */
 function renderMessages(s) {
@@ -302,13 +257,9 @@ function renderTranscript(messages, asks) {
         else addDiv('assistant', marked.parse(m.content));
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
-        const d = document.createElement('div');
-        d.className = 'msg tool'; d.id = 'tool-' + tc.id;
-        const args = tc.function?.arguments || '';
-        const argsHtml = args ? ' <code>' + escapeHtml(args.length > 60 ? args.slice(0, 60) + '...' : args) + '</code>' : '';
-        d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(tc.function?.name || 'tool') + argsHtml + '</div><div class="tool-result"></div>';
+        const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 60 });
         msgs.appendChild(d);
-        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') makeSpawnBlockClickable(d, tc.id);
+        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
           const rec = askQueue.shift();
           if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
@@ -317,7 +268,7 @@ function renderTranscript(messages, asks) {
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
-      if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(m.content || '') + '</pre>';
+      if (block) FC.fillToolResult(block, m.content || '');
       else addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>');
     }
   }
@@ -450,7 +401,7 @@ async function pumpStream(url, body, method = 'POST') {
       opts.body = JSON.stringify(body);
     }
     const resp = await fetch(url, opts);
-    if (resp.status === 403) { unauthorized(); turn = null; processing = false; setBusy(false); return; }
+    if (resp.status === 403) { document.getElementById('rescan-overlay').classList.remove('hide'); turn = null; processing = false; setBusy(false); return; }
     if (!resp.ok) { status.textContent = '错误：HTTP ' + resp.status; turn = null; }
     else {
       const reader = resp.body.getReader();
@@ -529,7 +480,7 @@ function handleTurnEvent(obj) {
       if (visible) {
         status.textContent = 'Thinking...'; // tool done: the next LLM round starts
         const block = document.getElementById('tool-' + obj.content.id);
-        if (block) block.querySelector('.tool-result').innerHTML = '<pre>' + escapeHtml(obj.content.content) + '</pre>';
+        if (block) FC.fillToolResult(block, obj.content.content);
         else renderTurnLive();
       }
       break;
@@ -626,12 +577,10 @@ function renderTurnLive() {
       ad.innerHTML = marked.parse(e.content) + '<span class="live-cursor"></span>';
       msgs.appendChild(ad);
     } else if (e.kind === 'tool') {
-      const d = document.createElement('div');
-      d.className = 'msg tool live-node'; d.id = 'tool-' + e.id;
-      const argsHtml = e.args ? ' <code>' + escapeHtml(e.args.length > 60 ? e.args.slice(0, 60) + '...' : e.args) + '</code>' : '';
-      d.innerHTML = '<div class="tool-label">&#x1F527; ' + escapeHtml(e.name) + argsHtml + '</div><div class="tool-result">' + (e.result ? '<pre>' + escapeHtml(e.result) + '</pre>' : '') + '</div>';
+      const d = FC.buildToolCard({ id: e.id, name: e.name, args: e.args, result: e.result }, { argsMax: 60 });
+      d.classList.add('live-node');
       msgs.appendChild(d);
-      if (e.name === 'spawn' || e.name === 'background') makeSpawnBlockClickable(d, e.id);
+      if (e.name === 'spawn' || e.name === 'background') FC.attachSpawnClick(d, e.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');
@@ -655,199 +604,41 @@ function renderTurnLive() {
 }
 
 /* ---------- ask cards (in-turn Inquire) ---------- */
-function saveAskCardState() {
-  const card = document.getElementById('ask-card');
-  if (!card) return null;
-  return (card._askQuestions || []).map((q, qi) => {
-    const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-    const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-    return { sel: sel ? sel.querySelector('b').textContent : null, val: inp ? inp.value : '' };
-  });
-}
-function askQuestionHtml(q, qi) {
-  const opts = (q.options || []).map(o =>
-    '<button type="button" class="ask-option" data-q="' + qi + '"><b>' + escapeHtml(o.label) + '</b>'
-    + (o.description ? '<br><span class="ask-desc">' + escapeHtml(o.description) + '</span>' : '') + '</button>').join('');
-  return '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
-    + '<div class="ask-options">' + opts + '</div>'
-    + (((q.options || []).length === 0 || q.allow_custom !== false)
-      ? '<input class="ask-input" data-q="' + qi + '" placeholder="' + ((q.options || []).length ? '或者自己输入…' : '你的回答…') + '">'
-      : '');
-}
-function buildActiveAskCard(a, saved) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card live-node'; card.id = 'ask-card';
-  card._askId = a.id; card._askQuestions = a.questions;
-  card.innerHTML = a.questions.map((q, qi) => '<div class="ask-block">' + askQuestionHtml(q, qi) + '</div>').join('')
-    + '<div class="ask-actions"><button id="ask-submit">提交</button></div>';
-  (saved || []).forEach((s, qi) => {
-    if (s.sel) card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => {
-      if (b.querySelector('b').textContent === s.sel) b.classList.add('selected');
-    });
-    if (s.val) { const inp = card.querySelector('.ask-input[data-q="' + qi + '"]'); if (inp) inp.value = s.val; }
-  });
-  card.querySelectorAll('.ask-option').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const qi = btn.dataset.q;
-      card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-    });
-  });
-  card.querySelector('#ask-submit').addEventListener('click', () => collectAskAnswers(card));
-  return card;
-}
-function buildAnsweredAskCard(rec) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card answered';
-  if (rec.id) card.dataset.askId = rec.id;
-  const qs = rec.questions || [];
-  const ans = Array.isArray(rec.answers) ? rec.answers : (rec.answers != null ? [rec.answers] : null);
-  card.innerHTML = qs.map((q, qi) => {
-    const labels = (q.options || []).map(o => o.label);
-    const a = ans ? (ans[qi] ?? '') : '';
-    const isCustom = a && !labels.includes(a);
-    const opts = (q.options || []).map(o =>
-      '<button type="button" class="ask-option' + (!isCustom && o.label === a ? ' selected' : '') + '" style="cursor:default"><b>' + escapeHtml(o.label) + '</b>'
-      + (o.description ? '<br><span class="ask-desc">' + escapeHtml(o.description) + '</span>' : '') + '</button>').join('');
-    let row = '<div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div>'
-      + '<div class="ask-options">' + opts + '</div>';
-    if (rec.status && rec.status !== 'answered') row += '<div class="ask-a">\u23F3 未回答</div>';
-    else if (isCustom || !labels.length) row += '<div class="ask-a">' + (a === 'no' ? '\u274C ' : '\u2705 ') + escapeHtml(a) + '</div>';
-    return '<div class="ask-block">' + row + '</div>';
-  }).join('');
-  return card;
-}
-function collectAskAnswers(card) {
-  const qs = card._askQuestions || [];
-  const vals = [];
-  for (let qi = 0; qi < qs.length; qi++) {
-    const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-    const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-    const label = sel ? sel.querySelector('b').textContent : '';
-    const note = inp ? inp.value.trim() : '';
-    // Option + typed note compose ("Label: note"); neither silently wipes the other.
-    const v = label && note ? label + ': ' + note : (label || note);
-    if (!v) { if (inp) { inp.focus(); inp.placeholder = '必填'; } return; }
-    vals.push(v);
-  }
-  const rec = (turn && turn.entries || []).find(x => x.kind === 'ask' && x.id === card._askId);
-  if (rec) { rec.answers = vals; rec.active = false; }
-  const answered = buildAnsweredAskCard({ questions: qs, answers: vals, status: 'answered' });
-  answered.classList.add('live-node');
-  card.replaceWith(answered);
-  fetch(api('/answer'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: card._askId, value: vals }) }).catch(() => {});
-}
+const Asks = FC.initAsks({
+  http: FC,
+  getTurn: () => turn,
+  labels: { submit: '提交', required: '必填', customPlaceholder: '或者自己输入…', answerPlaceholder: '你的回答…', noAnswer: '\u23F3 未回答' },
+});
+const saveAskCardState = Asks.saveAskCardState;
+const buildActiveAskCard = Asks.buildActiveAskCard;
+const buildAnsweredAskCard = Asks.buildAnsweredAskCard;
 
 /* ---------- pending card asks (consent / cross-host, out-of-band) ----------
-   Contract: register in pendingAskCards + re-mount after every full repaint
-   (placeAskCards). Missing either makes cards vanish mid-stream. */
-const pendingAskIds = new Set();
-const pendingAskCards = new Map();
-const resolvedAskCards = new Map(); // answered card asks: verdict stays visible
-function placeAskCards() {
-  pendingAskCards.forEach(({ rec, el }) => {
-    // A pending ask belongs to the conversation that raised it: inline in the
-    // open friend view, otherwise the global banner above the input.
-    if (friendView && rec.conv === friendView) {
-      const stick = isNearBottom(msgs); // measure before the card changes layout
-      msgs.appendChild(el);
-      if (stick) msgs.scrollTop = msgs.scrollHeight;
-    } else if (el.parentElement !== banner) {
-      banner.appendChild(el);
-    }
-  });
-  resolvedAskCards.forEach(({ rec, el }) => {
-    // Answered cards stay visible the same way until the durable transcript
-    // record (saved by the server) renders — that copy then replaces them.
-    if (friendView && rec.conv === friendView) {
-      if (msgs.querySelector('.ask-card[data-ask-id="' + rec.id + '"]')) {
-        el.remove();
-        resolvedAskCards.delete(rec.id);
-      } else { const stick = isNearBottom(msgs); msgs.appendChild(el); if (stick) msgs.scrollTop = msgs.scrollHeight; }
-    } else if (el.parentElement !== banner) {
-      banner.appendChild(el);
-    }
-  });
-}
-function buildPendingAskCard(a) {
-  const card = document.createElement('div');
-  card.className = 'msg ask-card pending-ask';
-  const from = escapeHtml(String(a.from || a.src || 'remote host').split(':')[0]);
-  if (a.kind === 'consent') {
-    const q = a.questions[0] || { question: '(consent request)' };
-    card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + ' \u00b7 consent</div>'
-      + '<div class="ask-block"><div class="ask-q">\u2753 ' + escapeHtml(q.question) + '</div></div>'
-      + '<div class="ask-consent-actions"><input placeholder="自定义回复（可选）">'
-      + '<button class="ask-allow">允许</button>'
-      + '<button class="ask-deny">禁止</button><button class="ask-send">发送</button></div>';
-    const inp = card.querySelector('input');
-    const send = v => answerPendingAsk(a, card, v);
-    card.querySelector('.ask-allow').addEventListener('click', () => send(inp.value.trim() ? 'yes: ' + inp.value.trim() : 'yes'));
-    card.querySelector('.ask-deny').addEventListener('click', () => send(inp.value.trim() ? 'no: ' + inp.value.trim() : 'no'));
-    card.querySelector('.ask-send').addEventListener('click', () => { if (inp.value.trim()) send(inp.value.trim()); else inp.focus(); });
-  } else {
-    card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + '</div>'
-      + a.questions.map((q, qi) => '<div class="ask-block">' + askQuestionHtml(q, qi) + '</div>').join('')
-      + '<div class="ask-actions"><button class="ask-send">提交</button></div>';
-    card.querySelectorAll('.ask-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const qi = btn.dataset.q;
-        card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-      });
-    });
-    card.querySelector('.ask-send').addEventListener('click', () => {
-      const qs = a.questions || [];
-      const vals = [];
-      for (let qi = 0; qi < qs.length; qi++) {
-        const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-        const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-        const label = sel ? sel.querySelector('b').textContent : '';
-        const note = inp ? inp.value.trim() : '';
-        const v = label && note ? label + ': ' + note : (label || note);
-        if (!v) { if (inp) { inp.focus(); inp.placeholder = '必填'; } return; }
-        vals.push(v);
-      }
-      answerPendingAsk(a, card, vals.length === 1 ? vals[0] : vals);
-    });
-  }
-  return card;
-}
-function answerPendingAsk(a, card, value) {
-  fetch(api('/answer'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: a.id, value }) }).catch(() => {});
-  pendingAskIds.delete(a.id);
-  pendingAskCards.delete(a.id);
-  // The verdict stays as a real answered card (same builder as the in-turn
-  // replay path) instead of evaporating after 8 seconds; the server also
-  // files it into the friend transcript so it survives reload.
-  const done = buildAnsweredAskCard({
-    id: a.id,
-    questions: a.questions,
-    answers: Array.isArray(value) ? value : [value],
-    status: 'answered',
-  });
-  const settle = () => {
-    card.replaceWith(done);
-    resolvedAskCards.set(a.id, { rec: a, el: done });
-  };
-  if (motionOn()) gsap.to(card, { opacity: 0, scale: 0.92, duration: 0.35, ease: 'power2.in', onComplete: settle });
-  else settle();
-}
-async function pollPendingAsks() {
-  try {
-    const d = await (await fetchJSON('/asks')).json();
-    (d.asks || []).forEach(a => {
-      if (pendingAskIds.has(a.id)) return;
-      pendingAskIds.add(a.id);
-      const el = buildPendingAskCard(a);
-      pendingAskCards.set(a.id, { rec: a, el });
-      banner.appendChild(el);
-      if (motionOn()) gsap.from(el, { opacity: 0, y: -14, duration: 0.4, ease: 'power3.out', clearProps: 'all' });
-    });
-  } catch (e) {}
-}
+   Contract (common.js): register in pendingAskCards + re-mount after every
+   full repaint (placeAskCards). Missing either makes cards vanish mid-stream. */
+const PendingAsks = FC.initPendingAsks({
+  http: FC,
+  banner: () => banner,
+  inlineHost: () => friendView,
+  msgs: () => msgs,
+  isNearBottom,
+  displayOf: h => h, // mobile shows the raw wire name on ask cards
+  animatePlace: false,
+  motion: {
+    cardIn: el => { if (motionOn()) gsap.from(el, { opacity: 0, y: -14, duration: 0.4, ease: 'power3.out', clearProps: 'all' }); },
+    resolved: (card, ok, settle) => {
+      if (motionOn()) gsap.to(card, { opacity: 0, scale: 0.92, duration: 0.35, ease: 'power2.in', onComplete: settle });
+      else settle();
+    },
+  },
+  labels: {
+    fromFallback: 'remote host',
+    consentPlaceholder: '自定义回复（可选）',
+    allow: '允许', deny: '禁止', consentSend: '发送', submit: '提交', required: '必填',
+    customPlaceholder: '或者自己输入…', answerPlaceholder: '你的回答…',
+  },
+});
+const placeAskCards = PendingAsks.place, pollPendingAsks = PendingAsks.poll;
 setInterval(resumeIfPending, 3000);
 resumeIfPending();
 
@@ -1110,14 +901,6 @@ function openAgentModal(id) {
   ov.querySelector('#agent-modal-close').addEventListener('click', close);
   ov.onclick = e => { if (e.target === ov) close(); }; // backdrop tap also closes
 }
-function makeSpawnBlockClickable(el, callId) {
-  el.classList.add('spawn-block');
-  el.title = '点按查看子代理详情';
-  el.addEventListener('click', () => {
-    const id = specByCall[callId] || archivedByCall[callId];
-    if (id) openAgentModal(id);
-  });
-}
 
 /* ---------- drawer gestures (right-swipe open, left-swipe close) ---------- */
 const drawer = document.getElementById('drawer'), scrim = document.getElementById('drawer-scrim');
@@ -1333,7 +1116,7 @@ document.getElementById('theme-switch').addEventListener('click', function () {
 
 /* ---------- boot ---------- */
 setBusy(false);
-if (!TOKEN) unauthorized(); // no token in URL or storage: rescan required
+if (!TOKEN) document.getElementById('rescan-overlay').classList.remove('hide'); // no token: rescan required
 else document.getElementById('rescan-overlay').classList.add('hide'); // valid token: drop the rescan card
 fetchJSON('/model').then(r => r.json()).then(d => { document.getElementById('model-name').textContent = d.model || ''; }).catch(() => {});
 loadSessions().then(() => {
@@ -1345,3 +1128,14 @@ loadSessions().then(() => {
 pollPendingAsks();
 loadPeers();
 setInterval(loadPeers, 5000);
+
+/* ---------- mail (amail) ---------- */
+const Mail = FC.initMail({
+  http: FC,
+  badgeEl: document.getElementById('mail-badge'),
+  displayOf,
+  locale: 'zh-CN',
+  strings: { title: '邮件', markRead: '标记已读', back: '返回', empty: '暂无邮件' },
+});
+document.getElementById('mail-entry').addEventListener('click', () => { Mail.open(); closeDrawer(); });
+Mail.start();

@@ -25,6 +25,7 @@ from ..protocol import (
 )
 from .asks import Asks
 from .commlog import CommLog
+from .mail import Mailbox
 from .relay import Relay
 from .roster import Roster
 from .store import GuardError, Store
@@ -161,6 +162,7 @@ class Hub:
         self.asks = Asks()
         self.store = Store(data_root, self.asks)
         self.commlog = CommLog(data_root / "comm")
+        self.mail = Mailbox(data_root / "mail")
         self.transfers = Transfers(data_root / "transfers", max_file_mb)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -225,6 +227,19 @@ class Hub:
             self.asks.open(host, env.body, ask_id=env.id, src=env.src)
         elif env.type == "answer" and env.reply_to:
             self.asks.resolve(env.reply_to, value=env.body.get("value"))
+        if env.type == "mail":
+            # Text mail is consumed by the hub itself: it lands in the
+            # recipient's mailbox (server-authoritative, survives offline)
+            # instead of buffering on the relay — the receiving agent never
+            # wakes for it.
+            host, _role, _peer = parse_addr(env.dst)
+            out = self.mail.deliver(
+                host,
+                str(env.body.get("from") or env.src),
+                str(env.body.get("subject") or ""),
+                str(env.body.get("text") or ""),
+            )
+            return {**out, "status": "mailed" if out.get("ok") else "bounced"}
         status = self.relay.deliver(env)
         if status != "bounced":
             self.commlog.record(env)  # mirror clone-to-clone traffic for the WebUI
@@ -324,6 +339,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._session_delete(body)
             elif path == "/api/transfer":
                 self._transfer(body)
+            elif path == "/api/mail/read":
+                self._mail_read(body)
             else:
                 self._reply({"error": "not found"}, 404)
         except (ValueError, json.JSONDecodeError) as exc:
@@ -336,7 +353,9 @@ class _Handler(BaseHTTPRequestHandler):
         if token != self.hub.token:
             self._reply({"error": "bad token"}, 403)
             return
-        if url.path == "/api/poll":
+        if url.path == "/api/mail":
+            self._mail(params)
+        elif url.path == "/api/poll":
             self._poll(params)
         elif url.path == "/api/sessions":
             self._reply({"sessions": self.hub.store.sessions.list_sessions()})
@@ -388,6 +407,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._reply({"error": "unknown host"}, 404)
             return
         self._reply({"ok": True, "peers": self.hub.roster.entries(host)})
+
+    # ── mail ──
+
+    def _mail(self, params: dict) -> None:
+        host = (params.get("host") or [""])[0]
+        if not self.hub.roster.known(host):
+            self._reply({"error": "unknown host"}, 404)
+            return
+        self._reply(self.hub.mail.list(host))
+
+    def _mail_read(self, body: dict) -> None:
+        host = str(body.get("host") or "")
+        if not self.hub.roster.known(host):
+            self._reply({"error": "unknown host"}, 403)
+            return
+        self._reply(self.hub.mail.mark_read(host, str(body.get("id") or "")))
 
     def _comm_log(self, params: dict) -> None:
         host = (params.get("host") or [""])[0]

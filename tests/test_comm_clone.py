@@ -46,6 +46,7 @@ def test_comm_clone_tool_surface():
     assert set(clone.tools) == {
         "send_peer",
         "send_file",
+        "amail",
         "confirm",
         "inquire",
         "read_file",

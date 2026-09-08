@@ -293,6 +293,11 @@ HELP_SECTIONS = [
      "只有托盘「退出」或页面「离开房间」才真正停房。"),
     ("设置与文件",
      "设置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
+    ("邮件与信使",
+     "通讯 clone 可用 amail 给对面主机写文字邮件：hub 收进对方邮箱（data/mail/），"
+     "WebUI 桌面/手机端的「邮件」入口红点提示，点开模态框阅读、标记已读——收件不惊动对方 Agent。"
+     "设置页的「信使」开关：开启时对面留言/文件请求由本机信使转述或推卡；"
+     "关闭后全部直达（留言进会话视图、卡片直推、邮件静候），本机 Agent 零消耗，即时生效。"),
     ("更多文档",
      "细节见仓库 README 与 docs/spec.md。"),
 ]
@@ -932,7 +937,31 @@ class ConfigPage(QWidget):
         self.download_btn.clicked.connect(self._download_models)
         root.addWidget(self.download_btn)
 
-        # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）
+
+        # 信使（小标题 + 右侧开关 + 说明）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("信使"))
+        courier_row = QHBoxLayout()
+        courier_lbl = BodyLabel("Courier")
+        courier_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        courier_row.addWidget(courier_lbl)
+        courier_row.addSpacing(8)
+        self.courier_switch = SwitchButton()
+        self.courier_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # setChecked BEFORE connect: the InfoBar needs window_ref (see diary).
+        self.courier_switch.setChecked(load_config().courier)
+        courier_row.addWidget(self.courier_switch)
+        self.courier_switch.checkedChanged.connect(self._toggle_courier)
+        courier_row.addStretch(1)
+        root.addLayout(courier_row)
+        courier_hint = BodyLabel(
+            "开启后，对面通讯 clone 的留言与文件请求由本机信使（通讯 clone）转述/推卡。\n"
+            "关闭后直达：留言进会话视图、文件卡片与邮件直接送达你，本机 Agent 完全不消耗。即时生效。"
+        )
+        courier_hint.setWordWrap(True)
+        root.addWidget(courier_hint)
+
+        # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）——压轴
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("实验性"))
         diary_title_row = QHBoxLayout()
@@ -1132,6 +1161,18 @@ class ConfigPage(QWidget):
         InfoBar.success(
             "已保存",
             "日记已开启，下一轮对话生效" if checked else "日记已关闭，下一轮对话生效",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+    def _toggle_courier(self, checked: bool) -> None:
+        """信使开关：即时写盘；通讯 clone 每个信封重读配置，无需重启。"""
+        cfg = load_config()
+        cfg.courier = bool(checked)
+        save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "信使已开启" if checked else "信使已关闭：对面消息直达，Agent 零消耗",
             duration=2500,
             parent=self.window_ref,
         )

@@ -23,6 +23,7 @@ from ..protocol import Envelope, parse_addr
 from ..trilayer import TriLayer
 
 TURN_TYPES = ("chat", "task", "transfer")
+DIRECT_TYPES = ("chat", "transfer")  # courier-off delivers these without a turn
 MAX_CHAT_HISTORY = 200  # chat messages kept per clone; older entries are dropped
 
 
@@ -128,6 +129,7 @@ class Clone:
         on_transfer=None,
         on_chat_end=None,
         on_turn_end=None,
+        on_direct=None,
         pending: PendingAsks | None = None,
         tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
         child_tool_names: frozenset[str] | None = None,
@@ -156,6 +158,10 @@ class Clone:
         # transfer envelopes: handled by comm clones (consent -> download);
         # None -> the transfer is answered with an error result.
         self.on_transfer = on_transfer
+        # courier-off hook: called for chat/transfer envelopes BEFORE a turn
+        # is queued. Returning True means "delivered directly to the user"
+        # (friend-view transcript / consent card) — the LLM never wakes.
+        self.on_direct = on_direct
         # chat turns: called with (env, final_text) after the turn — comm
         # clones use it to auto-send an undelivered reply (no send_peer call).
         self.on_chat_end = on_chat_end
@@ -224,8 +230,15 @@ class Clone:
         elif env.type == "ask":
             if self.on_ask is not None:
                 self.on_ask(env)
+        elif env.type in DIRECT_TYPES:
+            # courier-off: the room may deliver chats/transfers straight to
+            # the user (friend-view transcript / consent card) without a turn
+            if self.on_direct is not None and self.on_direct(env):
+                return
+            self._work.put(env)
         elif env.type in TURN_TYPES:
             self._work.put(env)
+
 
     # ── turns ──
 

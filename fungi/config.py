@@ -42,6 +42,11 @@ class Config:
     # Experimental private diary (data/diary/): attach the diary tool and
     # inject the diary history into the L1 prompt. Off = the feature is absent.
     diary: bool = False
+    # Courier (信使): when on, the local comm clone wakes on peer chats and
+    # transfer consents to restate them for the user. Off = peer messages,
+    # transfer consent cards and mail reach the user directly (zero agent
+    # cost); default on.
+    courier: bool = True
 
     @property
     def configured(self) -> bool:
@@ -84,6 +89,7 @@ def load_config(path: Path | None = None) -> Config:
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
             cfg.max_tokens = int(data["max_tokens"])
+        cfg.courier = bool(data.get("courier", True))
         cfg.diary = bool(data.get("diary", False))
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
@@ -113,6 +119,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["inbox_dir"] = cfg.inbox_dir
     if cfg.diary:
         data["diary"] = True
+    if not cfg.courier:
+        data["courier"] = False
     if cfg.display:
         data["display"] = cfg.display
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")

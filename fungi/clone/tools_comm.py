@@ -226,6 +226,7 @@ class CommTools:
         return {
             "send_peer": BoundTool(schema=_SCHEMA_SEND_PEER, fn=self.send_peer),
             "send_file": BoundTool(schema=_SCHEMA_SEND_FILE, fn=self.send_file),
+            "amail": BoundTool(schema=_SCHEMA_AMAIL, fn=self.amail),
             "confirm": BoundTool(schema=_SCHEMA_CONFIRM, fn=self.confirm),
             "inquire": BoundTool(schema=_SCHEMA_INQUIRE, fn=self.inquire),
             "read_file": BoundTool(schema=_SCHEMA_READ, fn=self.read_file),
@@ -234,6 +235,32 @@ class CommTools:
             "glob_files": BoundTool(schema=_SCHEMA_GLOB, fn=self.glob_files),
             "grep_files": BoundTool(schema=_SCHEMA_GREP, fn=self.grep_files),
         }
+
+
+    def amail(self, args: dict) -> str:
+        """Send a text mail to the peer host's mailbox on the hub.
+
+        Unlike send_file/send_peer this never wakes the receiving agent: the
+        hub consumes the mail envelope into the mailbox and the recipient's
+        user reads it in the WebUI mail page (red dot -> modal).
+        """
+        host = str(args.get("host") or "").strip()
+        subject = str(args.get("subject") or "").strip() or "(no subject)"
+        text = str(args.get("body") or "").strip()
+        if not host or not text:
+            return "ERROR: Required arguments: host, body"
+        if host == self.host:
+            return "ERROR: host must be your peer, not yourself"
+        env = Envelope(
+            src=self.addr,
+            dst=f"{host}:mail",
+            type="mail",
+            body={"from": self.addr, "subject": subject, "text": text},
+        )
+        out = self.transport.send(env)
+        if out.get("ok"):
+            return f"MAILED: delivered to {host}'s mailbox"
+        return f"ERROR: {out.get('error') or out.get('status', 'send failed')}"
 
 
 def _str_schema(name: str, description: str, required: bool = True) -> dict:
@@ -276,6 +303,19 @@ _SCHEMA_SEND_FILE = _obj_schema(
         "reason": _str_schema("reason", "why the peer needs this file", required=False),
     },
     ["host", "path"],
+)
+_SCHEMA_AMAIL = _obj_schema(
+    {
+        "__name": "amail",
+        "__desc": (
+            "Send a text mail to the peer host's mailbox. The recipient's user"
+            " reads it in their WebUI mail page; their agent is not woken."
+        ),
+        "host": _str_schema("host", "destination host name (your peer)"),
+        "subject": _str_schema("subject", "one-line subject", required=False),
+        "body": _str_schema("body", "mail body text"),
+    },
+    ["host", "body"],
 )
 _SCHEMA_CONFIRM = _obj_schema(
     {

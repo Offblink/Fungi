@@ -121,6 +121,14 @@ class HubClient:
         out = self._request("GET", f"/api/comm-log?host={self.host}&with={other}")
         return out.get("messages", [])
 
+    # ── mail ──
+
+    def mail(self) -> dict:
+        return self._request("GET", f"/api/mail?host={self.host}")
+
+    def mail_read(self, mail_id: str) -> dict:
+        return self._request("POST", "/api/mail/read", {"host": self.host, "id": mail_id})
+
     # ── file transfers (bytes live on the hub; only metadata is exchanged) ──
 
     def create_transfer(self, path: str, name: str, to_host: str) -> dict:

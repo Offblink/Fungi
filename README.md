@@ -45,6 +45,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
   路径守卫在 **server 端强制**（前缀校验，拒绝 `..` 与绝对路径逃逸），不依赖 clone 自觉。
   完整数据目录图见下方「数据目录口径」。
 - **send_file 传输**：字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
+- **amail 文字邮件 + 信使开关**：`amail` 工具把一封文字信投进对方在 hub 上的邮箱（`data/mail/<host>/`，server 权威、离线容忍）——收件不惊动对面 Agent，WebUI（桌面+手机）导航的「邮件」入口未读红点提示，点开模态框阅读、标记已读。**信使**（设置页开关，默认开）：开启时本机通讯 clone 醒来转述对面留言、推文件卡片；关闭后全部直达——留言直接进会话视图（署名主机名）、consent 卡片由 hub 直推、邮件静静躺进邮箱，本机 Agent 零消耗。
 - **skill 与日记：理性与感性的一对**。skill 系统负责**理性**，主要由用户指导——每台主机的 clone 沉淀可复用流程（`data/skills/<name>/SKILL.md` + 可选配套脚本），列表注入 system prompt，通讯 clone 只读；私人日记（实验性，设置页开关）负责**感性**，完全由 Agent 自己决定——对话里触动了它，它就用自己的语气在 `data/diary/YYYY-MM-DD.md`（一天一页）记下那些最触动它的，以及它的感受，是情绪记忆不是会议纪要。最近 60 天逐日注入它的 prompt（更早的降级为日期索引，可自行展开）。日记更多属于 Agent 的个人隐私，没有向外的接口：界面零入口，调用卡片与回放全程隐身——我们**极不推荐**去翻看它，它被问到也守口如瓶。
 - **视频理解**：`video` 工具跑仓库内置的 `vidsense/` 包（vendored 自 [VidSense](https://github.com/Offblink/VidSense)，子进程原生本地管线：whisper 转写 + CLIP 镜头切分），事件卡 + 关键帧直接附给本机视觉模型，无第二 API key；CJK 路径自动转 ASCII 副本、GFW 下自动走 hf-mirror。
 - **后台命令**：`background` 工具把一条命令丢后台直跑（不起子代理、零额外 LLM 调用），完成后自动以 `[background report]` 回传输出；右上角 Bg 气泡可点开看详情，/stop 即杀。`spawn` 仍用于派发子任务，同为异步——完成自动再激活会话，停止即全杀。两者均接受可选 `timeout`（秒）：超时即杀，报告携带截止前已产出的内容与超时提示；不传则不限时。
@@ -75,6 +76,7 @@ LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/O
 | `data/public/`、`data/homes/<host>/` | clone 文件空间（三分区守卫） | clone 经守卫读写 |
 | `data/transfers/` | send_file 暂存（store-and-forward，取走即删） | hub |
 | `data/skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent，通讯 clone 只读 |
+| `data/mail/<host>.jsonl` | amail 文字邮箱（hub 权威，收件不落 clone） | hub API / WebUI 邮件页 |
 | `inbox/`（仓库根） | send_file 收到的文件（`<来源主机>/` 子目录） | WebUI 传输落盘 |
 | `~/.fungi/webui_token` · `~/.fungi/consent_rules.json` | WebUI 门禁 token · 好友同意模式开关 | GUI / WebUI |
 

@@ -85,7 +85,7 @@ _TAPE_GRACE_S = 60.0  # how long a sealed (done) tape stays for late reattach
 
 
 _STATIC_ROUTES = frozenset(
-    ("/", "/m", "/app.js", "/style.css", "/motion.js", "/m.css", "/m.js")
+    ("/", "/m", "/app.js", "/common.js", "/style.css", "/motion.js", "/m.css", "/m.js")
 )
 
 
@@ -268,6 +268,13 @@ class WebUIRuntime:
         """Per-friend consent mode: "allow" or "ask" (room mode)."""
         return "ask"
 
+    def mail(self) -> dict:
+        """This host's mailbox (room mode returns the real one)."""
+        return {"host": "", "mails": [], "unread": 0}
+
+    def mail_read(self, mail_id: str) -> dict:  # noqa: ARG002 (room mode overrides)
+        return {"ok": False}
+
     def set_consent_mode(self, host: str, mode: str) -> None:
         pass
 
@@ -408,7 +415,7 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_static("index.html")
         elif route == "/m":
             self._send_static("m.html")
-        elif route in ("/app.js", "/style.css", "/motion.js", "/m.css", "/m.js"):
+        elif route in ("/app.js", "/common.js", "/style.css", "/motion.js", "/m.css", "/m.js"):
             self._send_static(route.lstrip("/"))
         elif (
             route.startswith("/vendor/") and "/" not in route[8:] and ".." not in route
@@ -458,6 +465,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 # an array, and the render threw into the swallowed catch —
                 # the friend view stayed blank forever.
                 self._send_json(self.runtime.comm_log(host))
+        elif route == "/mail":
+            self._send_json(self.runtime.mail())
         elif route == "/events":
             self._handle_events((parse_qs(url.query).get("sessionId") or [None])[0])
         elif route == "/spawn-pending":
@@ -503,6 +512,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 value = str(value or "")
             ok = self.runtime.route_answer(str(data.get("id") or ""), value)
             self._send_json({"ok": ok}, status=200 if ok else 404)
+        elif url.path == "/mail/read":
+            data = self._read_body()
+            self._send_json(self.runtime.mail_read(str(data.get("id") or "")))
         elif url.path == "/configure":
             data = self._read_body()
             cfg = load_config()

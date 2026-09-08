@@ -226,3 +226,19 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   陈旧的 "Writing..."。
 - **停止丢卡片修复**：流未收到 done 就终结（硬中断/断网）时，`recoverAfterDrop` 先按磁盘
   reconcile 再视情重连接续，live 卡片不再在下次渲染时凭空消失（桌面 app.js 同步）。
+
+
+## 12. 增补（2026-09-09）：amail 文字邮件 + 信使开关
+
+- **amail**：comm clone 工具（`host/subject/body`），发 `type="mail"` envelope；hub.send 对 mail
+  直接落 `data/mail/<host>.jsonl`（server 权威、append-only、每箱 500 封滚旧），**不进 relay**——
+  收件两端零 agent 参与，离线容忍。WebUI（桌面+手机）「邮件」入口轮询 `GET /mail`（WebUI runtime
+  端点，runtime 解析本机主机名）出未读红点，模态框阅读，`POST /mail/read` 标记已读。
+- **信使（courier）**：config `courier: bool = True`，GUI 设置页开关，每个信封重读（免重启）。
+  - 开（默认）：现状——本机 comm clone 醒来转述对面留言、跑 receive_transfer 推卡。
+  - 关：`Clone.on_direct` 钩子（chat/transfer 在入队前询问）→ room `_courier_direct`：
+    chat 直接落会话视图 transcript（署名 `[<addr>]`）；transfer 由 room 合成同 id ask 进卡片
+    管线，用户答 yes 后 room 直接 `download_transfer` 落盘并回 `{ok,saved}`——收方 agent 全程不醒。
+- **前端 common.js**：fetch 封装（`initHttp` 支持 prefix/onUnauthorized）+ 工具卡片/consent 卡/
+  确认弹窗/邮件 UI 抽到 `window.FungiCommon`，app.js/m.js 只留壳；server.py 静态白名单加 `/common.js`。
+  注意 `[hidden]` 属性会被 CSS `display:flex` 覆盖——mail 列表/详情面板必须显式 `[hidden]{display:none}`。
