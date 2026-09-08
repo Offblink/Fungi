@@ -399,7 +399,6 @@
     overlay.innerHTML = '<div id="mail-modal">'
       + '<div class="mail-head"><button id="mail-back" class="mail-back" hidden>\u2190</button>'
       + '<h3 id="mail-modal-title">' + escapeHtml(t.title) + '</h3>'
-      + '<span id="mail-modal-unread" class="mail-badge" hidden></span>'
       + '<button id="mail-close">' + escapeHtml(t.close) + '</button></div>'
       + '<div id="mail-list" class="mail-list"></div>'
       + '<div id="mail-detail" class="mail-detail" hidden>'
@@ -414,9 +413,6 @@
         opts.badgeEl.hidden = unread === 0;
         opts.badgeEl.textContent = unread;
       }
-      const mBadge = document.getElementById('mail-modal-unread');
-      mBadge.hidden = unread === 0;
-      mBadge.textContent = unread;
     }
 
     function render() {
