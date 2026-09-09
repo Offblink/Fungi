@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 from fungi.tools.files import tool_edit, tool_read, tool_write
 from fungi.tools.search import tool_glob, tool_grep
-from fungi.tools.shell import tool_bash
+from fungi.tools.shell import tool_bash, tool_bash_kill, tool_bash_send, tool_bash_start
 from fungi.tools.video import tool_video
 from fungi.tools.webtools import tool_web, tool_web_search
 
@@ -96,6 +96,55 @@ TOOLS: dict[str, dict] = {
             ["command"],
         ),
         "fn": tool_bash,
+    },
+    "bash_start": {
+        "schema": _schema(
+            "bash_start",
+            "Start a command (cmd.exe) as a background session and return "
+            "IMMEDIATELY with its session id and output so far. Use for "
+            "REPL-style read->write interaction: dev servers, watch tasks, "
+            "python/ssh/REPL prompts, multi-prompt installers. stdin defaults "
+            "to NUL (an interactive prompt reads EOF and exits at once) — pass "
+            "stdin_arg 'pipe' to feed input later via bash_send. Output keeps "
+            "accumulating; each bash_send (or bash_start of a new session) "
+            "returns everything printed since. Sessions are killed when their "
+            "turn ends, on /stop, or after 10 idle minutes.",
+            {
+                "command": {"type": "string"},
+                "cwd": {"type": "string", "description": "Working directory (optional)"},
+                "stdin_arg": {
+                    "type": "string",
+                    "enum": ["nul", "pipe"],
+                    "description": "'pipe' enables bash_send input (default 'nul')",
+                },
+            },
+            ["command"],
+        ),
+        "fn": tool_bash_start,
+    },
+    "bash_send": {
+        "schema": _schema(
+            "bash_send",
+            "Feed ONE line to a running bash_start session (started with "
+            "stdin_arg 'pipe'), then get the output it produced (waits up to "
+            "~2s). The newline is added for you; do not include it.",
+            {
+                "id": {"type": "string", "description": "Session id from bash_start"},
+                "text": {"type": "string", "description": "One line to write to the process stdin"},
+            },
+            ["id"],
+        ),
+        "fn": tool_bash_send,
+    },
+    "bash_kill": {
+        "schema": _schema(
+            "bash_kill",
+            "Kill a bash session's whole process tree (the session id is from "
+            "bash_start). Sessions also die on their own when the turn ends.",
+            {"id": {"type": "string", "description": "Session id from bash_start"}},
+            ["id"],
+        ),
+        "fn": tool_bash_kill,
     },
     "glob": {
         "schema": _schema(
