@@ -833,6 +833,8 @@ function displayOf(host) {
 
 function leaveFriendView() {
   const wasViewing = friendView !== null;
+  friendView = null;
+  lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
   document.getElementById('friend-input-area').hidden = true;
