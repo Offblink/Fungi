@@ -375,146 +375,52 @@
     return { poll, place, pendingAskIds, pendingAskCards, resolvedAskCards };
   }
 
-  /* ---------- mail (amail 文字邮件) ----------
-     Entry click opens a conversation-style view in the main area (opts.convoEl):
-     centered mail cards from different people; clicking a card opens the
-     detail modal (full body + mark read).
-     opts: {
-       http,            // {fetchJSON, postJSON}
-       badgeEl,         // unread badge element on the nav entry (hidden when 0)
-       convoEl,         // element rendering the conversation view (mail cards)
-       displayOf,       // fn(host) -> display name for the sender line
-       locale,          // fmtDate locale ('en-US' desktop / 'zh-CN' mobile)
-       strings: { title, markRead, empty, close }
-     }
-     Backend contract: GET /mail -> {host, mails:[{id, from, peer, subject, body, ts, read, mine}], unread};
-     POST /mail/read {id} -> {ok:true}. Polls every 5s. */
-  function initMail(opts) {
-    const http = opts.http;
-    const t = Object.assign({ title: 'Mail', markRead: 'Mark read', empty: 'No mail yet.', close: '\u2715' }, opts.strings);
+  /* ---------- mail unread (amail 未读计数, per-peer) ----------
+     Polls this host's mailbox and exposes per-peer unread counts for the
+     friend list. Reading happens in the friend view: markPeerRead clears
+     everything a peer sent.
+     opts: { http, onChange(map) }
+     Backend: GET /mail -> {host, mails:[{id, from, peer, body, ts, read, mine}], unread};
+     POST /mail/read {id} -> {ok}. */
+  function initMailUnread(opts) {
     let mails = [];
-    let unread = 0;
-    let convoOpen = false;
     let timer = null;
 
-    const overlay = document.createElement('div');
-    overlay.id = 'mail-modal-overlay';
-    overlay.innerHTML = '<div id="mail-modal">'
-      + '<div class="mail-head"><h3 id="mail-modal-title">' + escapeHtml(t.title) + '</h3>'
-      + '<button id="mail-close">' + escapeHtml(t.close) + '</button></div>'
-      + '<div id="mail-detail" class="mail-detail" hidden>'
-      + '<div class="mail-detail-meta"></div>'
-      + '<div class="mail-detail-body"></div>'
-      + '</div></div>';
-    document.body.appendChild(overlay);
-
-    function renderBadge() {
-      if (opts.badgeEl) {
-        opts.badgeEl.hidden = unread === 0;
-        opts.badgeEl.textContent = unread;
+    function byPeer() {
+      const map = {};
+      for (const m of mails) {
+        if (!m.mine && !m.read) {
+          const k = m.peer || String(m.from || "").split(":")[0];
+          map[k] = (map[k] || 0) + 1;
+        }
       }
+      return map;
     }
 
-    function senderLine(m) {
-      if (m.mine) return '我 → ' + (opts.displayOf ? opts.displayOf(m.peer) : m.peer);
-      if (String(m.from || '').endsWith(':human')) return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的用户';
-      return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的 Agent';
-    }
-
-    function buildCard(m) {
-      const card = document.createElement('div');
-      card.className = 'mail-card' + (m.read ? '' : ' unread');
-      const subject = m.subject && m.subject !== '(no subject)' && m.subject !== m.body
-        ? escapeHtml(m.subject) : '';
-      card.innerHTML = '<span class="mail-unread-dot"></span>'
-        + '<div class="mail-card-main"><div class="mail-card-top">'
-        + '<span class="mail-from">' + escapeHtml(senderLine(m)) + '</span>'
-        + '<span class="mail-time">' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</span></div>'
-        + (subject ? '<div class="mail-subject">' + subject + '</div>' : '')
-        + '<div class="mail-preview">' + escapeHtml(String(m.body || '').slice(0, 80)) + '</div>'
-        + '</div>';
-      card.addEventListener('click', () => openDetail(m.id));
-      return card;
-    }
-
-    function renderConvo() {
-      if (!opts.convoEl) return;
-      opts.convoEl.innerHTML = '';
-      if (!mails.length) {
-        opts.convoEl.innerHTML = '<div class="mail-empty">' + escapeHtml(t.empty) + '</div>';
-        return;
-      }
-      mails.forEach(m => opts.convoEl.appendChild(buildCard(m)));
-    }
-
-    function renderDetail(m) {
-      const detailEl = overlay.querySelector('#mail-detail');
-      detailEl.querySelector('.mail-detail-meta').innerHTML =
-        '<div class="mail-detail-subject">' + escapeHtml((m.subject && m.subject !== '(no subject)') ? m.subject : '') + '</div>'
-        + '<div class="mail-detail-from">' + escapeHtml(senderLine(m))
-        + ' \u00b7 ' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</div>';
-      detailEl.querySelector('.mail-detail-body').textContent = m.body || '';
-      detailEl.hidden = false;
-    }
-
-    function openDetail(id) {
-      const m = mails.find(x => x.id === id);
-      if (!m) return;
-      overlay.classList.add('show');
-      renderDetail(m);
-      if (!m.read) markRead(m.id); // opening a mail IS reading it
-    }
-
-    function closeDetail() {
-      overlay.classList.remove('show');
-      overlay.querySelector('#mail-detail').hidden = true;
-    }
-
-    async function markRead(id) {
-      try {
-        await http.postJSON('/mail/read', { id });
-        const m = mails.find(x => x.id === id);
-        if (m && !m.read) { m.read = true; unread = Math.max(0, unread - 1); }
-        renderBadge();
-        if (overlay.classList.contains('show')) renderDetail(m);
-        if (convoOpen) renderConvo();
-      } catch (e) {}
-    }
+    function changed() { if (opts.onChange) opts.onChange(byPeer()); }
 
     async function poll() {
       try {
-        const d = await (await http.fetchJSON('/mail')).json();
+        const d = await (await opts.http.fetchJSON("/mail")).json();
         mails = d.mails || [];
-        unread = d.unread != null ? d.unread : mails.filter(m => !m.read).length;
-        renderBadge();
-        if (convoOpen) renderConvo(); // keep the open conversation view fresh
+        changed();
       } catch (e) {} // backend not up yet / transient: retry on the next tick
     }
 
-    /* conversation view state; the host page toggles chrome around convoEl */
-    function openConvo() {
-      convoOpen = true;
-      renderConvo();
-      poll();
-      return true;
+    async function markPeerRead(peer) {
+      const targets = mails.filter(m => !m.mine && !m.read
+        && (m.peer || String(m.from || "").split(":")[0]) === peer);
+      if (!targets.length) return;
+      await Promise.all(targets.map(async m => {
+        try { await opts.http.postJSON("/mail/read", { id: m.id }); m.read = true; }
+        catch (e) {}
+      }));
+      changed();
     }
-    function closeConvo() {
-      convoOpen = false;
-      closeDetail();
-      return false;
-    }
-    function toggleConvo() { return convoOpen ? closeConvo() : openConvo(); }
 
-    overlay.addEventListener('click', e => { if (e.target === overlay) closeDetail(); });
-    overlay.querySelector('#mail-close').addEventListener('click', closeDetail);
-
-    function start() {
-      poll();
-      timer = setInterval(poll, 5000);
-    }
+    function start() { poll(); timer = setInterval(poll, 5000); }
     function stop() { if (timer) { clearInterval(timer); timer = null; } }
-
-    return { start, stop, openConvo, closeConvo, toggleConvo, poll };
+    return { start, stop, poll, byPeer, markPeerRead };
   }
 
   window.FungiCommon = {
@@ -522,6 +428,6 @@
     escapeHtml, fmtDate, getSessionTitle,
     initConfirmModal, showConfirm, closeConfirm,
     buildToolCard, fillToolResult, attachSpawnClick,
-    initAsks, initPendingAsks, initMail,
+    initAsks, initPendingAsks, initMailUnread,
   };
 })();

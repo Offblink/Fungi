@@ -832,7 +832,6 @@ function displayOf(host) {
 }
 
 function leaveFriendView() {
-  if (!document.getElementById('mail-view').hidden) setMailView(false); // mail view owns the main area
   const wasViewing = friendView !== null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
@@ -874,13 +873,14 @@ function renderFriendList() {
     const row = document.createElement('div');
     row.className = 'friend-row' + (name === friendView ? ' active' : '');
     row.title = name;
-    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>';
+    const n = (MailUnread.byPeer()[name] || 0);
+    row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>'
+      + (n ? '<span class="friend-unread">' + n + '</span>' : '');
     row.addEventListener('click', () => openFriendChat(name));
     list.appendChild(row);
   });
 }
 async function openFriendChat(host) {
-  setMailView(false); // never stack the friend composer on top of the mail view
   friendView = host;
   lastFriendPayload = null;
   lastTransferCount = -1;
@@ -1012,6 +1012,7 @@ function renderFriendChat(d) {
     window.fungiMotion?.spores?.(fileNodes[fileNodes.length - 1]);
   }
   lastTransferCount = fileNodes.length;
+  MailUnread.markPeerRead(friendView); // seeing the thread IS reading it
   (d.mails || []).forEach(m => {
     const body = String(m.body || '');
     const subject = String(m.subject || '');
@@ -1055,28 +1056,10 @@ document.getElementById('theme-switch').addEventListener('click', function () {
   setTimeout(() => themeRoot.classList.remove('theme-anim'), 500);
 });
 
-/* ---------- mail (amail) ----------
-   Entry click swaps the main area to the mail conversation view: centered
-   mail cards; clicking a card opens the detail modal. */
-const Mail = FC.initMail({
-  http: FC,
-  badgeEl: document.getElementById('mail-badge'),
-  convoEl: document.getElementById('mail-convo'),
-  displayOf,
-  locale: 'en-US',
-  strings: { title: 'Amail', markRead: 'Mark read', empty: 'No mail yet.' },
-});
-function setMailView(on) {
-  if (on) leaveFriendView(); // first: release the friend view (it checks mail state)
-  document.getElementById('mail-view').hidden = !on;
-  document.getElementById('chat-wrap').style.display = on ? 'none' : '';
-  document.getElementById('asks-banner').style.display = on ? 'none' : '';
-  document.getElementById('input-area').style.display = on ? 'none' : '';
-  document.getElementById('status').style.display = on ? 'none' : '';
-}
-document.getElementById('mail-entry').addEventListener('click', () => setMailView(true)); // open-only: exit is the view's back button
-document.getElementById('mail-view-back').addEventListener('click', () => setMailView(false));
-Mail.start();
+/* ---------- mail unread: per-peer badges on the friend list ---------- */
+const MailUnread = FC.initMailUnread({ http: FC, onChange: renderFriendList });
+MailUnread.start();
+
 
 /* ---------- friend view composer: human direct sends ---------- */
 const friendInput = document.getElementById('friend-input');
