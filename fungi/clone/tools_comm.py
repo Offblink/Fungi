@@ -7,6 +7,7 @@ hub (store-and-forward); only metadata rides the envelope, and the receiving
 host's user consents before anything touches their local disk.
 """
 
+import contextlib
 from pathlib import Path
 
 from ..agent import BoundTool
@@ -133,7 +134,8 @@ class CommTools:
                 "reason": reason,
                 "question": (
                     f"{src_host} wants to send you a file: {name} "
-                    f"({size} bytes). Accept?\nReason: {reason}"
+                    f"({size} bytes). Accept?\nReason: {reason}\n"
+                    f"接收后将保存到 inbox/{src_host}/{name}"
                 ),
             },
         )
@@ -150,6 +152,9 @@ class CommTools:
             dest = dest_dir / f"{stem}-{n}{suffix}"
             n += 1
         self.transport.download_transfer(str(body.get("id")), dest)
+        # delivered: drop the hub's staged copy so it does not linger
+        with contextlib.suppress(Exception):
+            self.transport.discard_transfer(str(body.get("id")))
         return {"ok": True, "saved": str(dest)}
 
     def confirm(self, args: dict) -> str:

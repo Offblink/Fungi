@@ -396,7 +396,8 @@ class RoomBase:
             sender = src_host
         return (
             f"{sender} wants to send you a file: {name} "
-            f"({size} bytes). Accept?\nReason: {reason}"
+            f"({size} bytes). Accept?\nReason: {reason}\n"
+            f"接收后将保存到 inbox/{src_host}/{name}"
         )
 
     def _direct_download(self, env: Envelope, src_host: str) -> dict:
@@ -414,10 +415,12 @@ class RoomBase:
             self.local.transport.download_transfer(str(body.get("id")), dest)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+        # delivered: drop the hub's staged copy so it does not linger
+        with contextlib.suppress(Exception):
+            self.local.transport.discard_transfer(str(body.get("id")))
         return {"ok": True, "saved": str(dest)}
 
     # ── human direct sends (friend view composer) ──
-
     def comm_send_human(self, peer: str, text: str | None = None, file_path: str | None = None) -> dict:
         """Human sends a message/file straight from the friend view: the
         envelope bypasses the LOCAL courier entirely (no local clone turn)

@@ -129,6 +129,17 @@ class Transfers:
         if rec is not None:
             (self.root / f"{rec['id']}__{rec['name']}").unlink(missing_ok=True)
 
+    def discard_for(self, transfer_id: str, host: str) -> bool:
+        """Receiver-authorized discard: only the designated dst host may drop
+        a staged transfer (used after a successful delivery)."""
+        with self._guard:
+            rec = self._records.get(str(transfer_id))
+            if rec is None or rec.get("dst") != host:
+                return False
+            del self._records[str(transfer_id)]
+        (self.root / f"{rec['id']}__{rec['name']}").unlink(missing_ok=True)
+        return True
+
     def fetchable(self, transfer_id: str, host: str) -> tuple[dict, Path] | None:
         """Record + file path, only for the designated receiver host."""
         with self._guard:
@@ -367,6 +378,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._comm_log(params)
         elif url.path == "/api/transfer":
             self._transfer_download(params)
+        else:
+            self._reply({"error": "not found"}, 404)
+
+    def do_DELETE(self) -> None:
+        url = urlparse(self.path)
+        params = parse_qs(url.query)
+        token = (params.get("token") or [""])[0]
+        if token != self.hub.token:
+            self._reply({"error": "bad token"}, 403)
+            return
+        if url.path == "/api/transfer":
+            body = self._body()
+            ok = self.hub.transfers.discard_for(str(body.get("id") or ""), str(body.get("host") or ""))
+            self._reply({"ok": bool(ok)})
         else:
             self._reply({"error": "not found"}, 404)
 

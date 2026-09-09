@@ -9,11 +9,15 @@ The transcript write path must merge, never replace, and stay lock-protected.
 
 import itertools
 import threading
+import time
 
 from fungi import config as config_mod
 from fungi import room as room_mod
 from fungi.clone.base import Clone
+from fungi.events import NullSink
+from fungi.llm import LLMResult
 from fungi.protocol import Envelope
+from fungi.room import RoomClient, RoomServer
 from fungi.session import SessionStore
 
 
@@ -192,3 +196,80 @@ def test_concurrent_transcript_writers_keep_every_message(tmp_path):
     msgs = room._comm_store.load("comm-bob")["messages"]
     assert len(msgs) == n
     assert len({m["content"] for m in msgs}) == n  # no lost update
+
+
+# ── end-to-end: two real rooms, human direct chat ──
+
+
+class _Scripted:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def __call__(self, _messages, tool_defs):  # noqa: ARG002
+        if self.results:
+            return self.results.pop(0)
+        return LLMResult(content="(idle)")
+
+
+def _wait(fn, timeout_s=15.0):
+    end = time.time() + timeout_s
+    while time.time() < end:
+        if fn():
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _two_rooms(tmp_path, monkeypatch, courier):
+    monkeypatch.setattr(room_mod, "load_config", lambda: config_mod.Config(courier=courier))
+    llm_alpha = _Scripted([LLMResult(content="alpha idle")])
+    llm_beta = _Scripted([LLMResult(content="beta here")])
+    server = RoomServer(
+        "alpha", config_mod.Config(api_key="k", endpoint="e", model="m"), NullSink(), "tok",
+        tmp_path / "d1", llm=llm_alpha, rules_path=tmp_path / "r1.json",
+    )
+    server.start()
+    client = RoomClient(
+        "beta", config_mod.Config(api_key="k", endpoint="e", model="m"), NullSink(),
+        f"http://127.0.0.1:{server.hub.port}", "tok",
+        llm=llm_beta, sessions_dir=tmp_path / "cs", rules_path=tmp_path / "r2.json",
+    )
+    client.start()
+    return server, client, llm_beta
+
+
+def test_human_direct_chat_courier_on_reply_loop(tmp_path, monkeypatch):
+    server, client, _llm_beta = _two_rooms(tmp_path, monkeypatch, courier=True)
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert _wait(lambda: client._clones.get("alpha") is not None)
+        assert server.comm_send_human("beta", text="human ping")["ok"]
+        # beta's courier relays it: a turn runs and the reply lands back here
+        assert _wait(lambda: any(
+            m.get("role") == "assistant"
+            for m in (server._comm_store.load("comm-beta") or {}).get("messages", [])
+        )), "beta's reply never landed on alpha's friend view"
+        # courier-on: the human message rides the clone history with the
+        # faithful human prefix (render_input), not a sender field
+        msgs = client._comm_store.load("comm-alpha")["messages"]
+        assert any("[来自 alpha 的用户] human ping" in str(m.get("content")) for m in msgs)
+    finally:
+        client.stop()
+        server.stop()
+
+
+def test_human_direct_chat_courier_off_no_agent(tmp_path, monkeypatch):
+    server, client, llm_beta = _two_rooms(tmp_path, monkeypatch, courier=False)
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert _wait(lambda: client._clones.get("alpha") is not None)
+        assert server.comm_send_human("beta", text="人类直发")["ok"]
+        assert _wait(lambda: (client._comm_store.load("comm-alpha") or {}).get("messages"))
+        msgs = client._comm_store.load("comm-alpha")["messages"]
+        (human,) = [m for m in msgs if m.get("sender") == "human"]
+        assert human["content"] == "人类直发"
+        assert human["sender_name"] == "alpha"
+        assert llm_beta.results, "courier-off receiving must not wake the agent"
+    finally:
+        client.stop()
+        server.stop()

@@ -77,6 +77,10 @@ class LocalTransport:
         _rec, path = found
         shutil.copyfile(path, dest)
 
+    def discard_transfer(self, transfer_id: str) -> None:
+        if self.hub is not None:
+            self.hub.transfers.discard(transfer_id)
+
 
 class RemoteTransport:
     """For clones on client hosts: HTTP to the hub.
@@ -109,6 +113,10 @@ class RemoteTransport:
 
     def download_transfer(self, transfer_id: str, dest: Path) -> None:
         self.client.download_transfer(transfer_id, dest)
+
+    def discard_transfer(self, transfer_id: str) -> None:
+        self.client.discard_transfer(transfer_id)
+
 
 
 class Clone:

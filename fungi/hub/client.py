@@ -147,6 +147,10 @@ class HubClient:
                     break
                 fh.write(chunk)
 
+    def discard_transfer(self, transfer_id: str) -> dict:
+        """Receiver-side: drop the hub's staged copy after a delivery."""
+        return self._request("DELETE", "/api/transfer", {"id": transfer_id, "host": self.host})
+
     def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
         """Stream a local file's raw bytes to the hub staging area."""
         src = Path(path)
