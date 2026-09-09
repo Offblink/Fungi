@@ -42,6 +42,10 @@ html,body{font-family:var(--font);font-size:var(--fs-md);line-height:1.6;color:v
 #hamburger-sidebar{background:none;border:none;color:var(--dim);cursor:pointer;padding:5px 7px;border-radius:var(--radius-xs);font-size:16px;transition:all var(--t-fast)}
 #hamburger-sidebar:hover{color:var(--text)}
 #chat-wrap{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+.mail-convo-head{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;position:sticky;top:0;background:var(--surface);z-index:1}
+#mail-view-back{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:2px 8px;border-radius:6px;transition:all 150ms}
+#mail-view-back:hover{color:var(--text);background:var(--surface2)}
+.mail-convo-title{font-weight:600;font-size:var(--fs-lg,17px);color:var(--text)}
 #mail-view{flex:1;min-height:0;overflow-y:auto}
 #mail-view[hidden]{display:none}
 #messages{flex:1;overflow-y:auto;padding:2rem 1.5rem;display:flex;flex-direction:column;gap:1rem}
@@ -269,18 +273,19 @@ html.motion-on .agent-bubble{animation:none}
 /* ---- mail (amail) ---- */
 #mail-modal-overlay{display:none;position:fixed;inset:0;z-index:120;background:rgba(10,12,30,0.45);backdrop-filter:blur(8px) saturate(1.15);-webkit-backdrop-filter:blur(8px) saturate(1.15);align-items:center;justify-content:center}
 #mail-modal-overlay.show{display:flex}
-#mail-modal{background:var(--surface);border-radius:var(--radius-lg);width:560px;max-width:92vw;max-height:82vh;display:flex;flex-direction:column;box-shadow:var(--shadow-pop,var(--shadow-card));border:1px solid var(--border-light);overflow:hidden}
-.mail-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border)}
-.mail-head h3{flex:1;font-size:var(--fs-lg,17px);font-weight:600;color:var(--text)}
-#mail-close{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all var(--t-fast,150ms)}
-#mail-close:hover{color:var(--text);background:var(--surface2)}
-#mail-back{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:6px}
-#mail-back:hover{color:var(--text)}
+#mail-modal{background:var(--surface);background-image:var(--sheen);border-radius:var(--radius-lg);padding:1.6rem 1.6rem 1.4rem;width:460px;max-width:90vw;max-height:82vh;overflow-y:auto;box-shadow:var(--shadow-pop);border:1px solid var(--border-light);animation:msgIn 0.35s var(--ease-out-expo)}
+.mail-head{display:flex;align-items:center;gap:10px;margin-bottom:0.9rem}
+.mail-head h3{flex:1;font-size:1.05rem;font-weight:600;color:var(--text);letter-spacing:-0.01em}
+#mail-close{background:none;border:none;color:var(--dim);font-size:15px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all var(--t-fast)}
+#mail-close:hover{color:var(--text);background:rgba(0,0,0,0.03)}
+.mail-convo-head{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;position:sticky;top:0;background:var(--surface);z-index:1}
+#mail-view-back{background:none;border:none;color:var(--dim);font-size:18px;cursor:pointer;padding:2px 8px;border-radius:6px;transition:all var(--t-fast)}
+#mail-view-back:hover{color:var(--text);background:var(--surface2)}
+.mail-convo-title{font-weight:600;font-size:var(--fs-lg,17px);color:var(--text)}
 .mail-list{overflow-y:auto;padding:12px 18px;display:flex;flex-direction:column;align-items:center;gap:8px}
-.mail-card{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid transparent;transition:background var(--t-fast,150ms),border-color var(--t-fast,150ms);width:100%;max-width:440px}
+.mail-card{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--radius-sm);cursor:pointer;border:1px solid transparent;transition:background var(--t-fast),border-color var(--t-fast);width:100%;max-width:440px}
 .mail-card:hover{background:var(--surface2)}
 .mail-card.unread{border-color:var(--border-light)}
-.mail-card.open{border-color:var(--border-light);background:var(--surface2)}
 .mail-unread-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent-glow);margin-top:7px;flex-shrink:0}
 .mail-card:not(.unread) .mail-unread-dot{background:var(--border);box-shadow:none}
 .mail-card-main{flex:1;min-width:0}
@@ -290,19 +295,20 @@ html.motion-on .agent-bubble{animation:none}
 .mail-time{color:var(--dim);font-size:var(--fs-xs,11.5px);white-space:nowrap}
 .mail-subject{color:var(--text2);font-size:var(--fs-sm,12.5px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
 .mail-preview{color:var(--dim);font-size:var(--fs-xs,11.5px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}
-.mail-card.open .mail-preview{display:none}
-.mail-card-body{white-space:pre-wrap;word-break:break-word;color:var(--text);font-size:var(--fs-sm,12.5px);margin-top:8px}
-.mail-card-actions{display:flex;justify-content:flex-end;margin-top:8px}
-.mail-mark-read{background:var(--accent);color:var(--on-accent);border:none;border-radius:var(--radius-xs);padding:5px 12px;cursor:pointer;font-weight:600;font-size:var(--fs-xs,11.5px);transition:background var(--t-fast,150ms)}
-.mail-mark-read:hover{background:var(--accent-hover)}
-.mail-empty{padding:32px;text-align:center;color:var(--dim)}
+.mail-detail-meta{margin-bottom:0.9rem}
+.mail-detail-subject{font-size:1rem;font-weight:600;color:var(--text);letter-spacing:-0.01em;margin-bottom:0.3rem}
+.mail-detail-subject:empty{display:none}
+.mail-detail-from{font-size:0.8rem;color:var(--dim)}
+.mail-detail-body{white-space:pre-wrap;word-break:break-word;color:var(--text);font-size:0.86rem;line-height:1.6;background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:14px;margin:0}
+
+.mail-detail[hidden],.mail-badge[hidden]{display:none}
 .mail-badge{background:var(--accent);color:var(--on-accent);border-radius:99px;font-size:10.5px;font-weight:700;min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 8px var(--accent-glow)}
 .mail-entry{background:none;border:none;color:var(--text2);cursor:pointer;font-size:17px;line-height:1;padding:8px 10px;border-radius:var(--radius-xs);transition:all var(--t-fast,150ms);display:inline-flex;align-items:center}
 .mail-entry:hover{color:var(--text);background:color-mix(in srgb,var(--accent) 6%,transparent)}
 .mail-entry .mail-badge{margin-left:2px}
 
 .mail-list[hidden],.mail-detail[hidden]{display:none}
-.mail-back[hidden],#mail-mark-read[hidden],.mail-badge[hidden]{display:none}
+.mail-badge[hidden]{display:none}
 
 #header .theme-switch{margin-left:0} /* mail-entry carries the auto margin: Amail sits immediately left of the theme toggle */
 .mail-entry{margin-left:auto}

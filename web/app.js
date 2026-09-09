@@ -880,6 +880,7 @@ function renderFriendList() {
   });
 }
 async function openFriendChat(host) {
+  setMailView(false); // never stack the friend composer on top of the mail view
   friendView = host;
   lastFriendPayload = null;
   lastTransferCount = -1;
@@ -1073,7 +1074,8 @@ function setMailView(on) {
   document.getElementById('input-area').style.display = on ? 'none' : '';
   document.getElementById('status').style.display = on ? 'none' : '';
 }
-document.getElementById('mail-entry').addEventListener('click', () => setMailView(Mail.toggleConvo()));
+document.getElementById('mail-entry').addEventListener('click', () => setMailView(true)); // open-only: exit is the view's back button
+document.getElementById('mail-view-back').addEventListener('click', () => setMailView(false));
 Mail.start();
 
 /* ---------- friend view composer: human direct sends ---------- */

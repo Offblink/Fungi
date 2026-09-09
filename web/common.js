@@ -405,7 +405,6 @@
       + '<div id="mail-detail" class="mail-detail" hidden>'
       + '<div class="mail-detail-meta"></div>'
       + '<div class="mail-detail-body"></div>'
-      + '<div class="mail-detail-actions"><button id="mail-mark-read">' + escapeHtml(t.markRead) + '</button></div>'
       + '</div></div>';
     document.body.appendChild(overlay);
 
@@ -455,9 +454,6 @@
         + '<div class="mail-detail-from">' + escapeHtml(senderLine(m))
         + ' \u00b7 ' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</div>';
       detailEl.querySelector('.mail-detail-body').textContent = m.body || '';
-      const btn = detailEl.querySelector('#mail-mark-read');
-      btn.hidden = !!m.read;
-      btn.onclick = () => markRead(m.id);
       detailEl.hidden = false;
     }
 
@@ -466,6 +462,7 @@
       if (!m) return;
       overlay.classList.add('show');
       renderDetail(m);
+      if (!m.read) markRead(m.id); // opening a mail IS reading it
     }
 
     function closeDetail() {
@@ -479,10 +476,7 @@
         const m = mails.find(x => x.id === id);
         if (m && !m.read) { m.read = true; unread = Math.max(0, unread - 1); }
         renderBadge();
-        if (overlay.classList.contains('show')) {
-          const cur = mails.find(x => x.id === id);
-          if (cur) renderDetail(cur); else closeDetail();
-        }
+        if (overlay.classList.contains('show')) renderDetail(m);
         if (convoOpen) renderConvo();
       } catch (e) {}
     }
