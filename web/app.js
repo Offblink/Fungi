@@ -875,7 +875,7 @@ function renderFriendList() {
     const row = document.createElement('div');
     row.className = 'friend-row' + (name === friendView ? ' active' : '');
     row.title = name;
-    const n = (MailUnread.byPeer()[name] || 0);
+    const n = (name === friendView) ? 0 : (MailUnread.byPeer()[name] || 0); // viewing the thread = no badge
     row.innerHTML = '<span class="friend-dot"></span><span class="friend-name">' + escapeHtml(peerDisplay(p)) + '</span>'
       + (n ? '<span class="friend-unread">' + n + '</span>' : '');
     row.addEventListener('click', () => openFriendChat(name));

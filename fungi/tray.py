@@ -8,7 +8,7 @@ and message-click both open the WebUI; right-click pops the fluent menu.
 import webbrowser
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QPoint, Qt
 from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon
 from qfluentwidgets import Action, SystemTrayMenu
@@ -78,7 +78,11 @@ class TrayController(QSystemTrayIcon):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._on_open_webui()
         elif reason == QSystemTrayIcon.Context:
-            self._menu.exec_(QCursor.pos())
+            # Pop upward: the cursor sits at the bottom screen edge, so anchor
+            # the menu's top-left above it (menu height = sizeHint, x unchanged).
+            self._menu.adjustSize()
+            pos = QCursor.pos() - QPoint(0, self._menu.height())
+            self._menu.exec_(pos)
 
     # ── 通知 ──
     def notify(self, title: str, body: str) -> None:

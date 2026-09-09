@@ -699,7 +699,7 @@ function renderFriendList() {
     const name = peerName(p);
     const row = document.createElement('div');
     row.className = 'friend-row' + (name === friendView ? ' active' : '');
-    const n = (MailUnread.byPeer()[name] || 0);
+    const n = (name === friendView) ? 0 : (MailUnread.byPeer()[name] || 0); // viewing the thread = no badge
     row.innerHTML = '<span class="friend-dot"></span><span>' + escapeHtml(peerDisplay(p)) + '</span>'
       + (n ? '<span class="friend-unread">' + n + '</span>' : '');
     row.addEventListener('click', () => { openFriendChat(name); closeDrawer(); });
