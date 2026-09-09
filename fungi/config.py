@@ -93,6 +93,7 @@ def load_config(path: Path | None = None) -> Config:
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
             cfg.max_tokens = int(data["max_tokens"])
+        cfg.diary = bool(data.get("diary"))
         cfg.courier_memory = str(data.get("courier_memory") or "")
         cfg.courier = bool(data.get("courier", True))
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
