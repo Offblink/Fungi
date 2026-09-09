@@ -10,8 +10,8 @@ from ..pending import PendingAsks
 from .base import Clone
 from .tools_comm import CommTools
 
-COMM_SYSTEM_PROMPT = """You are the comm Orchestrator for host {host}, dedicated to the counterpart \
-comm Orchestrator on host {peer}.
+COMM_SYSTEM_PROMPT = """You are the comm Agent for host {host}, dedicated to the counterpart \
+comm Agent on host {peer}.
 
 Rules:
 - You and your counterpart may collaborate autonomously; no user attention is needed for that.

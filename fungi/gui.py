@@ -263,8 +263,8 @@ _ACCENT_GUI = _ACCENT  # calendar today-marker shares the mushroom accent
 
 HELP_SECTIONS = [
     ("Fungi 是什么",
-     "一款局域网多主机 Orchestrator：一台机器「发起房间」，同一局域网的同伴"
-     "「加入房间」，各自通过 WebUI 与本机 clone 对话，让多个 AI 跨主机协作。"
+     "一款局域网多主机 Agent 协作网络：一台机器「发起房间」，同一局域网的同伴"
+     "「加入房间」，各自通过 WebUI 与本机 Agent 对话，让多个 AI 跨主机协作。"
      "无需公网，所有流量不出局域网。"),
     ("发起房间",
      "一台机器点「发起房间」：得到房间 IP 和 Token，发给要加入的同伴。"
@@ -274,18 +274,18 @@ HELP_SECTIONS = [
     ("加入房间",
      "同伴点「加入房间」：填 IP + Token（同一局域网可留空 IP，自动全网段发现）。"
      "Token 即身份；Token 对不上的房间会被自动跳过。"),
-    ("WebUI 与 clone 能力",
-     "双方点「打开 WebUI」进入各自的聊天界面，和本机 clone 对话让它干活。"
-     "clone 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
+    ("WebUI 与 Agent 能力",
+     "双方点「打开 WebUI」进入各自的聊天界面，和本机 Agent 对话让它干活。"
+     "Agent 能力：跨主机 delegate 任务、send_peer 传话、send_file 传文件"
      "（对方 WebUI 会弹确认卡片）、读写 public/ 共享目录和 homes/<主机>/ 私人目录。"
-     "clone 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，内置 "
+     "Agent 还能直接看图、读 docx/pptx/xlsx、理解视频（video 工具，内置 "
      "VidSense 管线）、用 background 工具把慢命令丢后台跑（完成后自动回"
      "传结果）——手机上把文件传上来即可。"
      "spawn 派发子任务与 background 都支持可选 timeout（秒）：超时即停，"
      "已产出的内容随超时提示一起返回；不给 timeout 就不限时。"),
     ("skill 与日记（实验性）",
-     "skill 负责理性、主要由用户指导——clone 沉淀可复用流程，帮它把活干好；"
-     "日记负责感性、完全由 Agent 自己决定——设置页可开启 Orchestrator 的"
+     "skill 负责理性、主要由用户指导——Agent 沉淀可复用流程，帮它把活干好；"
+     "日记负责感性、完全由 Agent 自己决定——设置页可开启 Agent 的"
      "私人日记（data/diary/，一天一页），对话里有什么触动它，它就用自己的"
      "语气记下那些最触动它的，以及它的感受，不是给用户看的记录。"
      "最近 60 天会注入它的记忆。日记更多属于 Agent 的个人隐私，没有向外的"
@@ -302,19 +302,19 @@ HELP_SECTIONS = [
     ("设置与文件",
      "设置页填 api_key / endpoint / model；收到的文件在仓库根 inbox/<来源主机>/。"),
     ("文件与邮件",
-     "对面发来的文件经你同意后落在仓库根 inbox/<来源主机>/；文字消息统一走 amail："
+     "对面发来的文件经你同意后落在仓库根 inbox/<来源主机>/；文字消息统一走留言邮箱："
      "你或 Agent 发的文字同时落进收发两端邮箱（data/mail/），"
      "未读数显示在好友列表各好友的徽标上，点开好友视图即已读——"
      "投递不惊动对方 Agent，离线也能收到。"),
     ("信使",
      "信使只管消息：开启时对面的留言由本机信使代收代复——重要消息转告、寻常消息代答（开关在设置页，默认开）。"
      "信使页提供两类喂给它的上下文：长期记忆（开放背景）和四周日历待办（带日期的即时安排，"
-     "本地 clone 也能用 todo 工具写入）。两者即时生效，下一封留言就会被用上。"
+     "本机 Agent 也能用 todo 工具写入）。两者即时生效，下一封留言就会被用上。"
      "文件传输不经过信使：一律推 consent 卡片、落盘 inbox/<来源>/，零 Agent 消耗。"
      "关闭信使后留言直达会话视图（署名主机名）；"
      "关闭后全部直达：留言进会话视图（署名主机名）、卡片由 hub 直推，"
      "本机 Agent 完全不消耗。每个信封即时重读开关，无需重启。"
-     "好友视图也可写：在输入框直接留言（统一落 amail，两端各一份、不惊动 Agent）"
+     "好友视图也可写：在输入框直接留言（两端各一份、不惊动 Agent）"
      "或发文件（走对面 consent 卡片）。"),
     ("更多文档",
      "细节见仓库 README 与 docs/spec.md。"),
@@ -973,7 +973,7 @@ class ConfigPage(QWidget):
         msg_row.addStretch(1)
         root.addLayout(msg_row)
         courier_hint = BodyLabel(
-            "开启后，对面的留言由本机信使（通讯 clone）代收代复：重要消息转告你，寻常消息代答。\n"
+            "开启后，对面的留言由本机信使代收代复：重要消息转告你，寻常消息代答。\n"
             "关闭后直达：留言进会话视图，本机 Agent 完全不消耗。即时生效。"
         )
         courier_hint.setWordWrap(True)
@@ -1006,7 +1006,7 @@ class ConfigPage(QWidget):
         diary_title_row.addStretch(1)
         root.addLayout(diary_title_row)
         diary_hint = BodyLabel(
-            "让 Orchestrator 写自己的私人日记（data/diary/）。\n"
+            "让 Agent 写自己的私人日记（data/diary/）。\n"
             "内容只有它自己能看：界面不展示，它被问到也会守口如瓶。关闭后工具与记忆注入一并移除。"
         )
         diary_hint.setWordWrap(True)
@@ -1334,7 +1334,7 @@ class CourierPage(QWidget):
         root.setSpacing(6)
         root.addWidget(SubtitleLabel("信使"))
         hint = BodyLabel(
-            "开启后，对面的留言由本机信使（通讯 clone）代收代复：重要消息转告你，寻常消息代答。\n"
+            "开启后，对面的留言由本机信使代收代复：重要消息转告你，寻常消息代答。\n"
             "开关在设置页；下面的记忆与待办，信使每轮回复都会读取。"
         )
         hint.setWordWrap(True)

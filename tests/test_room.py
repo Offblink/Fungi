@@ -312,7 +312,7 @@ def test_server_runtime_sessions_backed_by_hub_store(server_room):
     runtime.sessions_save(sid, "t", [{"role": "user", "content": "hi"}])
     assert [s["id"] for s in runtime.sessions_list()] == [sid]
     assert runtime.sessions_load(sid)["messages"][0]["content"] == "hi"
-    assert runtime.new_session_prompt().startswith("You are the local Orchestrator on host alpha")
+    assert runtime.new_session_prompt().startswith("You are the local Agent on host alpha")
     runtime.sessions_delete(sid)
     assert runtime.sessions_list() == []
 

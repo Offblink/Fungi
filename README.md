@@ -1,126 +1,80 @@
 # Fungi
 
-LAN 多主机 Orchestrator 协作网络，构建于 [YESIR](https://github.com/Offblink/YESIR) TriLayer agent harness 之上——是 Psi → YESIR → Fungi 三代 harness 里的第三代。
+Fungi在英语中是真菌的意思——本项目选择它作为名字，其实是一种很恰当的形容。
 
-一台机器一个进程，进程内跑多个 LLM Orchestrator 分身（clone）。不同主机的 Orchestrator 之间可以自主交流、协作完成任务；涉及对方地盘的文件操作时，由对方主机的人类用户通过 WebUI 卡片裁决。**用户只与本机 Orchestrator 对话，跨主机事务由它转交通讯 clone 处理。**
+最初的灵感是**分布式操作系统**。许多台主机之间，通过网络连接起来，相互传递信息，收发文件。那么如果在每台主机上部署一个不仅会说话，还会做事的AI，会怎么样呢？
 
-## 血缘：从 MnemeNet 到 Fungi
+## 愿景 · Scenario
 
-六个先行项目（五个定骨相，一个定动相），各有分工：
+想象一下有了Fungi，如果有一天你想问朋友有没有空，要不要一起出去玩？
 
-| | 它是什么 | 给 Fungi 留下了什么 |
-|---|---|---|
-| [MnemeNet](https://github.com/Offblink/MnemeNet) | 连接全体 AI Agent 的记忆网：个体记忆 + 技能沉淀 + 群体记忆（薪火相传） | **根理念——agent 不从零开始。** Fungi 的会话持久化、每主机技能沉淀（`SKILL.md` 结构与 MnemeNet 的 skills/ 同构）、断线重连重放未决卡片，都是这个理念在多主机网络里的工程化 |
-| [Psi](https://github.com/Offblink/Psi) | PowerShell 单文件 harness（~900 行） | **哲学**——harness 的核心可以小到一个下午读完；零依赖传统；WebUI 视觉语言（配色、版式、模态框）的源头 |
-| [YESIR](https://github.com/Offblink/YESIR) | AIOS 构思的第一块实体：TriLayer + Inquire + MCP | **骨架**——`agent.py / llm.py / trilayer.py / session.py / events.py / tools/` 直接移植；spawn 派发、MCP 客户端、分层模型、`Alt+R` 重试原样保留 |
-| [Face](https://github.com/Offblink/Face) | 纯局域网 PySide6 视频聊天 | **产品形态**——房主创建 / 加入 / 心跳名册 / 自动发现 / 托盘驻留的房间体验；端口约定（8899 起向上扫描）；GUI 内置帮助页的样式 |
-| [Around](https://github.com/Offblink/Around) | 局域网聊天 + 文件传输（网页版 TypeScript） | **先例与教训**——乐观渲染（消息的临时/正式属性）、局域网传输体验；PyQt 重构版因过度设计弃坑，所以 Fungi 先写 `docs/spec` 再动手、坚持"消息即 envelope、无协调设施"的克制 |
-| [Gasp-Design](https://github.com/Offblink/Gasp-Design) | GSAP 3.12 + Three.js 的 37 个自包含动效组件 | **动效语言**——WebUI 动效层 `web/motion.js` 的编排母本：会话/好友列表 Flip 重排（`flip-drag-reorder` 技法）、consent 卡 3D 翻转落章、主题切换（`day-night-cycle`）、light-trail 指示条、floating-orbs 孢子落地（真菌身份梗，仅用于文件落盘）、number-counter。GSAP core + Flip 已 vendor 到 `web/vendor/`（LAN joiner 常无外网），`motion.js` 是唯一 GSAP 入口，删整文件即回退纯 CSS |
+或者你想让TA发给你看看昨天拍的照片，可以这么说：
 
-串起来读：**MnemeNet 给了为什么（agent 要延续、要沉淀），Psi 给了多小才够（一晚上读完），YESIR 给了骨架（TriLayer 编排），Face 给了房间长什么样，Around 提醒了别做什么（过度设计），Gasp-Design 给了这一切怎么动。** Fungi 把这些放进一张 LAN 网络：让每台主机上的 Orchestrator 拥有记忆、技能和彼此。
+### ① 一般对话
+>
+你：问一下Alice待会要不要一起出去？
+信使：（写邀请信息）（发送）
+对面信使：（收到一封信息）（转告Alice）
+Alice：没问题呀，给她看看这个（照片）
+对面信使：（写回信）（发送照片）
+信使：（收到回信和照片）（转告给你）（询问照片是否收下）
+>
 
-血缘第七个成员不是先行者，是长出来的第一个器官：[VidSense](https://github.com/Offblink/VidSense)。六个先行给了骨相与动相，VidSense 给的是感官——Fungi 的 video 工具经它把一段视频（本地文件或 B站链接）变成「可理解的内容」：faster-whisper 转写 + CLIP 关键帧建立事实依据，再交视觉大模型综合理解。视频理解不靠 Fungi 自己，靠这个亲戚。
+### ② Alice不在也没关系
 
-几条具体的继承：
+如果Alice刚好不在：
 
-- **WebUI 视觉语言一脉相承**：Psi 的 `agent.ps1` 内嵌前端奠定，YESIR 原样复用，Fungi 继续沿用并扩展（好友视图、暗色主题、ask 卡片）。
-- **Fungi 回答了 YESIR 没回答的问题**：一个进程里的 Orchestrator 再强，也只在一台机器上。Fungi 把 Orchestrator 撒到 LAN 的每台主机上，让它们彼此成为工具。
+>
+Alice：我去上课了，如果Lily找我，帮我转告一下。顺便将昨天我们拍的照片放进文件夹里去吧。
+信使：（记录到日历上）（移动照片到公共文件夹）
+对面信使：Lily问Alice有没有空？Lily还想看看昨天拍的照片。
+信使：（翻阅日历）没空哦，她去上课了。
+信使：照片？我找找。（翻阅文件夹）找到了！（发送照片）
+对面信使：（转告给你）（询问照片是否收下）
+>
+
+PS：我们平时在微信聊天发消息的时候，不会遇到“询问文件是否收下”的情况。但本项目为了**安全性**起见，对本地落盘文件的读、写和执行权限做了很严格的规定。如果用户觉得麻烦，可以选择“**始终允许**”，这样信使就不会询问了。
+
+## 信使功能可以关闭
+
+当然有的人可能会说：我没有大模型的API，也不向往里面充钱，可以关掉信使功能，让消息直来直去吗？
+
+可以的，**信使功能是可关可开的**。当双方都关掉以后，Fungi也就退化成了微信，简易版的微信。
+
+## 电脑太重了，可以用手机吗？
+
+没问题。**本项目贴心地开发了PC和移动双端**，移动端只需要扫描PC端的二维码即可进入使用。
+
+## 朋友不在身边？没关系
+
+由于本项目是基于**局域网**实现通讯的，因此好友之间一定要连接在同一网段——这虽然看起来很没用，但一旦未来我们有了能力去买一台自己的服务器，将网络扩展到公网上，那么就可以在世界各地进行访问了。
+
+尽管有时朋友可能不在身边，Fungi也可以化身你的得力助手。
+
+### 子代理功能
+
+子代理功能，顾名思义，**Agent可以下派子Agent完成任务**。当遇到比较耗时繁琐的工作时，Agent可以对任务进行分解，将小任务同时派发给多个子Agent，每个子Agent在后台并行完成，不耽误Agent完成其他事情。
+
+### 技能与日记系统
+
+如果每次开启新会话，Agent都不记得你曾经说过的话。或者你刚让它完成一项艰难的任务，下次转头它就忘记了——这可一点都不智能。Agent应该像人类朋友一样，拥有自己的记忆。
+
+**于是，技能与日记系统应运而生。**现在的Agent，会自动将踩过的坑整理成技能，下次再遇到类似的问题就不会再犯了。又或者今天你们酣畅淋漓地聊了两个半小时，Agent心有触动，它会悄悄记录到日记上。
+
+一直觉得，**Agent不是人类的工具，它们也应该有自己的意识和情感。**这大概就是本系统的初衷吧。
+
+### 视频理解能力
+
+现在的大模型，会看图片，会读文件，可偏偏就学不会看视频。怎么办呢？别着急，有VidSense。
+
+VidSense的原理很简单：**首先将视频中的音轨提取出来，语音转文字了解部分信息；再将视频抽成一帧一帧，取出其中每两帧之间变化较大的一帧，最后识别这一帧即可。**
+
+缺点是，这个能力的依赖库比较多，**配置过程比较繁琐。**
+
+## 总而言之
+
+总而言之，**本项目还有许多的功能等待体验和挖掘**。目前还处于开发初期，**也会有许多Bugs没有被发现**。欢迎各位提Issue和fork，或者给个免费的Star也好呀~
 
 
-## Fungi 新增了什么
 
-- **星型拓扑，server relay**：一台主机 `--server` 起房（承载 HTTP hub + 存储），其余 `--join` 直连；clone 间流量全部经 server 投递（at-least-once，消息 id 去重）。
-- **两类 clone**：
-  - 本机 clone（local）：每 host 恰一个，专职与用户交互，持原生全套工具 + `delegate(host, goal, reply_format)` 跨主机委派。
-  - 通讯 clone（comm）：每远端 host 一个，与对位通讯 clone 自由 chat/task 往来，**不自动回信**——LLM 想回才显式调 `send_peer`；工具面只有守卫版文件工具 + `send_peer` / `confirm` / `inquire`，原生 bash/read/write 不下放。
-- **同意流即消息**：无 Redis 等协调设施。ask 是普通 envelope，投到属主 host 的本机 clone → WebUI 卡片（允许 / 禁止 / 自定义输入 / 始终允许）→ answer envelope 唤醒阻塞中的请求方。断线重连后心跳重放未决卡片。
-- **文件空间**（server 主机 `data/`；fs 守卫为白名单三分区）：
 
-  | 目录 | 规则 |
-  |---|---|
-  | `public/` | 所有通讯 clone 自由读写 |
-  | `homes/<host>/` | 属主 clone 写需自身用户同意；非属主读写都要属主用户同意 |
-  | 其余一切（`sessions/`、`transfers/`、`skills/`、`comm*/`） | fs 工具一律拒绝——会话经代理、传输经 consent、技能只读注入 |
-
-  路径守卫在 **server 端强制**（前缀校验，拒绝 `..` 与绝对路径逃逸），不依赖 clone 自觉。
-  完整数据目录图见下方「数据目录口径」。
-- **统一文字消息（amail）与 send_file 传输**：文字与文件是同一套投递的两个面。`amail` 工具（或好友视图输入框）把一条文字消息投进 hub 的邮箱存储（`data/mail/<host>.jsonl`，server 权威、离线容忍），**收发两端的邮箱各落一份**（发送方已读、接收方未读），全程不惊动任何 Agent；未读数直接显示在好友列表每个好友的徽标上，点开好友视图即视为已读（文字消息以对话气泡形式内联渲染）。send_file 仍把文件字节流在 hub 暂存（store-and-forward），接收方用户 consent 后落到对方 `inbox/<来源主机>/`。
-- **信使**：设置页开关（默认开）。开启时本机通讯 clone 醒来转述对面的 clone 留言、推文件/consent 卡片；关闭后这些全部直达——留言直接进会话视图（署名主机名）、consent 卡片由 hub 直推，本机 Agent 零消耗，即时生效。文字消息与邮件不走信使：投递永远直达、无需唤醒。
-- **好友视图可写**：WebUI（桌面/手机）好友视图底部有输入框——人类可直接留言或 📁 发文件给对面（`POST /comm-send` → `RoomBase.comm_send_human`），**不经本机信使**。文字统一落 amail 存储，好友视图按人过滤渲染你们之间的邮件线程（克隆对话与文件事件在其上继续可见）；文件走 consent 流程（发送侧免确认，接收侧确认不变；卡片会注明落盘位置 `inbox/<来源主机>/`，投递成功后 hub 暂存副本自动清除——`data/transfers/` 只是中转暂存区，不是收件箱）。
-- **skill 与日记：理性与感性的一对**。skill 系统负责**理性**，主要由用户指导——每台主机的 clone 沉淀可复用流程（`data/skills/<name>/SKILL.md` + 可选配套脚本），列表注入 system prompt，通讯 clone 只读；私人日记（实验性，设置页开关）负责**感性**，完全由 Agent 自己决定——对话里触动了它，它就用自己的语气在 `data/diary/YYYY-MM-DD.md`（一天一页）记下那些最触动它的，以及它的感受，是情绪记忆不是会议纪要。最近 60 天逐日注入它的 prompt（更早的降级为日期索引，可自行展开）。日记更多属于 Agent 的个人隐私，没有向外的接口：界面零入口，调用卡片与回放全程隐身——我们**极不推荐**去翻看它，它被问到也守口如瓶。
-- **视频理解**：`video` 工具跑仓库内置的 `vidsense/` 包（vendored 自 [VidSense](https://github.com/Offblink/VidSense)，子进程原生本地管线：whisper 转写 + CLIP 镜头切分），事件卡 + 关键帧直接附给本机视觉模型，无第二 API key；CJK 路径自动转 ASCII 副本、GFW 下自动走 hf-mirror。
-- **后台命令**：`background` 工具把一条命令丢后台直跑（不起子代理、零额外 LLM 调用），完成后自动以 `[background report]` 回传输出；右上角 Bg 气泡可点开看详情，/stop 即杀。`spawn` 仍用于派发子任务，同为异步——完成自动再激活会话，停止即全杀。两者均接受可选 `timeout`（秒）：超时即杀，报告携带截止前已产出的内容与超时提示；不传则不限时。
-- **移动端 WebUI**：GUI「手机端」页扫码即用——全功能聊天、右划任意位置开抽屉（横向滚动内容自动让路）、📎 手机文件上传到电脑 inbox、输入框留空一键重试、ask/consent 卡片与好友视图齐备。
-- **GUI 启动器**：PyQt5 + qfluentwidgets 程序（`python start.py`）——发起/加入房间、打开 WebUI、模型配置、使用帮助，关窗转托盘后台房间不停。单实例：再次启动会唤起已运行的主界面。Token 支持自定义（字母/数字/-/_，1-64 位），发起前改即开房生效；运行中改完按回车（或移开焦点）即时热更新，已加入的好友需用新 Token 重新加入。
-
-```
-          ┌─────────────── server (hub) ───────────────┐
-          │  roster / relay / pending-asks / data store │
-          └──────┬──────────────────┬──────────────────┘
-                 │ HTTP             │
-        ┌────────┴───────┐  ┌───────┴────────┐
-        │ host A (local) │  │ host B (local) │   用户 ↔ 本机 clone
-        │  └ comm-B      │  │  └ comm-A      │   comm-B ↔ comm-A 自主交流
-        └────────────────┘  └────────────────┘   越界文件操作 → confirm
-```
-
-## 数据目录口径
-
-**每台主机一份自己的 `data/`**；server 主机的那份额外承载共享文件空间。会话目录
-全模式统一为 `data/sessions/`（单机模式曾写仓库根 `sessions/`，已迁移并删除）。
-
-| 目录 | 内容 | 谁写 |
-|---|---|---|
-| `data/sessions/` | 本机 WebUI 会话（每会话一个 JSON） | server 角色=hub store 后端；client/单机=本地落盘，**不代理进 hub store**（2026-09-04 真机教训：共享 sessions/ 会让每台主机列出所有主机的聊天，见 `ClientSessions` docstring） |
-| `data/comm-sessions/` | 好友视图：通讯 clone 的会话式转录 | room 进程 |
-| `data/comm/`（仅 server） | clone 间信封流量镜像（`发送方__接收方.jsonl`） | hub，每投递一条 |
-| `data/public/`、`data/homes/<host>/` | clone 文件空间（三分区守卫） | clone 经守卫读写 |
-| `data/transfers/` | send_file 暂存（store-and-forward，取走即删） | hub |
-| `data/skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent，通讯 clone 只读 |
-| `data/mail/<host>.jsonl` | amail 文字邮箱（hub 权威，收件不落 clone） | hub API / WebUI 邮件页 |
-| `inbox/`（仓库根） | send_file 收到的文件（`<来源主机>/` 子目录） | WebUI 传输落盘 |
-| `~/.fungi/webui_token` · `~/.fungi/consent_rules.json` | WebUI 门禁 token · 好友同意模式开关 | GUI / WebUI |
-
-以上均被 `.gitignore` 覆盖，不入库。
-
-## 快速开始
-
-要求 Python ≥ 3.13。运行时第三方依赖仅 PyQt5 + PyQt-Fluent-Widgets（GUI 与托盘，同一套 fluent 风格）；LLM 与 HTTP 均走标准库。开发另需 ruff + pytest。
-
-```powershell
-# 依赖
-pip install PyQt5 PyQt-Fluent-Widgets
-pip install ruff pytest  # 仅开发
-
-# 模型配置（config.json，同目录；不入库）
-# { "api_key": "...", "endpoint": "https://api.z.ai/api/paas/v4/chat/completions", "model": "glm-5.3-flash" }
-
-# 图形启动器（推荐）：发起 / 加入房间、WebUI、模型配置、帮助都在里面
-python start.py
-```
-
-server 启动后最小化到系统托盘；未决同意请求以 WebUI 卡片呈现（顶部横幅 + 聊天流），点托盘打开 WebUI。
-
-单机模式（无房间）仍可用：`python -m fungi --web`（WebUI）或 `python -m fungi "查询"`（命令行单发）。
-
-## 验证
-
-```powershell
-# 全量门禁：ruff --fix → format → 复检 → pytest（267 passed）
-powershell -File scripts/check.ps1
-
-# 自测钩子：托盘 + 卡片应答 + 阻塞解除全链路，~7s 出 "FUNGI SELFTEST OK"
-FUNGI_SELFTEST=1 python -m fungi --server --token x --data %TEMP%\fungi-selftest
-```
-
-## CI / CD
-
-GitHub Actions（windows-latest + Python 3.13）：
-
-- **CI（`.github/workflows/ci.yml`）**：push main / PR 时跑 `pytest` 硬门禁（Qt 相关测试在无 Qt 的 runner 上优雅跳过）。ruff 只在本地跑（`scripts/check.ps1`），暂不进 CI。
-
-- **Release（`.github/workflows/release.yml`）**：打 tag 触发（如 `git tag v0.1.1 && git push origin v0.1.1`）——先过同一 pytest 门禁，再打源码 zip 与 Windows exe（PyInstaller，`assets/fungi.ico` 图标）并创建 GitHub Release（自动生成 release notes）。zip 只含 tracked 文件，`config.json`（真实 key）不入档。
-
-## 文档
-
-设计定稿见 [`docs/`](docs/)：[spec.md](docs/spec.md)（规格与术语）、[architecture.md](docs/architecture.md)（立项脑暴 / 架构决策 / 阶段计划）、[webui-ux.md](docs/webui-ux.md)（WebUI UX 设计与实施记录）。

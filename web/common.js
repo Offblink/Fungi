@@ -380,7 +380,7 @@
     return { poll, place, pendingAskIds, pendingAskCards, resolvedAskCards };
   }
 
-  /* ---------- mail unread (amail 未读计数, per-peer) ----------
+  /* ---------- mail unread (留言未读计数, per-peer) ----------
      Polls this host's mailbox and exposes per-peer unread counts for the
      friend list. Reading happens in the friend view: markPeerRead clears
      everything a peer sent.

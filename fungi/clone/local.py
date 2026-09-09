@@ -1,4 +1,4 @@
-"""Local clone assembly: the user-facing Orchestrator with delegate/peers."""
+"""Local Agent assembly: the user-facing Agent with delegate/peers."""
 
 from .. import tools as _tools
 from ..config import Config
@@ -11,7 +11,7 @@ from .delegate import DelegateTools
 
 BASE_TOOL_NAMES = _tools.BASE_TOOL_NAMES
 
-LOCAL_SYSTEM_PROMPT = """You are the local Orchestrator on host {host}: the only clone the user talks to.
+LOCAL_SYSTEM_PROMPT = """You are the local Agent on host {host}: the only Agent the user talks to.
 
 Rules:
 - Serve the user directly with your native tools for anything on this host.
