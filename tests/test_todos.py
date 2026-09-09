@@ -47,9 +47,9 @@ def test_todo_tool_add_list_remove(tmp_path, monkeypatch):
     monkeypatch.setattr(todos, "TODOS_PATH", p)
     orig = todos.load
     monkeypatch.setattr(todos, "load", lambda path=None: orig(p))
-    assert "added" in todos.todo_tool("add", "2026-09-12", "去看牙")
-    assert "error" in todos.todo_tool("add", "not-a-date", "x")
-    assert "2026-09-12" in todos.todo_tool("list")
-    assert "removed" in todos.todo_tool("remove", "2026-09-12", "去看牙")
-    assert "no items" in todos.todo_tool("remove", "2026-09-12")
+    assert "added" in todos.todo_tool({"action": "add", "date": "2026-09-12", "text": "去看牙"})
+    assert "error" in todos.todo_tool({"action": "add", "date": "not-a-date", "text": "x"})
+    assert "2026-09-12" in todos.todo_tool({"action": "list"})
+    assert "removed" in todos.todo_tool({"action": "remove", "date": "2026-09-12", "text": "去看牙"})
+    assert "no items" in todos.todo_tool({"action": "remove", "date": "2026-09-12"})
     assert todos.load(p) == {}

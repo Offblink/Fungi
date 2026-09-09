@@ -83,7 +83,11 @@ TOOLS: dict[str, dict] = {
     "bash": {
         "schema": _schema(
             "bash",
-            "Run a command in cmd.exe. Timeout: 120 seconds. Output truncated.",
+            "Run a command in cmd.exe (Windows). Timeout: 120 seconds. "
+            "NEVER run interactive commands (anything that waits for keystrokes, "
+            "e.g. bare date / pause / python without a script) — they hang the turn. "
+            "Date/time: use `powershell -Command Get-Date`. Unix-style flags like "
+            "date \"+%Y\" are NOT valid here.",
             {
                 "command": {"type": "string"},
                 "cwd": {"type": "string", "description": "Working directory (optional)"},

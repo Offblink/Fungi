@@ -103,8 +103,12 @@ TODO_SCHEMA = {
 }
 
 
-def todo_tool(action: str, date: str = "", text: str = "") -> str:
-    """Agent entry to the shared calendar: same store the GUI and courier use."""
+def todo_tool(args: dict) -> str:
+    """Agent entry to the shared calendar: same store the GUI and courier use.
+    BoundTool convention: the whole argument dict arrives as one positional."""
+    action = str(args.get("action") or "")
+    date = str(args.get("date") or "")
+    text = str(args.get("text") or "")
     if action == "add":
         if not _valid_date(date) or not text.strip():
             return "error: 'add' needs date (YYYY-MM-DD) and text"
