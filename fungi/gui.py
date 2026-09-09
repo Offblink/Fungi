@@ -57,6 +57,7 @@ from qfluentwidgets import (
     PrimaryPushButton,
     PushButton,
     SubtitleLabel,
+    StrongBodyLabel,
     SwitchButton,
     SystemTrayMenu,
     TextEdit,
@@ -1341,7 +1342,7 @@ class CourierPage(QWidget):
 
         # ── 长期记忆 ──
         root.addSpacing(12)
-        root.addWidget(SubtitleLabel("长期记忆"))
+        root.addWidget(StrongBodyLabel("长期记忆"))
         self.memory_edit = TextEdit()
         self.memory_edit.setPlainText(load_config().courier_memory)
         self.memory_edit.setPlaceholderText(
@@ -1355,7 +1356,7 @@ class CourierPage(QWidget):
 
         # ── 短期待办 ──
         root.addSpacing(18)
-        root.addWidget(SubtitleLabel("短期待办"))
+        root.addWidget(StrongBodyLabel("短期待办"))
         cal = QGridLayout()
         cal.setSpacing(6)
         for col, wd in enumerate("一二三四五六日"):
