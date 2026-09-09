@@ -50,7 +50,20 @@ def build_comm_clone(
     addr = f"{host}:comm-{peer}"
     pending = PendingAsks()
     comm_tools = CommTools(addr, transport, pending, ask_timeout_s, inbox_dir=inbox_dir)
-    prompt = system_prompt or COMM_SYSTEM_PROMPT.format(host=host, peer=peer)
+    base_prompt = system_prompt or COMM_SYSTEM_PROMPT.format(host=host, peer=peer)
+
+    def courier_prompt() -> str:
+        """Message-courier prompt, re-read per turn: the GUI memory entry
+        (config.courier_memory) applies to the next incoming chat, live."""
+        from ..config import load_config  # noqa: PLC0415 — re-read per turn, like the courier switch
+        memory = (load_config().courier_memory or "").strip()
+        if not memory:
+            return base_prompt
+        return (
+            base_prompt
+            + "\n本机主人的长期备忘（用户在 GUI 里写给你的背景记忆，回答时可用它代为说明或转达）:\n"
+            + memory + "\n"
+        )
 
     def _chat_end(_env, reply: str) -> None:
         """Fallback: a chat turn that produced text but never called send_peer
@@ -72,7 +85,7 @@ def build_comm_clone(
         cfg,
         sink,
         tools=comm_tools.bound(),
-        system_prompt=prompt,
+        system_prompt=courier_prompt,
         llm=llm,
         poll_timeout=poll_timeout,
         pending=pending,

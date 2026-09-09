@@ -55,8 +55,8 @@ def test_comm_clone_tool_surface():
         "glob_files",
         "grep_files",
     }
-    assert "host beta" in clone.system_prompt
-    assert "peer" in clone.system_prompt
+    assert "host beta" in clone.resolved_prompt()
+    assert "peer" in clone.resolved_prompt()
 
 
 def test_task_produces_result_envelope(room):
@@ -264,3 +264,33 @@ def test_turn_end_hook_receives_transcript(room):
     assert "[alpha:comm-beta]" in transcript[-2]["content"]
     assert transcript[-1]["content"] == "reply text"
     assert transcript[-1]["role"] == "assistant"
+
+
+def test_courier_memory_injected_into_prompt(monkeypatch):
+    """GUI 记忆注入契约：config.courier_memory 进入下一轮 chat 的 system prompt。"""
+    from fungi import config as config_mod
+
+    def fake_load(path=None):
+        return Config(api_key="k", endpoint="e", model="m",
+                      courier_memory="工作日白天在上课，没空回消息")
+
+    monkeypatch.setattr(config_mod, "load_config", fake_load)
+    clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
+    prompt = clone.resolved_prompt()
+    assert "工作日白天在上课" in prompt
+    # empty memory -> bare base prompt
+    monkeypatch.setattr(config_mod, "load_config", lambda path=None: CFG)
+    assert "工作日白天在上课" not in clone.resolved_prompt()
+
+
+def test_courier_memory_config_roundtrip(tmp_path):
+    """save_config 持久化 courier_memory，load_config 读回。"""
+    from fungi.config import load_config, save_config
+
+    path = tmp_path / "config.json"
+    cfg = Config(api_key="k", endpoint="e", model="m", courier_memory="今天去上课了")
+    save_config(cfg, path)
+    assert load_config(path).courier_memory == "今天去上课了"
+    # empty memory writes nothing
+    save_config(Config(api_key="k", endpoint="e", model="m"), path)
+    assert load_config(path).courier_memory == ""

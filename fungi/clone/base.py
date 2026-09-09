@@ -158,6 +158,8 @@ class Clone:
         self.child_extra_tools = child_extra_tools
         # User-facing clones may author skills; comm clones stay readonly.
         self.skill_save = skill_save
+        # str, or a callable returning str (re-evaluated every turn: the comm
+        # clone re-reads courier_memory so GUI edits apply live)
         self.system_prompt = system_prompt
         self.llm = llm
         self.model = model
@@ -265,8 +267,12 @@ class Clone:
             who = str(env.body.get("sender_name") or parse_addr(env.src)[0])
             return f"[来自 {who} 的用户] {env.body.get('text', '')}"
         return f"[{env.src}] {env.body.get('text', '')}"
+    def resolved_prompt(self) -> str:
+        """system_prompt, callable or not, evaluated fresh for this turn."""
+        sp = self.system_prompt
+        return sp() if callable(sp) else sp
 
-    def build_agent(self) -> Agent:
+    def build_agent(self, system_prompt: str | None = None) -> Agent:
         """Per-turn agent: clone's whitelist + guarded extra tools + spawn
         (TriLayer L2/L3; children inherit this clone's file surface)."""
         trilayer = TriLayer(
@@ -279,7 +285,7 @@ class Clone:
         )
         return trilayer.build_clone_agent(
             self.sink,
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt if system_prompt is not None else self.resolved_prompt(),
             extra_tools=self.tools,
             tool_names=self.tool_names,
             model=self.model,

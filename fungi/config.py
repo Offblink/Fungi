@@ -47,6 +47,10 @@ class Config:
     # transfer consent cards and mail reach the user directly (zero agent
     # cost); default on.
     courier: bool = True
+    # Message-courier standing memory (消息信使记忆): free text the user keeps
+    # in the GUI (" weekdays I'm in class, answer for me and note anything
+    # urgent"). Injected into every comm-clone chat turn's system prompt.
+    courier_memory: str = ""
 
     @property
     def configured(self) -> bool:
@@ -89,8 +93,8 @@ def load_config(path: Path | None = None) -> Config:
             cfg.display = str(data["display"])
         if data.get("max_tokens"):
             cfg.max_tokens = int(data["max_tokens"])
+        cfg.courier_memory = str(data.get("courier_memory") or "")
         cfg.courier = bool(data.get("courier", True))
-        cfg.diary = bool(data.get("diary", False))
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -119,6 +123,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["inbox_dir"] = cfg.inbox_dir
     if cfg.diary:
         data["diary"] = True
+    if cfg.courier_memory:
+        data["courier_memory"] = cfg.courier_memory
     if not cfg.courier:
         data["courier"] = False
     if cfg.display:

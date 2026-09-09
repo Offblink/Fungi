@@ -55,6 +55,7 @@ from qfluentwidgets import (
     SubtitleLabel,
     SwitchButton,
     SystemTrayMenu,
+    TextEdit,
     TitleLabel,
     ToolButton,
 )
@@ -299,7 +300,10 @@ HELP_SECTIONS = [
      "未读数显示在好友列表各好友的徽标上，点开好友视图即已读——"
      "投递不惊动对方 Agent，离线也能收到。"),
     ("信使",
-     "设置页开关（默认开）。开启时对面通讯 clone 的留言与文件请求由本机信使转述或推卡；"
+     "设置页开关（默认开）。信使只管消息：开启时对面的留言由本机信使代收代复——重要消息转告、寻常消息代答；"
+     "GUI 可注入背景记忆（如「白天上课没空回」），下一封留言即生效。"
+     "文件传输不经过信使：一律推 consent 卡片、落盘 inbox/<来源>/，零 Agent 消耗。"
+     "关闭信使后留言直达会话视图（署名主机名）；"
      "关闭后全部直达：留言进会话视图（署名主机名）、卡片由 hub 直推，"
      "本机 Agent 完全不消耗。每个信封即时重读开关，无需重启。"
      "好友视图也可写：在输入框直接留言（统一落 amail，两端各一份、不惊动 Agent）"
@@ -944,28 +948,46 @@ class ConfigPage(QWidget):
         root.addWidget(self.download_btn)
 
 
-        # 信使（小标题 + 右侧开关 + 说明）
+        # 信使：消息信使（自动回复，可注入记忆）+ 文件信使（consent 卡片，零 Agent）
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("信使"))
-        courier_row = QHBoxLayout()
-        courier_lbl = BodyLabel("Courier")
-        courier_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        courier_row.addWidget(courier_lbl)
-        courier_row.addSpacing(8)
+        msg_row = QHBoxLayout()
+        msg_lbl = BodyLabel("信使")
+        msg_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        msg_row.addWidget(msg_lbl)
+        msg_row.addSpacing(8)
         self.courier_switch = SwitchButton()
         self.courier_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         # setChecked BEFORE connect: the InfoBar needs window_ref (see diary).
         self.courier_switch.setChecked(load_config().courier)
-        courier_row.addWidget(self.courier_switch)
+        msg_row.addWidget(self.courier_switch)
         self.courier_switch.checkedChanged.connect(self._toggle_courier)
-        courier_row.addStretch(1)
-        root.addLayout(courier_row)
+        msg_row.addStretch(1)
+        root.addLayout(msg_row)
         courier_hint = BodyLabel(
-            "开启后，对面通讯 clone 的留言与文件请求由本机信使（通讯 clone）转述/推卡。\n"
-            "关闭后直达：留言进会话视图、文件卡片与邮件直接送达你，本机 Agent 完全不消耗。即时生效。"
+            "开启后，对面的留言由本机信使（通讯 clone）代收代复：重要消息转告你，寻常消息代答。\n"
+            "关闭后直达：留言进会话视图，本机 Agent 完全不消耗。即时生效。"
         )
         courier_hint.setWordWrap(True)
         root.addWidget(courier_hint)
+        memory_lbl = BodyLabel("记忆注入 — 写给信使的背景记忆（即时生效，下一封留言就会用上）")
+        root.addWidget(memory_lbl)
+        self.memory_edit = TextEdit()
+        self.memory_edit.setPlainText(load_config().courier_memory)
+        self.memory_edit.setPlaceholderText(
+            "例：工作日 8:00-17:00 我在上课没空回消息；有人找我就这样代答，紧急事项记下来等我回来汇报。"
+        )
+        self.memory_edit.setFixedHeight(72)
+        root.addWidget(self.memory_edit)
+        self.memory_save_btn = PushButton(FluentIcon.SAVE, "保存记忆")
+        self.memory_save_btn.clicked.connect(self._save_courier_memory)
+        root.addWidget(self.memory_save_btn)
+        file_hint = BodyLabel(
+            "文件传输不归信使管：对面发来的文件一律推 consent 卡片（允许/询问），"
+            "接受后落盘 inbox/<来源主机>/，全程零 Agent 消耗。"
+        )
+        file_hint.setWordWrap(True)
+        root.addWidget(file_hint)
 
         # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）——压轴
         root.addSpacing(10)
@@ -1179,6 +1201,18 @@ class ConfigPage(QWidget):
         InfoBar.success(
             "已保存",
             "信使已开启" if checked else "信使已关闭：对面消息直达，Agent 零消耗",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+    def _save_courier_memory(self) -> None:
+        """信使记忆：即时写盘；通讯 clone 每轮重建 prompt 时重读，无需重启。"""
+        cfg = load_config()
+        cfg.courier_memory = self.memory_edit.toPlainText().strip()
+        save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "信使记忆已更新，对下一封留言立即生效",
             duration=2500,
             parent=self.window_ref,
         )
