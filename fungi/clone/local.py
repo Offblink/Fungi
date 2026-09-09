@@ -57,6 +57,10 @@ def build_local_clone(
     # MCP servers from config.json reach the user-facing clone in room mode too
     # (room.py used to drop them entirely — "single-host concern" was wrong).
     tools.update(mcp_extra_tools(cfg.mcp_servers))
+    # Room-mode WebUI turns are built from these clone tools (not
+    # build_orchestrator) — the todo tool must live here to be visible.
+    from .. import todos  # noqa: PLC0415 (deferred like the other extras)
+    tools.update(todos.bound())
     prompt = system_prompt or LOCAL_SYSTEM_PROMPT.format(
         host=host, store_hint=STORE_LOCAL if local_store else STORE_REMOTE
     )
