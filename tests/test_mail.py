@@ -14,7 +14,7 @@ from fungi.clone.tools_comm import CommTools
 from fungi.hub.app import Hub
 from fungi.hub.mail import Mailbox
 from fungi.pending import PendingAsks
-from fungi.protocol import Envelope
+from fungi.protocol import Envelope, deserialize
 
 # ── Mailbox ──
 
@@ -49,6 +49,17 @@ def test_box_rolls_off_oldest_past_cap(tmp_path, monkeypatch):
 def test_persistence_across_instances(tmp_path):
     Mailbox(tmp_path / "mail").deliver("a", "b", "s", "t")
     assert Mailbox(tmp_path / "mail").list("a")["unread"] == 1
+
+
+
+def test_mail_envelope_survives_the_wire():
+    """Regression: TYPES did not include "mail", so any mail envelope sent
+    over the hub HTTP API (/api/send) was rejected with 400 bad type -- the
+    in-process hub.send tests never exercised deserialization."""
+    env = Envelope(src="alice:comm-bob", dst="bob:mail", type="mail",
+                   body={"from": "alice:human", "subject": "", "text": "hi"})
+    back = deserialize(env.serialize())
+    assert back.type == "mail" and back.dst == "bob:mail" and back.body["text"] == "hi"
 
 
 def test_deliver_pair_writes_both_ends_of_the_conversation(tmp_path):

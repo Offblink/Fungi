@@ -13,6 +13,8 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 #session-title{color:var(--text);font-size:0.95rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #model-name{color:var(--dim);font-size:0.72rem;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #chat-wrap{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+#mail-view{flex:1;min-height:0;overflow-y:auto}
+#mail-view.hidden{display:none}
 #messages{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:1rem 0.8rem;display:flex;flex-direction:column;gap:0.8rem}
 /* ---- messages ---- */
 .msg{max-width:86%;padding:0.8rem 1rem;border-radius:var(--radius);line-height:1.65;word-break:break-word}

@@ -376,11 +376,13 @@
   }
 
   /* ---------- mail (amail 文字邮件) ----------
-     Unified text-message inbox: centered mail cards from different people,
-     one per mail; clicking a card expands its detail inline (accordion).
+     Entry click opens a conversation-style view in the main area (opts.convoEl):
+     centered mail cards from different people; clicking a card opens the
+     detail modal (full body + mark read).
      opts: {
        http,            // {fetchJSON, postJSON}
        badgeEl,         // unread badge element on the nav entry (hidden when 0)
+       convoEl,         // element rendering the conversation view (mail cards)
        displayOf,       // fn(host) -> display name for the sender line
        locale,          // fmtDate locale ('en-US' desktop / 'zh-CN' mobile)
        strings: { title, markRead, empty, close }
@@ -392,8 +394,7 @@
     const t = Object.assign({ title: 'Mail', markRead: 'Mark read', empty: 'No mail yet.', close: '\u2715' }, opts.strings);
     let mails = [];
     let unread = 0;
-    let openMailId = null; // expanded card while set
-    let viewing = false;
+    let convoOpen = false;
     let timer = null;
 
     const overlay = document.createElement('div');
@@ -401,7 +402,10 @@
     overlay.innerHTML = '<div id="mail-modal">'
       + '<div class="mail-head"><h3 id="mail-modal-title">' + escapeHtml(t.title) + '</h3>'
       + '<button id="mail-close">' + escapeHtml(t.close) + '</button></div>'
-      + '<div id="mail-list" class="mail-list"></div>'
+      + '<div id="mail-detail" class="mail-detail" hidden>'
+      + '<div class="mail-detail-meta"></div>'
+      + '<div class="mail-detail-body"></div>'
+      + '<div class="mail-detail-actions"><button id="mail-mark-read">' + escapeHtml(t.markRead) + '</button></div>'
       + '</div></div>';
     document.body.appendChild(overlay);
 
@@ -413,49 +417,60 @@
     }
 
     function senderLine(m) {
-      const host = String(m.from || '');
       if (m.mine) return '我 → ' + (opts.displayOf ? opts.displayOf(m.peer) : m.peer);
-      if (host.endsWith(':human')) return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的用户';
+      if (String(m.from || '').endsWith(':human')) return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的用户';
       return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的 Agent';
     }
 
-    function render() {
-      const listEl = overlay.querySelector('#mail-list');
-      listEl.innerHTML = '';
+    function buildCard(m) {
+      const card = document.createElement('div');
+      card.className = 'mail-card' + (m.read ? '' : ' unread');
+      const subject = m.subject && m.subject !== '(no subject)' && m.subject !== m.body
+        ? escapeHtml(m.subject) : '';
+      card.innerHTML = '<span class="mail-unread-dot"></span>'
+        + '<div class="mail-card-main"><div class="mail-card-top">'
+        + '<span class="mail-from">' + escapeHtml(senderLine(m)) + '</span>'
+        + '<span class="mail-time">' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</span></div>'
+        + (subject ? '<div class="mail-subject">' + subject + '</div>' : '')
+        + '<div class="mail-preview">' + escapeHtml(String(m.body || '').slice(0, 80)) + '</div>'
+        + '</div>';
+      card.addEventListener('click', () => openDetail(m.id));
+      return card;
+    }
+
+    function renderConvo() {
+      if (!opts.convoEl) return;
+      opts.convoEl.innerHTML = '';
       if (!mails.length) {
-        listEl.innerHTML = '<div class="mail-empty">' + escapeHtml(t.empty) + '</div>';
+        opts.convoEl.innerHTML = '<div class="mail-empty">' + escapeHtml(t.empty) + '</div>';
         return;
       }
-      mails.forEach(m => {
-        const card = document.createElement('div');
-        card.className = 'mail-card' + (m.read ? '' : ' unread') + (m.id === openMailId ? ' open' : '');
-        const subject = m.subject && m.subject !== '(no subject)' && m.subject !== m.body
-          ? escapeHtml(m.subject) : '';
-        card.innerHTML = '<span class="mail-unread-dot"></span>'
-          + '<div class="mail-card-main"><div class="mail-card-top">'
-          + '<span class="mail-from">' + escapeHtml(senderLine(m)) + '</span>'
-          + '<span class="mail-time">' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</span></div>'
-          + (subject ? '<div class="mail-subject">' + subject + '</div>' : '')
-          + '<div class="mail-preview">' + escapeHtml(String(m.body || '').slice(0, 80)) + '</div>'
-          + '<div class="mail-card-body" hidden></div>'
-          + '<div class="mail-card-actions" hidden><button class="mail-mark-read">' + escapeHtml(t.markRead) + '</button></div>'
-          + '</div>';
-        const bodyEl = card.querySelector('.mail-card-body');
-        const actionsEl = card.querySelector('.mail-card-actions');
-        bodyEl.textContent = m.body || '';
-        card.addEventListener('click', () => {
-          openMailId = openMailId === m.id ? null : m.id;
-          const open = openMailId === m.id;
-          bodyEl.hidden = !open;
-          actionsEl.hidden = !open;
-          card.classList.toggle('open', open);
-        });
-        card.querySelector('.mail-mark-read').addEventListener('click', e => {
-          e.stopPropagation();
-          markRead(m.id);
-        });
-        listEl.appendChild(card);
-      });
+      mails.forEach(m => opts.convoEl.appendChild(buildCard(m)));
+    }
+
+    function renderDetail(m) {
+      const detailEl = overlay.querySelector('#mail-detail');
+      detailEl.querySelector('.mail-detail-meta').innerHTML =
+        '<div class="mail-detail-subject">' + escapeHtml((m.subject && m.subject !== '(no subject)') ? m.subject : '') + '</div>'
+        + '<div class="mail-detail-from">' + escapeHtml(senderLine(m))
+        + ' \u00b7 ' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</div>';
+      detailEl.querySelector('.mail-detail-body').textContent = m.body || '';
+      const btn = detailEl.querySelector('#mail-mark-read');
+      btn.hidden = !!m.read;
+      btn.onclick = () => markRead(m.id);
+      detailEl.hidden = false;
+    }
+
+    function openDetail(id) {
+      const m = mails.find(x => x.id === id);
+      if (!m) return;
+      overlay.classList.add('show');
+      renderDetail(m);
+    }
+
+    function closeDetail() {
+      overlay.classList.remove('show');
+      overlay.querySelector('#mail-detail').hidden = true;
     }
 
     async function markRead(id) {
@@ -464,7 +479,11 @@
         const m = mails.find(x => x.id === id);
         if (m && !m.read) { m.read = true; unread = Math.max(0, unread - 1); }
         renderBadge();
-        render();
+        if (overlay.classList.contains('show')) {
+          const cur = mails.find(x => x.id === id);
+          if (cur) renderDetail(cur); else closeDetail();
+        }
+        if (convoOpen) renderConvo();
       } catch (e) {}
     }
 
@@ -474,25 +493,26 @@
         mails = d.mails || [];
         unread = d.unread != null ? d.unread : mails.filter(m => !m.read).length;
         renderBadge();
-        if (viewing) render(); // keep the open modal fresh
+        if (convoOpen) renderConvo(); // keep the open conversation view fresh
       } catch (e) {} // backend not up yet / transient: retry on the next tick
     }
 
-    function open() {
-      viewing = true;
-      openMailId = null;
-      overlay.classList.add('show');
-      render();
+    /* conversation view state; the host page toggles chrome around convoEl */
+    function openConvo() {
+      convoOpen = true;
+      renderConvo();
       poll();
+      return true;
     }
-    function close() {
-      viewing = false;
-      openMailId = null;
-      overlay.classList.remove('show');
+    function closeConvo() {
+      convoOpen = false;
+      closeDetail();
+      return false;
     }
+    function toggleConvo() { return convoOpen ? closeConvo() : openConvo(); }
 
-    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-    overlay.querySelector('#mail-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeDetail(); });
+    overlay.querySelector('#mail-close').addEventListener('click', closeDetail);
 
     function start() {
       poll();
@@ -500,7 +520,7 @@
     }
     function stop() { if (timer) { clearInterval(timer); timer = null; } }
 
-    return { start, stop, open, close, poll };
+    return { start, stop, openConvo, closeConvo, toggleConvo, poll };
   }
 
   window.FungiCommon = {

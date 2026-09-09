@@ -832,9 +832,8 @@ function displayOf(host) {
 }
 
 function leaveFriendView() {
+  if (!document.getElementById('mail-view').hidden) setMailView(false); // mail view owns the main area
   const wasViewing = friendView !== null;
-  friendView = null;
-  lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
   document.getElementById('friend-input-area').hidden = true;
@@ -1055,15 +1054,26 @@ document.getElementById('theme-switch').addEventListener('click', function () {
   setTimeout(() => themeRoot.classList.remove('theme-anim'), 500);
 });
 
-/* ---------- mail (amail) ---------- */
+/* ---------- mail (amail) ----------
+   Entry click swaps the main area to the mail conversation view: centered
+   mail cards; clicking a card opens the detail modal. */
 const Mail = FC.initMail({
   http: FC,
   badgeEl: document.getElementById('mail-badge'),
+  convoEl: document.getElementById('mail-convo'),
   displayOf,
   locale: 'en-US',
-  strings: { title: 'Amail', markRead: 'Mark read', back: 'Back', empty: 'No mail yet.' },
+  strings: { title: 'Amail', markRead: 'Mark read', empty: 'No mail yet.' },
 });
-document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
+function setMailView(on) {
+  if (on) leaveFriendView(); // first: release the friend view (it checks mail state)
+  document.getElementById('mail-view').hidden = !on;
+  document.getElementById('chat-wrap').style.display = on ? 'none' : '';
+  document.getElementById('asks-banner').style.display = on ? 'none' : '';
+  document.getElementById('input-area').style.display = on ? 'none' : '';
+  document.getElementById('status').style.display = on ? 'none' : '';
+}
+document.getElementById('mail-entry').addEventListener('click', () => setMailView(Mail.toggleConvo()));
 Mail.start();
 
 /* ---------- friend view composer: human direct sends ---------- */

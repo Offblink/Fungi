@@ -662,6 +662,9 @@ function displayOf(host) {
 }
 
 function leaveFriendView() {
+  if (document.getElementById('mail-view') && !document.getElementById('mail-view').classList.contains('hidden')) {
+    setMailView(false); // mail view owns the main area
+  }
   const wasViewing = friendView !== null;
   friendView = null;
   lastFriendPayload = null;
@@ -1152,15 +1155,26 @@ pollPendingAsks();
 loadPeers();
 setInterval(loadPeers, 5000);
 
-/* ---------- mail (amail) ---------- */
+/* ---------- mail (amail) ----------
+   Entry click swaps the main area to the mail conversation view: centered
+   mail cards; clicking a card opens the detail modal. */
 const Mail = FC.initMail({
   http: FC,
   badgeEl: document.getElementById('mail-badge'),
+  convoEl: document.getElementById('mail-convo'),
   displayOf,
   locale: 'zh-CN',
-  strings: { title: 'Amail', markRead: '标记已读', back: '返回', empty: '暂无邮件' },
+  strings: { title: 'Amail', markRead: '标记已读', empty: '暂无邮件' },
 });
-document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
+function setMailView(on) {
+  if (on) leaveFriendView(); // first: release the friend view (it checks mail state)
+  document.getElementById('mail-view').classList.toggle('hidden', !on);
+  document.getElementById('chat-wrap').style.display = on ? 'none' : '';
+  document.getElementById('asks-banner').style.display = on ? 'none' : '';
+  document.getElementById('input-area').style.display = on ? 'none' : '';
+  document.getElementById('status').style.display = on ? 'none' : '';
+}
+document.getElementById('mail-entry').addEventListener('click', () => setMailView(Mail.toggleConvo()));
 Mail.start();
 
 /* ---------- friend view composer: human direct sends ---------- */

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 
 ENVELOPE_VERSION = 1
-TYPES = ("chat", "task", "result", "ask", "answer", "err", "transfer")
+TYPES = ("chat", "task", "result", "ask", "answer", "err", "transfer", "mail")
 
 # Host names ride envelope addresses, HTTP query strings, data/ file names,
 # and homes/ directories — the ASCII-safe charset keeps every one of those
