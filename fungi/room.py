@@ -28,7 +28,7 @@ from .cards import AskCards
 from .clone.base import Clone, LocalTransport, RemoteTransport
 from .clone.comm import build_comm_clone
 from .clone.local import build_local_clone
-from .config import Config, load_config
+from .config import PROJECT_ROOT, Config, load_config
 from .consent_rules import ConsentRules
 from .diary import bound as diary_bound
 from .diary import section as diary_section
@@ -403,7 +403,7 @@ class RoomBase:
     def _direct_download(self, env: Envelope, src_host: str) -> dict:
         """Courier-off accepted transfer: land the bytes like receive_transfer."""
         body = env.body
-        dest_dir = Path(self.cfg.inbox_dir) / src_host if self.cfg.inbox_dir else Path("inbox") / src_host
+        dest_dir = Path(self.cfg.inbox_dir) / src_host if self.cfg.inbox_dir else PROJECT_ROOT / "inbox" / src_host
         dest_dir.mkdir(parents=True, exist_ok=True)
         stem, suffix = Path(safe_name(str(body.get("name") or "file"))).stem, Path(safe_name(str(body.get("name") or "file"))).suffix
         dest = dest_dir / f"{stem}{suffix}"

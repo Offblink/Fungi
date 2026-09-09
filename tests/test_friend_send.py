@@ -10,6 +10,7 @@ The transcript write path must merge, never replace, and stay lock-protected.
 import itertools
 import threading
 import time
+from pathlib import Path
 
 from fungi import config as config_mod
 from fungi import room as room_mod
@@ -113,6 +114,35 @@ def test_comm_send_human_without_clone_fails(tmp_path):
     room._clones = {}
     assert "error" in room.comm_send_human("ghost", text="hi")
     assert "error" in room.comm_send_human("bob", file_path=str(tmp_path / "nope.txt"))
+
+
+def test_direct_download_lands_in_repo_root_even_from_foreign_cwd(tmp_path, monkeypatch):
+    """Relative Path("inbox") broke when the WebUI HTTP thread ran from another
+    cwd; the fallback must be PROJECT_ROOT/inbox/<src_host>/."""
+    monkeypatch.chdir(tmp_path)  # cwd is NOT the repo root
+    room = _room(tmp_path)
+    staged = {}
+
+    def _download(tid, dest):
+        staged[tid] = dest
+        dest.write_bytes(b"payload")
+
+    room._local = type("L", (), {"transport": type("T", (), {
+        "download_transfer": staticmethod(_download),
+        "discard_transfer": staticmethod(lambda tid: staged.pop(tid, None)),
+    })()})()
+    env = Envelope(id="t1", src="bob:comm-alice", dst="alice:local", type="transfer",
+                   body={"id": "t1", "name": "报告.txt", "size": 7})
+    out = room._direct_download(env, "bob")
+    assert out["ok"] is True
+    saved = Path(out["saved"])
+    try:
+        assert saved == config_mod.PROJECT_ROOT / "inbox" / "bob" / saved.name
+        assert saved.parent == config_mod.PROJECT_ROOT / "inbox" / "bob"
+        assert saved.read_bytes() == b"payload"
+        assert "t1" not in staged  # hub staged copy discarded
+    finally:
+        saved.unlink(missing_ok=True)
 
 
 def test_courier_off_human_chat_lands_attributed_without_agent(tmp_path, monkeypatch):
