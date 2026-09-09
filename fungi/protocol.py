@@ -40,7 +40,7 @@ class ProtocolError(Exception):
 
 
 def parse_addr(addr: str) -> tuple[str, str, str | None]:
-    """Split ``host:role[-peer]`` into (host, role, peer); role is local|comm."""
+    """Split ``host:role[-peer]`` into (host, role, peer); role is local|comm|mail."""
     if not isinstance(addr, str) or addr.count(":") != 1:
         raise ProtocolError(f"bad address: {addr!r}")
     host, role = addr.split(":")
@@ -48,6 +48,8 @@ def parse_addr(addr: str) -> tuple[str, str, str | None]:
         raise ProtocolError(f"bad address: {addr!r}")
     if role == "local":
         return host, "local", None
+    if role == "mail":
+        return host, "mail", None
     if role.startswith("comm-"):
         peer = role[len("comm-") :]
         if not peer:

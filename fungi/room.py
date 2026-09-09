@@ -344,18 +344,9 @@ class RoomBase:
             return False  # re-read every envelope: the switch applies live
         if env.type == "chat":
             peer = parse_addr(env.src)[0]
-            if env.body.get("from_human"):
-                # A human sent this from their friend view: land it with
-                # explicit attribution instead of the clone-voice prefix.
-                msg = {
-                    "role": "user",
-                    "content": str(env.body.get("text", "")),
-                    "sender": "human",
-                    "sender_name": str(env.body.get("sender_name") or peer),
-                }
-            else:
-                msg = {"role": "user", "content": f"[{env.src}] {env.body.get('text', '')}"}
-            self._append_comm_message(peer, msg)
+            self._append_comm_message(
+                peer, {"role": "user", "content": f"[{env.src}] {env.body.get('text', '')}"}
+            )
             return True
         if env.type == "transfer":
             return self._direct_transfer(env)
@@ -422,11 +413,10 @@ class RoomBase:
 
     # ── human direct sends (friend view composer) ──
     def comm_send_human(self, peer: str, text: str | None = None, file_path: str | None = None) -> dict:
-        """Human sends a message/file straight from the friend view: the
-        envelope bypasses the LOCAL courier entirely (no local clone turn)
-        and lands on the peer's comm clone address. How it is received is
-        decided by the PEER's courier switch: on -> their courier relays it
-        (attributed as a human sender); off -> straight to their UI/cards."""
+        """Human sends a message/file straight from the friend view. Text
+        goes into the unified amail store (both mailboxes, zero agent
+        involvement); files stage on the hub and the PEER's consent flow
+        decides landing."""
         with self._guard:
             clone = self._clones.get(peer)
         if clone is None:
@@ -461,16 +451,16 @@ class RoomBase:
         text = (text or "").strip()
         if not text:
             return {"error": "empty message"}
+        # Text is unified with amail: the hub lands it in BOTH mailboxes
+        # (peer's unread, ours pre-read) and never wakes any agent — the
+        # friend view renders it from the mail store, courier-independent.
         clone.transport.send(
             Envelope(
                 src=clone.addr,
-                dst=f"{peer}:comm-{self.host}",
-                type="chat",
-                body={"text": text, "from_human": True, "sender_name": sender_name},
+                dst=f"{peer}:mail",
+                type="mail",
+                body={"from": f"{self.host}:human", "subject": "", "text": text},
             )
-        )
-        self._append_comm_message(
-            peer, {"role": "user", "content": text, "sender": "human", "mine": True}
         )
         return {"ok": True, "kind": "chat"}
 
@@ -916,8 +906,12 @@ class RoomRuntime(WebUIRuntime):
 
     def comm_log(self, host: str) -> dict:
         """Friend view payload: the comm clone's transcript (session-style
-        messages + subagent/ask records) plus hub-side envelope events."""
-        out: dict = {"messages": [], "subagents": [], "asks": [], "events": [], "live": []}
+        messages + subagent/ask records), hub-side envelope events, and the
+        unified mail thread with this host (both directions)."""
+        out: dict = {
+            "messages": [], "subagents": [], "asks": [], "events": [],
+            "mails": [], "live": [],
+        }
         store = self.room._comm_store
         if store is not None:
             data = store.load("comm-" + host)
@@ -927,8 +921,13 @@ class RoomRuntime(WebUIRuntime):
                 out["asks"] = data.get("asks") or []
         if getattr(self.room, "hub", None) is not None:  # server role: direct
             out["events"] = self.room.hub.commlog.read(self.room.host, host)
+            mails = self.room.hub.mail.list(self.room.host)["mails"]
         else:
             out["events"] = self.room.client.comm_log(host)  # client role: hub API
+            mails = self.room.client.mail()["mails"]
+        out["mails"] = sorted(
+            (m for m in mails if m.get("peer") == host), key=lambda m: float(m.get("ts") or 0.0)
+        )
         out["live"] = self.room.live_tape(host)  # in-flight turn events, if any
         return out
 

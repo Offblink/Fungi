@@ -250,3 +250,18 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   追加自己的消息；两侧 transcript 写入均持 per-sid 锁（`RoomBase._comm_lock`，覆盖 turn end、
   courier-off 直写、卡片 verdict 三个线程）。人类发的文件发送侧免确认，接收侧确认管线不变（卡片注明落盘位置）。投递成功后 hub 暂存副本经
   `DELETE /api/transfer`（`Transfers.discard_for`，仅收件方可删）清除，`data/transfers/` 只承担中转暂存。
+
+## 14. 增补（2026-09-10）：文字消息统一入 amail + 好友视图排序修复
+
+- **统一存储**：好友视图人类直发文字不再写 comm transcript（SessionStore），而是发
+  `type="mail"` envelope（`from: <host>:human`）——hub `deliver_pair` 同时落收发两端邮箱：
+  收件方未读、发件方已读（`mine: true`），记录新增 `peer`（对话对面主机）。comm clone 的
+  `amail` 工具同路径受益。协议 `parse_addr` 补 `mail` 角色——**修复潜在 bug：真实 hub 链路上
+  `amail` 信封此前会被 `parse_addr("host:mail")` 拒绝**（旧测试全走 FakeTransport 未暴露）。
+- **信使语义收敛**：文字/邮件投递与信使开关解耦（永远直达、零 agent）；信使只管 clone 对话
+  转述与 consent 卡片。`_courier_direct` 的 from_human chat 分支随之删除。
+- **好友视图渲染序修复**：此前 transcript → events 两段拼接，事件行永远压在最新消息下面
+  （人类消息"不在最下面"的根因）。现在 `/comm-log` 载荷增加 `mails`（按 `peer` 过滤、ts 排序），
+  桌面/手机统一渲染 transcript → events → mails，人类消息恒在最底。
+- **邮件模态框重设计**（common.js，两端共享）：居中邮件卡片（发件人行区分 我/用户/Agent）、
+  点卡片就地展开正文（accordion）、卡内标记已读；替代旧的列表→二级详情页。

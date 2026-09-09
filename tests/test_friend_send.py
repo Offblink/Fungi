@@ -16,6 +16,7 @@ from fungi import config as config_mod
 from fungi import room as room_mod
 from fungi.clone.base import Clone
 from fungi.events import NullSink
+from fungi.hub.mail import Mailbox
 from fungi.llm import LLMResult
 from fungi.protocol import Envelope
 from fungi.room import RoomClient, RoomServer
@@ -73,22 +74,19 @@ def _wire_clone(room, peer="bob"):
     return transport
 
 
-def test_comm_send_human_chat_envelope_and_own_transcript(tmp_path):
+def test_comm_send_human_text_is_a_mail_envelope(tmp_path):
     room = _room(tmp_path)
     transport = _wire_clone(room)
     out = room.comm_send_human("bob", text="  自由留言  ")
     assert out == {"ok": True, "kind": "chat"}
     (env,) = transport.sent
-    assert env.type == "chat"
+    assert env.type == "mail"
     assert env.src == "alice:comm-bob"
-    assert env.dst == "bob:comm-alice"
-    assert env.body["from_human"] is True
-    assert env.body["sender_name"] == "小爱"
+    assert env.dst == "bob:mail"
+    assert env.body["from"] == "alice:human"
     assert env.body["text"] == "自由留言"
-    data = room._comm_store.load("comm-bob")
-    (msg,) = data["messages"]
-    assert msg["sender"] == "human" and msg["mine"] is True
-    assert msg["content"] == "自由留言"
+    # Text no longer lands in the comm transcript (it renders from the mail store)
+    assert (room._comm_store.load("comm-bob") or {}).get("messages") in (None, [])
 
 
 def test_comm_send_human_transfer_stages_and_sends(tmp_path):
@@ -145,22 +143,6 @@ def test_direct_download_lands_in_repo_root_even_from_foreign_cwd(tmp_path, monk
         saved.unlink(missing_ok=True)
 
 
-def test_courier_off_human_chat_lands_attributed_without_agent(tmp_path, monkeypatch):
-    monkeypatch.setattr(room_mod, "load_config", lambda: config_mod.Config(courier=False))
-    room = _room(tmp_path)
-    # Pre-existing clone conversation must survive the direct write.
-    room._comm_store.save("comm-bob", "comm: bob", [
-        {"role": "assistant", "content": "earlier turn"},
-    ])
-    chat = Envelope(src="bob:comm-alice", dst="alice:comm-bob", type="chat",
-                    body={"text": "我是人类", "from_human": True, "sender_name": "阿宝"})
-    assert room._courier_direct(chat) is True
-    msgs = room._comm_store.load("comm-bob")["messages"]
-    assert len(msgs) == 2  # history merged, not replaced
-    assert msgs[0]["content"] == "earlier turn"
-    assert msgs[1]["sender"] == "human"
-    assert msgs[1]["sender_name"] == "阿宝"
-    assert msgs[1]["content"] == "我是人类"
 
 
 def test_courier_off_plain_chat_keeps_clone_prefix_and_merges(tmp_path, monkeypatch):
@@ -268,38 +250,41 @@ def _two_rooms(tmp_path, monkeypatch, courier):
     return server, client, llm_beta
 
 
-def test_human_direct_chat_courier_on_reply_loop(tmp_path, monkeypatch):
-    server, client, _llm_beta = _two_rooms(tmp_path, monkeypatch, courier=True)
-    try:
-        assert _wait(lambda: server._clones.get("beta") is not None)
-        assert _wait(lambda: client._clones.get("alpha") is not None)
-        assert server.comm_send_human("beta", text="human ping")["ok"]
-        # beta's courier relays it: a turn runs and the reply lands back here
-        assert _wait(lambda: any(
-            m.get("role") == "assistant"
-            for m in (server._comm_store.load("comm-beta") or {}).get("messages", [])
-        )), "beta's reply never landed on alpha's friend view"
-        # courier-on: the human message rides the clone history with the
-        # faithful human prefix (render_input), not a sender field
-        msgs = client._comm_store.load("comm-alpha")["messages"]
-        assert any("[来自 alpha 的用户] human ping" in str(m.get("content")) for m in msgs)
-    finally:
-        client.stop()
-        server.stop()
-
-
-def test_human_direct_chat_courier_off_no_agent(tmp_path, monkeypatch):
+def test_human_text_mail_lands_in_both_mailboxes_without_agent(tmp_path, monkeypatch):
+    """Human friend-view text is unified with amail: both mailboxes get the
+    record (peer unread, sender pre-read) and no agent ever wakes — the
+    courier switch no longer decides text delivery."""
     server, client, llm_beta = _two_rooms(tmp_path, monkeypatch, courier=False)
     try:
         assert _wait(lambda: server._clones.get("beta") is not None)
         assert _wait(lambda: client._clones.get("alpha") is not None)
         assert server.comm_send_human("beta", text="人类直发")["ok"]
-        assert _wait(lambda: (client._comm_store.load("comm-alpha") or {}).get("messages"))
-        msgs = client._comm_store.load("comm-alpha")["messages"]
-        (human,) = [m for m in msgs if m.get("sender") == "human"]
-        assert human["content"] == "人类直发"
-        assert human["sender_name"] == "alpha"
-        assert llm_beta.results, "courier-off receiving must not wake the agent"
+        assert _wait(lambda: server.hub.mail.list("beta")["mails"])
+        sent = server.hub.mail.list("alpha")["mails"]
+        got = server.hub.mail.list("beta")["mails"]
+        assert sent and got
+        assert sent[0]["mine"] is True and sent[0]["read"] is True and sent[0]["peer"] == "beta"
+        assert got[0]["mine"] is False and got[0]["read"] is False and got[0]["peer"] == "alpha"
+        assert got[0]["body"] == "人类直发"
+        # friend-view payload carries the thread with this peer
+        assert [m["body"] for m in server.webui_runtime().comm_log("beta")["mails"]] == ["人类直发"]
+        # zero agent involvement on the receiving side
+        assert llm_beta.results, "mail delivery must not wake the agent"
+        assert not (client._comm_store.load("comm-alpha") or {}).get("messages")
     finally:
         client.stop()
         server.stop()
+
+
+def test_comm_log_mails_are_filtered_to_the_peer(tmp_path):
+    room = _room(tmp_path)
+    mailbox = Mailbox(tmp_path / "mail")
+    mailbox.deliver("alice", "bob:human", "", "for bob", peer="bob")
+    mailbox.deliver("alice", "carol:human", "", "for carol", peer="carol")
+    room.hub = type("H", (), {"commlog": type("C", (), {
+        "read": staticmethod(lambda *_: []),
+    })(), "mail": mailbox})()
+    rt = object.__new__(room_mod.RoomRuntime)
+    rt.room = room
+    out = rt.comm_log("bob")
+    assert [m["body"] for m in out["mails"]] == ["for bob"]

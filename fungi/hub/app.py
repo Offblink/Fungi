@@ -244,9 +244,9 @@ class Hub:
             # instead of buffering on the relay — the receiving agent never
             # wakes for it.
             host, _role, _peer = parse_addr(env.dst)
-            out = self.mail.deliver(
-                host,
+            out = self.mail.deliver_pair(
                 str(env.body.get("from") or env.src),
+                host,
                 str(env.body.get("subject") or ""),
                 str(env.body.get("text") or ""),
             )

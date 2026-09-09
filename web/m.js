@@ -804,8 +804,7 @@ function renderFriendChat(d) {
   const messages = d.messages || [];
   const events = d.events || [];
   const live = d.live || [];
-  if (!messages.length && !events.length && !live.length) {
-    addDiv('friend-event', '<i>还没有和该好友的 clone 对话记录。</i>');
+  if (!messages.length && !events.length && !(d.mails || []).length && !live.length) {
     return;
   }
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
@@ -817,6 +816,21 @@ function renderFriendChat(d) {
       addDiv('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
       addDiv('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+  });
+  (d.mails || []).forEach(m => {
+    const body = String(m.body || '');
+    const subject = String(m.subject || '');
+    const html = (subject && subject !== '(no subject)' && subject !== body
+      ? '<strong>' + escapeHtml(subject) + '</strong><br>' : '') + marked.parse(body);
+    const who = m.mine ? '我'
+      : (String(m.from || '').endsWith(':human')
+        ? '来自 ' + displayOf(m.peer) + ' 的用户'
+        : displayOf(m.peer) + ' 的 Agent');
+    const bubble = addDiv('user', html);
+    const lab = document.createElement('div');
+    lab.className = 'human-label';
+    lab.textContent = who;
+    bubble.prepend(lab);
   });
   renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint

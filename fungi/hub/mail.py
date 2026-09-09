@@ -59,8 +59,20 @@ class Mailbox:
         )
         tmp.replace(self._path(host))
 
-    def deliver(self, host: str, sender: str, subject: str, body: str) -> dict:
-        """Append one message; returns its id. Oldest rolls off past MAX_BOX."""
+    def deliver(
+        self,
+        host: str,
+        sender: str,
+        subject: str,
+        body: str,
+        peer: str | None = None,
+        mine: bool = False,
+        read: bool = False,
+    ) -> dict:
+        """Append one message; returns its id. Oldest rolls off past MAX_BOX.
+
+        ``peer`` is the counterpart host (conversation key), ``mine`` marks
+        the sender's own copy, ``read`` pre-marks a copy as read."""
         if not host:
             return {"error": "missing recipient host"}
         with self._lock_for(host):
@@ -68,15 +80,30 @@ class Mailbox:
             rec = {
                 "id": f"m{int(time.time() * 1000):x}-{len(messages)}",
                 "from": _clip(sender, 200),
+                "peer": _clip(peer or sender.split(":")[0], 200),
                 "subject": _clip(subject),
                 "body": _clip(body),
                 "ts": time.time(),
-                "read": False,
+                "read": bool(read),
+                "mine": bool(mine),
             }
             messages.append(rec)
             del messages[:-MAX_BOX]
             self._save(host, messages)
         return {"ok": True, "id": rec["id"]}
+
+    def deliver_pair(self, sender_addr: str, recipient_host: str, subject: str, body: str) -> dict:
+        """Deliver one mail into both ends of a conversation: the recipient's
+        box (unread) and the sender's own box (pre-read, marked mine), so
+        both WebUIs can render the same thread. Returns the recipient id."""
+        sender_host = sender_addr.split(":")[0]
+        out = self.deliver(recipient_host, sender_addr, subject, body,
+                           peer=sender_host, mine=False, read=False)
+        if out.get("error"):
+            return out
+        self.deliver(sender_host, sender_addr, subject, body,
+                     peer=recipient_host, mine=True, read=True)
+        return out
 
     def list(self, host: str) -> dict:
         with self._lock_for(host):

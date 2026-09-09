@@ -11,6 +11,7 @@ from fungi import config as config_mod
 from fungi import room as room_mod
 from fungi.clone.base import Clone
 from fungi.clone.tools_comm import CommTools
+from fungi.hub.app import Hub
 from fungi.hub.mail import Mailbox
 from fungi.pending import PendingAsks
 from fungi.protocol import Envelope
@@ -48,6 +49,31 @@ def test_box_rolls_off_oldest_past_cap(tmp_path, monkeypatch):
 def test_persistence_across_instances(tmp_path):
     Mailbox(tmp_path / "mail").deliver("a", "b", "s", "t")
     assert Mailbox(tmp_path / "mail").list("a")["unread"] == 1
+
+
+def test_deliver_pair_writes_both_ends_of_the_conversation(tmp_path):
+    box = Mailbox(tmp_path / "mail")
+    out = box.deliver_pair("alice:human", "bob", "", "周五交")
+    assert out["ok"]
+    got = box.list("bob")["mails"][0]
+    assert got["peer"] == "alice" and got["mine"] is False and got["read"] is False
+    sent = box.list("alice")["mails"][0]
+    assert sent["peer"] == "bob" and sent["mine"] is True and sent["read"] is True
+    assert box.list("bob")["unread"] == 1
+
+
+def test_hub_consumes_mail_envelope_into_both_boxes(tmp_path):
+    """Regression: parse_addr used to reject the "host:mail" role, so real
+    hub delivery of the amail tool's envelope crashed with ProtocolError."""
+    data_root = tmp_path / "data"
+    hub = Hub(tmp_path, "tok", data_root, max_file_mb=10)
+    hub.join("alice", "127.0.0.1:1")
+    hub.join("bob", "127.0.0.1:2")
+    out = hub.send(Envelope(src="alice:comm-bob", dst="bob:mail", type="mail",
+                            body={"from": "alice:human", "subject": "", "text": "hi"}))
+    assert out.get("ok") and out["status"] == "mailed"
+    assert hub.mail.list("bob")["mails"][0]["body"] == "hi"
+    assert hub.mail.list("alice")["mails"][0]["mine"] is True
 
 
 # ── amail tool ──

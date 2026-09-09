@@ -375,36 +375,33 @@
     return { poll, place, pendingAskIds, pendingAskCards, resolvedAskCards };
   }
 
-  /* ---------- mail (amail 文字邮件, v1 read-only) ----------
+  /* ---------- mail (amail 文字邮件) ----------
+     Unified text-message inbox: centered mail cards from different people,
+     one per mail; clicking a card expands its detail inline (accordion).
      opts: {
        http,            // {fetchJSON, postJSON}
        badgeEl,         // unread badge element on the nav entry (hidden when 0)
        displayOf,       // fn(host) -> display name for the sender line
        locale,          // fmtDate locale ('en-US' desktop / 'zh-CN' mobile)
-       strings: { title, markRead, back, empty, close }
+       strings: { title, markRead, empty, close }
      }
-     Backend contract: GET /mail -> {host, mails:[{id, from, subject, body, ts, read}], unread};
+     Backend contract: GET /mail -> {host, mails:[{id, from, peer, subject, body, ts, read, mine}], unread};
      POST /mail/read {id} -> {ok:true}. Polls every 5s. */
   function initMail(opts) {
     const http = opts.http;
-    const t = Object.assign({ title: 'Mail', markRead: 'Mark read', back: 'Back', empty: 'No mail yet.', close: '\u2715' }, opts.strings);
+    const t = Object.assign({ title: 'Mail', markRead: 'Mark read', empty: 'No mail yet.', close: '\u2715' }, opts.strings);
     let mails = [];
     let unread = 0;
-    let openMailId = null; // detail view while set, list view while null
+    let openMailId = null; // expanded card while set
     let viewing = false;
     let timer = null;
 
     const overlay = document.createElement('div');
     overlay.id = 'mail-modal-overlay';
     overlay.innerHTML = '<div id="mail-modal">'
-      + '<div class="mail-head"><button id="mail-back" class="mail-back" hidden>\u2190</button>'
-      + '<h3 id="mail-modal-title">' + escapeHtml(t.title) + '</h3>'
+      + '<div class="mail-head"><h3 id="mail-modal-title">' + escapeHtml(t.title) + '</h3>'
       + '<button id="mail-close">' + escapeHtml(t.close) + '</button></div>'
       + '<div id="mail-list" class="mail-list"></div>'
-      + '<div id="mail-detail" class="mail-detail" hidden>'
-      + '<div class="mail-detail-meta"></div>'
-      + '<div class="mail-detail-body"></div>'
-      + '<div class="mail-detail-actions"><button id="mail-mark-read">' + escapeHtml(t.markRead) + '</button></div>'
       + '</div></div>';
     document.body.appendChild(overlay);
 
@@ -415,45 +412,50 @@
       }
     }
 
+    function senderLine(m) {
+      const host = String(m.from || '');
+      if (m.mine) return '我 → ' + (opts.displayOf ? opts.displayOf(m.peer) : m.peer);
+      if (host.endsWith(':human')) return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的用户';
+      return (opts.displayOf ? opts.displayOf(m.peer) : m.peer) + ' 的 Agent';
+    }
+
     function render() {
-      const back = overlay.querySelector('#mail-back');
       const listEl = overlay.querySelector('#mail-list');
-      const detailEl = overlay.querySelector('#mail-detail');
-      if (openMailId == null) {
-        back.hidden = true;
-        detailEl.hidden = true;
-        listEl.hidden = false;
-        listEl.innerHTML = '';
-        if (!mails.length) {
-          listEl.innerHTML = '<div class="mail-empty">' + escapeHtml(t.empty) + '</div>';
-          return;
-        }
-        mails.forEach(m => {
-          const card = document.createElement('div');
-          card.className = 'mail-card' + (m.read ? '' : ' unread');
-          card.innerHTML = '<span class="mail-unread-dot"></span>'
-            + '<div class="mail-card-main"><div class="mail-card-top">'
-            + '<span class="mail-from">' + escapeHtml(opts.displayOf ? opts.displayOf(m.from) : m.from) + '</span>'
-            + '<span class="mail-time">' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</span></div>'
-            + '<div class="mail-subject">' + escapeHtml(m.subject || '(no subject)') + '</div></div>';
-          card.addEventListener('click', () => { openMailId = m.id; render(); });
-          listEl.appendChild(card);
-        });
-      } else {
-        const m = mails.find(x => x.id === openMailId);
-        if (!m) { openMailId = null; render(); return; }
-        back.hidden = false;
-        listEl.hidden = true;
-        detailEl.hidden = false;
-        detailEl.querySelector('.mail-detail-meta').innerHTML =
-          '<div class="mail-detail-subject">' + escapeHtml(m.subject || '(no subject)') + '</div>'
-          + '<div class="mail-detail-from">' + escapeHtml(opts.displayOf ? opts.displayOf(m.from) : m.from)
-          + ' \u00b7 ' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</div>';
-        detailEl.querySelector('.mail-detail-body').textContent = m.body || '';
-        const btn = detailEl.querySelector('#mail-mark-read');
-        btn.hidden = !!m.read;
-        btn.onclick = () => markRead(m.id);
+      listEl.innerHTML = '';
+      if (!mails.length) {
+        listEl.innerHTML = '<div class="mail-empty">' + escapeHtml(t.empty) + '</div>';
+        return;
       }
+      mails.forEach(m => {
+        const card = document.createElement('div');
+        card.className = 'mail-card' + (m.read ? '' : ' unread') + (m.id === openMailId ? ' open' : '');
+        const subject = m.subject && m.subject !== '(no subject)' && m.subject !== m.body
+          ? escapeHtml(m.subject) : '';
+        card.innerHTML = '<span class="mail-unread-dot"></span>'
+          + '<div class="mail-card-main"><div class="mail-card-top">'
+          + '<span class="mail-from">' + escapeHtml(senderLine(m)) + '</span>'
+          + '<span class="mail-time">' + escapeHtml(fmtDate(m.ts, opts.locale)) + '</span></div>'
+          + (subject ? '<div class="mail-subject">' + subject + '</div>' : '')
+          + '<div class="mail-preview">' + escapeHtml(String(m.body || '').slice(0, 80)) + '</div>'
+          + '<div class="mail-card-body" hidden></div>'
+          + '<div class="mail-card-actions" hidden><button class="mail-mark-read">' + escapeHtml(t.markRead) + '</button></div>'
+          + '</div>';
+        const bodyEl = card.querySelector('.mail-card-body');
+        const actionsEl = card.querySelector('.mail-card-actions');
+        bodyEl.textContent = m.body || '';
+        card.addEventListener('click', () => {
+          openMailId = openMailId === m.id ? null : m.id;
+          const open = openMailId === m.id;
+          bodyEl.hidden = !open;
+          actionsEl.hidden = !open;
+          card.classList.toggle('open', open);
+        });
+        card.querySelector('.mail-mark-read').addEventListener('click', e => {
+          e.stopPropagation();
+          markRead(m.id);
+        });
+        listEl.appendChild(card);
+      });
     }
 
     async function markRead(id) {
@@ -462,7 +464,6 @@
         const m = mails.find(x => x.id === id);
         if (m && !m.read) { m.read = true; unread = Math.max(0, unread - 1); }
         renderBadge();
-        openMailId = null; // back to the list, the red dot is gone
         render();
       } catch (e) {}
     }
@@ -492,7 +493,6 @@
 
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     overlay.querySelector('#mail-close').addEventListener('click', close);
-    overlay.querySelector('#mail-back').addEventListener('click', () => { openMailId = null; render(); });
 
     function start() {
       poll();
