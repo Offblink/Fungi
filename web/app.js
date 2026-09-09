@@ -931,15 +931,17 @@ async function refreshFriendChat() {
     if (!r.ok) return;
     const d = await r.json();
     if (friendView !== host) return; // raced a switch away: never paint here
+    // keep the open friend view near-real-time: the hub delivers instantly,
+    // only this poll gates the paint. Reschedule FIRST: the no-change early
+    // return below must not kill the polling chain.
+    clearTimeout(friendLiveTimer);
+    if (friendView === host) {
+      friendLiveTimer = setTimeout(refreshFriendChat, 1500);
+    }
     const payload = JSON.stringify(d);
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
     renderFriendChat(d);
-    // A turn in flight: keep the spectate view warm at 2s instead of 5s.
-    clearTimeout(friendLiveTimer);
-    if ((d.live || []).length && friendView === host) {
-      friendLiveTimer = setTimeout(refreshFriendChat, 2000);
-    }
   } catch (e) {}
 }
 

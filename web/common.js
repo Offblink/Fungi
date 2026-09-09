@@ -418,7 +418,7 @@
       changed();
     }
 
-    function start() { poll(); timer = setInterval(poll, 5000); }
+    function start() { poll(); timer = setInterval(poll, 2000); } // badge latency: 2s is plenty on LAN
     function stop() { if (timer) { clearInterval(timer); timer = null; } }
     return { start, stop, poll, byPeer, markPeerRead };
   }
