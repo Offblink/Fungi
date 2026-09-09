@@ -941,14 +941,13 @@ class ConfigPage(QWidget):
         msg_row.addStretch(1)
         root.addLayout(msg_row)
         courier_hint = BodyLabel(
-            "开启后，对面的留言由本机信使代收代复：重要消息转告你，寻常消息代答。\n"
-            "关闭后直达：留言进会话视图，本机 Agent 完全不消耗。即时生效。"
+            "开着时，你不在电脑前也有人替你接待朋友：重要的转告你，寻常的代你答。\n"
+            "关掉则留言直达会话视图，不惊动 Agent。即时生效。"
         )
         courier_hint.setWordWrap(True)
         root.addWidget(courier_hint)
         file_hint = BodyLabel(
-            "文件传输不归信使管：对面发来的文件一律推 consent 卡片（允许/询问），"
-            "接受后落盘 inbox/<来源主机>/，全程零 Agent 消耗。"
+            "文件不经信使：一律先弹卡片征求你的同意，收下的文件落在 inbox/ 里。"
         )
         file_hint.setWordWrap(True)
         root.addWidget(file_hint)
@@ -985,8 +984,8 @@ class ConfigPage(QWidget):
         diary_title_row.addStretch(1)
         root.addLayout(diary_title_row)
         diary_hint = BodyLabel(
-            "让 Agent 写自己的私人日记（data/diary/）。\n"
-            "内容只有它自己能看：界面不展示，它被问到也会守口如瓶。关闭后工具与记忆注入一并移除。"
+            "让 Agent 记一本自己的日记——只有它自己能看，被问到也守口如瓶。\n"
+            "关闭后工具与记忆注入一并移除。"
         )
         diary_hint.setWordWrap(True)
         root.addWidget(diary_hint)
