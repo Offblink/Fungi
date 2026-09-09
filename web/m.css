@@ -218,3 +218,15 @@ html[data-theme="dark"] .ic-sun{display:block}
 
 .mail-list[hidden],.mail-detail[hidden]{display:none}
 .mail-back[hidden],#mail-mark-read[hidden],.mail-badge[hidden]{display:none}
+
+/* ---------- friend view composer (human direct sends) ---------- */
+#friend-input-area{display:flex;gap:0.55rem;padding:0.55rem 0.8rem calc(0.7rem + env(safe-area-inset-bottom));border-top:1px solid var(--border);background:var(--surface);align-items:flex-end;flex-shrink:0}
+#friend-input-area.hidden{display:none}
+#friend-input{flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius);padding:0.65rem 0.9rem;resize:none;font-family:var(--font);font-size:16px;outline:none;max-height:120px;line-height:1.55;transition:border-color 200ms}
+#friend-input:focus{border-color:var(--accent)}
+#friend-send{background:var(--accent);color:var(--on-accent);border:none;border-radius:50%;width:44px;height:44px;font-size:19px;cursor:pointer;flex-shrink:0;font-weight:700;transition:transform 150ms var(--ease-spring),background 150ms;box-shadow:0 2px 10px color-mix(in srgb,var(--accent) 25%,transparent)}
+#friend-send:active{transform:scale(0.88)}
+#friend-send:disabled{opacity:0.35}
+#friend-file{background:var(--bg);color:var(--dim);border:1px solid var(--border);border-radius:50%;width:44px;height:44px;font-size:19px;cursor:pointer;flex-shrink:0;line-height:1;transition:transform 150ms var(--ease-spring),border-color 150ms}
+#friend-file:active{transform:scale(0.88)}
+.human-label{font-size:0.7rem;font-weight:600;color:var(--dim);margin-bottom:0.15rem}

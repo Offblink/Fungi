@@ -143,6 +143,13 @@ function renderTranscript(messages, asks) {
     if (m.role === 'user') {
       const c = String(m.content || '');
       if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      else if (m.sender === 'human' && !m.mine) {
+        const bubble = addDiv('user', marked.parse(c));
+        const lab = document.createElement('div');
+        lab.className = 'human-label';
+        lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
+        bubble.prepend(lab);
+      }
       else addDiv('user', marked.parse(c));
     }
     else if (m.role === 'assistant') {
@@ -830,6 +837,7 @@ function leaveFriendView() {
   lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
+  document.getElementById('friend-input-area').hidden = true;
   document.getElementById('friend-title').textContent = '';
   document.getElementById('friend-bar').classList.remove('visible');
   renderFriendList();
@@ -879,7 +887,8 @@ async function openFriendChat(host) {
   msgs.innerHTML = '';
   tray.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
-  document.getElementById('friend-title').textContent = ' \u2014 @' + displayOf(host) + ' \u00b7 clone conversation (read-only)';
+  document.getElementById('friend-input-area').hidden = false;
+  document.getElementById('friend-title').textContent = ' \u2014 @' + displayOf(host);
   document.getElementById('friend-bar').classList.add('visible');
   renderFriendList();
   initConsentSlider();
@@ -1041,3 +1050,34 @@ const Mail = FC.initMail({
 });
 document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
 Mail.start();
+
+/* ---------- friend view composer: human direct sends ---------- */
+const friendInput = document.getElementById('friend-input');
+async function commSend(payload) {
+  if (!friendView) return;
+  const btn = document.getElementById('friend-send');
+  btn.disabled = true;
+  try {
+    const r = await fetch('/comm-send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ host: friendView }, payload)) });
+    const d = await r.json();
+    if (d.error) addDiv('friend-event', '&#x26A0 ' + escapeHtml(d.error));
+  } catch (e) {} finally { btn.disabled = false; }
+  setTimeout(refreshFriendChat, 300); // pull the new message/file event in quickly
+}
+document.getElementById('friend-send').addEventListener('click', () => {
+  const t = friendInput.value.trim();
+  if (!t) return;
+  friendInput.value = '';
+  commSend({ text: t });
+});
+friendInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('friend-send').click(); }
+});
+document.getElementById('friend-browse').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/pickfile', { method: 'POST' });
+    const d = await r.json();
+    if (d.path) commSend({ file: d.path });
+  } catch (e) {}
+});

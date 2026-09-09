@@ -264,6 +264,10 @@ class WebUIRuntime:
         """Friend view payload (room mode returns the real transcript)."""
         return {"messages": [], "subagents": [], "asks": [], "events": []}
 
+    def comm_send(self, data: dict) -> dict:  # noqa: ARG002 (room mode overrides)
+        """Human direct-send from the friend view (room mode)."""
+        return {"error": "friend direct send requires room mode"}
+
     def consent_mode(self, host: str) -> str:  # noqa: ARG002 (room mode overrides)
         """Per-friend consent mode: "allow" or "ask" (room mode)."""
         return "ask"
@@ -561,6 +565,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._handle_upload()
         elif url.path == "/pickfile":
             self._handle_pickfile()
+        elif url.path == "/comm-send":
+            self._send_json(self.runtime.comm_send(self._read_body()))
         else:
             self._send_json({"error": "not found"}, status=404)
 

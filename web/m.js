@@ -241,6 +241,13 @@ function renderTranscript(messages, asks) {
     if (m.role === 'user') {
       const c = String(m.content || '');
       if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      else if (m.sender === 'human' && !m.mine) {
+        const bubble = addDiv('user', marked.parse(c));
+        const lab = document.createElement('div');
+        lab.className = 'human-label';
+        lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
+        bubble.prepend(lab);
+      }
       else addDiv('user', marked.parse(c));
     }
     else if (m.role === 'assistant') {
@@ -660,6 +667,7 @@ function leaveFriendView() {
   lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
+  document.getElementById('friend-input-area').classList.add('hidden');
   document.getElementById('friend-bar').classList.add('hidden');
   document.getElementById('btn-back').hidden = true;
   renderFriendList();
@@ -703,9 +711,10 @@ async function openFriendChat(host) {
   lastFriendPayload = null;
   msgs.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
+  document.getElementById('friend-input-area').classList.remove('hidden');
   document.getElementById('btn-back').hidden = false;
   document.getElementById('friend-bar').classList.remove('hidden');
-  document.getElementById('session-title').textContent = '@' + displayOf(host) + ' · 只读';
+  document.getElementById('session-title').textContent = '@' + displayOf(host);
   renderFriendList();
   try {
     const cm = await (await fetchJSON('/consent-mode?host=' + encodeURIComponent(host))).json();
@@ -1139,3 +1148,43 @@ const Mail = FC.initMail({
 });
 document.getElementById('mail-entry').addEventListener('click', () => Mail.open());
 Mail.start();
+
+/* ---------- friend view composer: human direct sends ---------- */
+const friendInput = document.getElementById('friend-input');
+async function commSend(payload) {
+  if (!friendView) return;
+  const btn = document.getElementById('friend-send');
+  btn.disabled = true;
+  try {
+    const d = await (await fetchJSON('/comm-send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ host: friendView }, payload)) })).json();
+    if (d.error) addDiv('friend-event', '&#x26A0 ' + escapeHtml(d.error));
+  } catch (e) {} finally { btn.disabled = false; }
+  setTimeout(refreshFriendChat, 300); // pull the new message/file event in quickly
+}
+document.getElementById('friend-send').addEventListener('click', () => {
+  const t = friendInput.value.trim();
+  if (!t) return;
+  friendInput.value = '';
+  commSend({ text: t });
+});
+friendInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.getElementById('friend-send').click(); }
+});
+const friendFileInput = document.getElementById('friend-file-input');
+document.getElementById('friend-file').addEventListener('click', () => friendFileInput.click());
+friendFileInput.addEventListener('change', async () => {
+  const files = Array.from(friendFileInput.files || []);
+  friendFileInput.value = '';
+  for (const f of files) {
+    status.textContent = '上传中… ' + f.name;
+    try {
+      const fd = new FormData();
+      fd.append('file', f, f.name);
+      const d = await (await fetchJSON('/upload', { method: 'POST', body: fd })).json();
+      if (d.path) await commSend({ file: d.path });
+      else { status.textContent = '上传失败：' + f.name; return; }
+    } catch (e) { return; } // 403: fetchJSON already showed the rescan overlay
+  }
+  status.textContent = '';
+});

@@ -145,6 +145,18 @@ class RoomBase:
         # Courier-off transfers awaiting the user's card answer:
         # envelope id -> (original transfer envelope, sender host).
         self._direct_transfers: dict[str, tuple] = {}
+        # Per-sid write lock for comm transcripts: the clone worker (turn
+        # end), the clone poll loop (courier-off direct) and WebUI HTTP
+        # threads all read-modify-write the same comm-<peer>.json.
+        self._comm_locks: dict[str, threading.Lock] = {}
+
+    def _comm_lock(self, sid: str) -> threading.Lock:
+        with self._guard:
+            lock = self._comm_locks.get(sid)
+            if lock is None:
+                lock = threading.Lock()
+                self._comm_locks[sid] = lock
+            return lock
 
     # ── clones ──
 
@@ -235,26 +247,48 @@ class RoomBase:
         store = self._comm_store
         if store is None or not messages:
             return
-        try:
-            sid = "comm-" + peer
+        with self._comm_lock("comm-" + peer):
+            try:
+                sid = "comm-" + peer
+                prev = store.load(sid) or {}
+                if env_type == "chat":
+                    msgs = list(messages)
+                else:
+                    msgs = [m for m in prev.get("messages") or [] if m.get("role") != "system"]
+                    msgs += [m for m in messages if m.get("role") != "system"]
+                    msgs.insert(0, messages[0])
+                subs = list(prev.get("subagents") or [])
+                new_subs = getattr(agent, "subagents", None)
+                if isinstance(new_subs, dict):
+                    known = {r.get("id") for r in subs}
+                    subs += [r for r in new_subs.values() if r.get("id") not in known]
+                asks = list(prev.get("asks") or []) + list(getattr(agent, "asks", None) or [])
+                del msgs[:-MAX_TRANSCRIPT_MESSAGES]
+                store.save(sid, f"comm: {peer}", msgs, subagents=subs[-100:], asks=asks[-100:])
+            finally:
+                # Durable transcript (or a dead turn) takes over from the live view.
+                self._clear_live_tape(peer)
+
+    def _append_comm_message(self, peer: str, msg: dict) -> None:
+        """Append one message to the peer's friend-view transcript without a
+        clone turn (courier-off direct chats, human direct sends). Merges
+        with the stored history instead of replacing it."""
+        store = self._comm_store
+        if store is None:
+            return
+        sid = "comm-" + peer
+        with self._comm_lock(sid):
             prev = store.load(sid) or {}
-            if env_type == "chat":
-                msgs = list(messages)
-            else:
-                msgs = [m for m in prev.get("messages") or [] if m.get("role") != "system"]
-                msgs += [m for m in messages if m.get("role") != "system"]
-                msgs.insert(0, messages[0])
-            subs = list(prev.get("subagents") or [])
-            new_subs = getattr(agent, "subagents", None)
-            if isinstance(new_subs, dict):
-                known = {r.get("id") for r in subs}
-                subs += [r for r in new_subs.values() if r.get("id") not in known]
-            asks = list(prev.get("asks") or []) + list(getattr(agent, "asks", None) or [])
+            msgs = list(prev.get("messages") or [])
+            msgs.append(msg)
             del msgs[:-MAX_TRANSCRIPT_MESSAGES]
-            store.save(sid, f"comm: {peer}", msgs, subagents=subs[-100:], asks=asks[-100:])
-        finally:
-            # Durable transcript (or a dead turn) takes over from the live view.
-            self._clear_live_tape(peer)
+            store.save(
+                sid,
+                prev.get("title") or f"comm: {peer}",
+                msgs,
+                subagents=prev.get("subagents") or [],
+                asks=prev.get("asks") or [],
+            )
 
 
     # ── incoming asks: auto-allow -> cards + notification ──
@@ -310,12 +344,18 @@ class RoomBase:
             return False  # re-read every envelope: the switch applies live
         if env.type == "chat":
             peer = parse_addr(env.src)[0]
-            self._record_comm_turn(
-                peer,
-                "chat",
-                [{"role": "user", "content": f"[{env.src}] {env.body.get('text', '')}"}],
-                None,
-            )
+            if env.body.get("from_human"):
+                # A human sent this from their friend view: land it with
+                # explicit attribution instead of the clone-voice prefix.
+                msg = {
+                    "role": "user",
+                    "content": str(env.body.get("text", "")),
+                    "sender": "human",
+                    "sender_name": str(env.body.get("sender_name") or peer),
+                }
+            else:
+                msg = {"role": "user", "content": f"[{env.src}] {env.body.get('text', '')}"}
+            self._append_comm_message(peer, msg)
             return True
         if env.type == "transfer":
             return self._direct_transfer(env)
@@ -340,15 +380,24 @@ class RoomBase:
                 "action": "receive file",
                 "path": name,
                 "reason": reason,
-                "question": (
-                    f"{src_host} wants to send you a file: {name} "
-                    f"({size} bytes). Accept?\nReason: {reason}"
-                ),
+                "question": self._transfer_question(src_host, name, size, reason, body),
             },
         )
         self._direct_transfers[env.id] = (env, src_host)
         self._on_ask(ask)
         return True
+
+    @staticmethod
+    def _transfer_question(src_host: str, name: str, size, reason: str, body: dict) -> str:
+        if body.get("from_human"):
+            who = str(body.get("sender_name") or src_host)
+            sender = f"来自 {who} 的用户"
+        else:
+            sender = src_host
+        return (
+            f"{sender} wants to send you a file: {name} "
+            f"({size} bytes). Accept?\nReason: {reason}"
+        )
 
     def _direct_download(self, env: Envelope, src_host: str) -> dict:
         """Courier-off accepted transfer: land the bytes like receive_transfer."""
@@ -366,6 +415,61 @@ class RoomBase:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "saved": str(dest)}
+
+    # ── human direct sends (friend view composer) ──
+
+    def comm_send_human(self, peer: str, text: str | None = None, file_path: str | None = None) -> dict:
+        """Human sends a message/file straight from the friend view: the
+        envelope bypasses the LOCAL courier entirely (no local clone turn)
+        and lands on the peer's comm clone address. How it is received is
+        decided by the PEER's courier switch: on -> their courier relays it
+        (attributed as a human sender); off -> straight to their UI/cards."""
+        with self._guard:
+            clone = self._clones.get(peer)
+        if clone is None:
+            return {"error": f"no comm clone for {peer}"}
+        sender_name = self.display or self.host
+        if file_path:
+            path = Path(file_path)
+            if not path.is_file():
+                return {"error": f"no such file: {file_path}"}
+            name = path.name
+            staged = clone.transport.upload_transfer(str(path), name, peer)
+            if staged.get("error"):
+                return staged
+            env = Envelope(
+                src=clone.addr,
+                dst=f"{peer}:comm-{self.host}",
+                type="transfer",
+                body={
+                    "id": staged["id"],
+                    "name": staged.get("name") or name,
+                    "size": staged.get("size"),
+                    "reason": "sent by the user",
+                    "from": self.local_addr,
+                    "from_human": True,
+                    "sender_name": sender_name,
+                },
+            )
+            # Fire-and-forget: the peer's answer resolves on their side; no
+            # local agent is waiting on this transfer.
+            clone.transport.send(env)
+            return {"ok": True, "kind": "transfer", "name": name}
+        text = (text or "").strip()
+        if not text:
+            return {"error": "empty message"}
+        clone.transport.send(
+            Envelope(
+                src=clone.addr,
+                dst=f"{peer}:comm-{self.host}",
+                type="chat",
+                body={"text": text, "from_human": True, "sender_name": sender_name},
+            )
+        )
+        self._append_comm_message(
+            peer, {"role": "user", "content": text, "sender": "human", "mine": True}
+        )
+        return {"ok": True, "kind": "chat"}
 
     # ── WebUI ──
 
@@ -712,34 +816,36 @@ class RoomRuntime(WebUIRuntime):
         raising turn lives on the remote host."""
         try:
             conv = _card_conv(card.src)
-            if conv == self.room.host:
-                return
             store = self.room._comm_store
-            data = store.load("comm-" + conv) if store is not None else None
-            if not data:
+            sid = "comm-" + conv
+            if store is None or conv == self.room.host:
                 return
-            body = card.body
-            questions = body.get("questions")
-            if not isinstance(questions, list) or not questions:
-                questions = [
-                    {"question": body.get("question") or "(ask)", "options": [], "allow_custom": True}
-                ]
-            asks = list(data.get("asks") or [])
-            asks.append(
-                {
-                    "id": card.id,
-                    "questions": questions,
-                    "answers": value if isinstance(value, list) else [value],
-                    "status": "answered",
-                }
-            )
-            store.save(
-                "comm-" + conv,
-                data.get("title") or f"comm: {conv}",
-                data.get("messages") or [],
-                subagents=data.get("subagents") or [],
-                asks=asks[-100:],
-            )
+            with self.room._comm_lock(sid):
+                data = store.load(sid)
+                if not data:
+                    return
+                body = card.body
+                questions = body.get("questions")
+                if not isinstance(questions, list) or not questions:
+                    questions = [
+                        {"question": body.get("question") or "(ask)", "options": [], "allow_custom": True}
+                    ]
+                asks = list(data.get("asks") or [])
+                asks.append(
+                    {
+                        "id": card.id,
+                        "questions": questions,
+                        "answers": value if isinstance(value, list) else [value],
+                        "status": "answered",
+                    }
+                )
+                store.save(
+                    sid,
+                    data.get("title") or f"comm: {conv}",
+                    data.get("messages") or [],
+                    subagents=data.get("subagents") or [],
+                    asks=asks[-100:],
+                )
         except Exception as exc:  # a tracing failure must not break answering
             self.room.sink.emit("error", f"ask verdict trace: {exc}")
 
@@ -822,6 +928,16 @@ class RoomRuntime(WebUIRuntime):
             out["events"] = self.room.client.comm_log(host)  # client role: hub API
         out["live"] = self.room.live_tape(host)  # in-flight turn events, if any
         return out
+
+    def comm_send(self, data: dict) -> dict:
+        """Human direct-send from the friend view composer (see
+        RoomBase.comm_send_human)."""
+        host = str(data.get("host") or "").strip()
+        if not host:
+            return {"error": "host required"}
+        return self.room.comm_send_human(
+            host, text=data.get("text"), file_path=data.get("file")
+        )
 
 
 # ── selftest hook (FUNGI_SELFTEST=1, server role) ──

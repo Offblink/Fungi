@@ -251,6 +251,11 @@ class Clone:
             if body.get("context"):
                 parts.append(f"Context: {body['context']}")
             return "\n".join(parts)
+        if env.body.get("from_human"):
+            # A human sent this from their friend view: the courier relays
+            # it faithfully instead of passing it off as the peer clone.
+            who = str(env.body.get("sender_name") or parse_addr(env.src)[0])
+            return f"[来自 {who} 的用户] {env.body.get('text', '')}"
         return f"[{env.src}] {env.body.get('text', '')}"
 
     def build_agent(self) -> Agent:
