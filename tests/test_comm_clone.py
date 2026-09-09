@@ -49,6 +49,7 @@ def test_comm_clone_tool_surface():
         "amail",
         "confirm",
         "inquire",
+        "todo",
         "read_file",
         "write_file",
         "edit_file",
@@ -294,3 +295,24 @@ def test_courier_memory_config_roundtrip(tmp_path):
     # empty memory writes nothing
     save_config(Config(api_key="k", endpoint="e", model="m"), path)
     assert load_config(path).courier_memory == ""
+
+
+def test_courier_calendar_injected(monkeypatch):
+    """GUI 日历待办进入信使 prompt（overdue + 未来 21 天）。"""
+    from fungi import todos as todos_mod
+    from fungi import config as config_mod
+
+    monkeypatch.setattr(config_mod, "load_config", lambda path=None: CFG)
+    orig = todos_mod.load
+    monkeypatch.setattr(todos_mod, "load", lambda path=None: orig())
+
+    class FakeStore(dict):
+        pass
+
+    store = {"2026-09-10": ["下午上课"], "2026-09-24": ["面基"]}
+    monkeypatch.setattr(todos_mod, "load", lambda path=None: store)
+    clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
+    prompt = clone.resolved_prompt()
+    assert "日历待办" in prompt and "下午上课" in prompt and "面基" in prompt
+    monkeypatch.setattr(todos_mod, "load", lambda path=None: {})
+    assert "日历待办" not in clone.resolved_prompt()

@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from fungi import diary, skills, tools
+from fungi import diary, skills, todos, tools
 from fungi.agent import SYSTEM_PROMPT, Agent, BoundTool
 from fungi.config import Config
 from fungi.events import FnSink, Sink
@@ -366,6 +366,7 @@ class TriLayer:
             ),
             **mcp_extra_tools(self.cfg.mcp_servers),
             **skills.bound(),
+            **todos.bound(),
         }
         if self.cfg.diary:  # experimental: private diary off by default
             prompt += diary.section()
@@ -375,7 +376,9 @@ class TriLayer:
             sink,
             system_prompt=prompt,
             extra_tools=extra,
-            parallel_tools={"spawn", "background", "diary"} if self.cfg.diary else {"spawn", "background"},
+            parallel_tools={"spawn", "background", "diary", "todo"}
+            if self.cfg.diary
+            else {"spawn", "background", "todo"},
             llm=self._llm,
             model=self.cfg.model_for(1),
             should_abort=self._should_abort,

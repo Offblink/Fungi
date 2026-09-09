@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from .. import todos
 from ..agent import Agent  # noqa: F401 (re-exported type)
 from ..config import Config
 from ..events import Sink
@@ -54,15 +55,25 @@ def build_comm_clone(
 
     def courier_prompt() -> str:
         """Message-courier prompt, re-read per turn: the GUI memory entry
-        (config.courier_memory) applies to the next incoming chat, live."""
+        (config.courier_memory) and the calendar (todos.upcoming) apply to
+        the next incoming chat, live."""
         from ..config import load_config  # noqa: PLC0415 — re-read per turn, like the courier switch
         memory = (load_config().courier_memory or "").strip()
-        if not memory:
+        entries = todos.upcoming()
+        calendar = ""
+        if entries:
+            calendar = (
+                "\n本机主人的日历待办（GUI 日历/todo 工具写入，回答涉及日程时据此代为说明）:\n"
+                + "\n".join(f"- {d}: {'; '.join(items)}" for d, items in entries)
+                + "\n"
+            )
+        if not memory and not calendar:
             return base_prompt
         return (
             base_prompt
             + "\n本机主人的长期备忘（用户在 GUI 里写给你的背景记忆，回答时可用它代为说明或转达）:\n"
             + memory + "\n"
+            + calendar
         )
 
     def _chat_end(_env, reply: str) -> None:
@@ -84,7 +95,7 @@ def build_comm_clone(
         transport,
         cfg,
         sink,
-        tools=comm_tools.bound(),
+        tools={**comm_tools.bound(), **todos.bound()},
         system_prompt=courier_prompt,
         llm=llm,
         poll_timeout=poll_timeout,

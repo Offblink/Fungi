@@ -12,6 +12,7 @@ Set FUNGI_GUI_SCALE to scale the whole UI proportionally (default 1.0).
 """
 
 import contextlib
+import datetime as _dt
 import io
 import os
 import pathlib
@@ -33,9 +34,12 @@ from PyQt5.QtGui import QCursor, QGuiApplication, QKeySequence, QPixmap
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QShortcut,
     QSizePolicy,
@@ -72,6 +76,7 @@ from .config import (
 )
 from .protocol import valid_host_name
 from .tools.video import _HEALABLE, _module_available, _video_ready
+from . import todos
 from .tray import make_icon
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
@@ -252,6 +257,7 @@ def _row(label: str, widget: QWidget, parent=None) -> QWidget:
 
 
 _ACCENT = "#e07a5f"
+_ACCENT_GUI = _ACCENT  # calendar today-marker shares the mushroom accent
 
 
 HELP_SECTIONS = [
@@ -300,8 +306,9 @@ HELP_SECTIONS = [
      "未读数显示在好友列表各好友的徽标上，点开好友视图即已读——"
      "投递不惊动对方 Agent，离线也能收到。"),
     ("信使",
-     "设置页开关（默认开）。信使只管消息：开启时对面的留言由本机信使代收代复——重要消息转告、寻常消息代答；"
-     "GUI 可注入背景记忆（如「白天上课没空回」），下一封留言即生效。"
+     "信使只管消息：开启时对面的留言由本机信使代收代复——重要消息转告、寻常消息代答（开关在设置页，默认开）。"
+     "信使页提供两类喂给它的上下文：长期记忆（开放背景）和四周日历待办（带日期的即时安排，"
+     "本地 clone 也能用 todo 工具写入）。两者即时生效，下一封留言就会被用上。"
      "文件传输不经过信使：一律推 consent 卡片、落盘 inbox/<来源>/，零 Agent 消耗。"
      "关闭信使后留言直达会话视图（署名主机名）；"
      "关闭后全部直达：留言进会话视图（署名主机名）、卡片由 hub 直推，"
@@ -970,18 +977,6 @@ class ConfigPage(QWidget):
         )
         courier_hint.setWordWrap(True)
         root.addWidget(courier_hint)
-        memory_lbl = BodyLabel("记忆注入 — 写给信使的背景记忆（即时生效，下一封留言就会用上）")
-        root.addWidget(memory_lbl)
-        self.memory_edit = TextEdit()
-        self.memory_edit.setPlainText(load_config().courier_memory)
-        self.memory_edit.setPlaceholderText(
-            "例：工作日 8:00-17:00 我在上课没空回消息；有人找我就这样代答，紧急事项记下来等我回来汇报。"
-        )
-        self.memory_edit.setFixedHeight(72)
-        root.addWidget(self.memory_edit)
-        self.memory_save_btn = PushButton(FluentIcon.SAVE, "保存记忆")
-        self.memory_save_btn.clicked.connect(self._save_courier_memory)
-        root.addWidget(self.memory_save_btn)
         file_hint = BodyLabel(
             "文件传输不归信使管：对面发来的文件一律推 consent 卡片（允许/询问），"
             "接受后落盘 inbox/<来源主机>/，全程零 Agent 消耗。"
@@ -1205,18 +1200,6 @@ class ConfigPage(QWidget):
             parent=self.window_ref,
         )
 
-    def _save_courier_memory(self) -> None:
-        """信使记忆：即时写盘；通讯 clone 每轮重建 prompt 时重读，无需重启。"""
-        cfg = load_config()
-        cfg.courier_memory = self.memory_edit.toPlainText().strip()
-        save_config(cfg)
-        InfoBar.success(
-            "已保存",
-            "信使记忆已更新，对下一封留言立即生效",
-            duration=2500,
-            parent=self.window_ref,
-        )
-
     def check_update(self) -> None:
         """后台线程查 GitHub Releases；结果经信号回 GUI 线程。"""
         if self._upd_busy or self._upd_thread is not None:
@@ -1309,12 +1292,156 @@ class ConfigPage(QWidget):
         QApplication.instance().quit()
 
 
+class _DayDialog(QDialog):
+    """One calendar day's to-dos: one item per line."""
+
+    def __init__(self, date_iso: str, items: list[str], parent):
+        super().__init__(parent)
+        self.setWindowTitle(date_iso)
+        self._date = date_iso
+        lay = QVBoxLayout(self)
+        lay.addWidget(BodyLabel(date_iso + " 的待办（一行一条）"))
+        self.edit = TextEdit()
+        self.edit.setPlainText("\n".join(items))
+        self.edit.setFixedHeight(120)
+        lay.addWidget(self.edit)
+        btns = QHBoxLayout()
+        save = PrimaryPushButton(FluentIcon.SAVE, "保存")
+        save.clicked.connect(self.accept)
+        cancel = PushButton("取消")
+        cancel.clicked.connect(self.reject)
+        btns.addStretch(1)
+        btns.addWidget(cancel)
+        btns.addWidget(save)
+        lay.addLayout(btns)
+
+    def items(self) -> list[str]:
+        return [ln.strip() for ln in self.edit.toPlainText().splitlines() if ln.strip()]
+
+
+class CourierPage(QWidget):
+    """信使页：长期记忆 + 四周日历待办。信使回答时自动注入两者。"""
+
+    WEEKS = 4
+
+    def __init__(self, window):
+        super().__init__()
+        self.window_ref = window
+        self.setObjectName("courierPage")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(48, 14, 48, 14)
+        root.setSpacing(6)
+        root.addWidget(SubtitleLabel("信使"))
+        hint = BodyLabel(
+            "开启后，对面的留言由本机信使（通讯 clone）代收代复：重要消息转告你，寻常消息代答。\n"
+            "开关在设置页；下面的记忆与待办，信使每轮回复都会读取。"
+        )
+        hint.setWordWrap(True)
+        root.addWidget(hint)
+
+        # ── 长期记忆 ──
+        root.addSpacing(12)
+        root.addWidget(SubtitleLabel("长期记忆"))
+        self.memory_edit = TextEdit()
+        self.memory_edit.setPlainText(load_config().courier_memory)
+        self.memory_edit.setPlaceholderText(
+            "例：工作日 8:00-17:00 我在上课没空回消息；有人找我就这样代答，紧急事项记下来等我回来汇报。"
+        )
+        self.memory_edit.setFixedHeight(72)
+        root.addWidget(self.memory_edit)
+        self.memory_save_btn = PushButton(FluentIcon.SAVE, "保存记忆")
+        self.memory_save_btn.clicked.connect(self._save_courier_memory)
+        root.addWidget(self.memory_save_btn)
+
+        # ── 短期待办 ──
+        root.addSpacing(18)
+        root.addWidget(SubtitleLabel("短期待办"))
+        cal = QGridLayout()
+        cal.setSpacing(6)
+        for col, wd in enumerate("一二三四五六日"):
+            head = BodyLabel(wd)
+            head.setAlignment(Qt.AlignCenter)
+            cal.addWidget(head, 0, col)
+        self._buttons: dict[str, QPushButton] = {}
+        today = _dt.date.today()
+        monday = today - _dt.timedelta(days=today.weekday())
+        for i in range(self.WEEKS * 7):
+            day = monday + _dt.timedelta(days=i)
+            btn = QPushButton(str(day.day))
+            btn.setFixedSize(44, 44)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _=False, d=day.isoformat(): self._open_day(d))
+            self._buttons[day.isoformat()] = btn
+            cal.addWidget(btn, 1 + i // 7, i % 7)
+        root.addLayout(cal)
+        cal_hint = BodyLabel("点击某天录入（一行一条）；有安排的日期会亮橙色。")
+        cal_hint.setWordWrap(True)
+        root.addWidget(cal_hint)
+        root.addSpacing(8)
+        root.addStretch(1)
+        self.status = BodyLabel()
+        self.status.setWordWrap(True)
+        root.addWidget(self.status)
+        self._refresh()
+
+    # ── calendar ──
+
+    def _refresh(self) -> None:
+        data = todos.load()
+        today = _dt.date.today().isoformat()
+        for iso, btn in self._buttons.items():
+            if iso == today:
+                btn.setStyleSheet(
+                    "QPushButton{background:%s;color:white;border-radius:22px;font-weight:bold}"
+                    % _ACCENT_GUI
+                )
+            elif iso in data:
+                # accent tint beats a bullet glyph: it survives any theme and
+                # never depends on font glyph coverage
+                btn.setStyleSheet(
+                    "QPushButton{background:rgba(224,122,95,0.30);border-radius:22px;font-weight:bold}"
+                )
+            else:
+                # translucent fill so the grid reads on both themes (a bare
+                # QPushButton renders flat under the fluent style)
+                btn.setStyleSheet(
+                    "QPushButton{border-radius:22px;background:rgba(127,127,127,0.10)}"
+                )
+        overdue = [d for d in data if d < today]
+        self.status.setText(
+            "过去 30 天内有 %d 天仍挂着未清待办：%s" % (len(overdue), "、".join(overdue))
+            if overdue
+            else ""
+        )
+
+    def _open_day(self, iso: str) -> None:
+        dlg = _DayDialog(iso, todos.load().get(iso, []), self.window_ref)
+        if dlg.exec_():
+            todos.set_day(iso, dlg.items())
+            self._refresh()
+
+    # ── memory ──
+
+    def _save_courier_memory(self) -> None:
+        """信使记忆：即时写盘；通讯 clone 每轮重建 prompt 时重读，无需重启。"""
+        cfg = load_config()
+        cfg.courier_memory = self.memory_edit.toPlainText().strip()
+        save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "信使记忆已更新，对下一封留言立即生效",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+
 class FungiGui(FluentWindow):
     def __init__(self):
         super().__init__()
         self.host_page = HostPage(self)
         self.join_page = JoinPage(self)
         self.mobile_page = MobilePage(self)
+        self.courier_page = CourierPage(self)
         self.cfg_page = ConfigPage(self)
         self.help_page = HelpPage()
         # Every page rides a scroll area (help-page style): the window keeps
@@ -1322,6 +1449,7 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self._scroll(self.host_page, "hostScroll"), FluentIcon.HOME, "发起房间")
         self.addSubInterface(self._scroll(self.join_page, "joinScroll"), FluentIcon.PEOPLE, "加入房间")
         self.addSubInterface(self._scroll(self.mobile_page, "mobileScroll"), FluentIcon.QRCODE, "手机端")
+        self.addSubInterface(self._scroll(self.courier_page, "courierScroll"), FluentIcon.CALENDAR, "信使")
         self.addSubInterface(self._scroll(self.cfg_page, "cfgScroll"), FluentIcon.SETTING, "设置")
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
         self.resize(840, 540)  # compact default; pages scroll instead of stretching it
