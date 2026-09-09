@@ -34,6 +34,10 @@ def tool_bash(
             ["cmd.exe", "/c", str(bat)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            # stdin=NUL: an interactive command (date/pause/...) reads EOF and
+            # exits at once instead of holding the turn hostage for the full
+            # timeout — fast-fail without banning any command.
+            stdin=subprocess.DEVNULL,
             cwd=cwd or None,
             start_new_session=os.name != "nt",  # own group: killpg on abort
         )

@@ -83,11 +83,12 @@ TOOLS: dict[str, dict] = {
     "bash": {
         "schema": _schema(
             "bash",
-            "Run a command in cmd.exe (Windows). Timeout: 120 seconds. "
-            "NEVER run interactive commands (anything that waits for keystrokes, "
-            "e.g. bare date / pause / python without a script) — they hang the turn. "
-            "Date/time: use `powershell -Command Get-Date`. Unix-style flags like "
-            "date \"+%Y\" are NOT valid here.",
+            "Run a command in cmd.exe (Windows). Timeout: 600 seconds. "
+            "stdin is NUL: an interactive command (bare date / pause / a REPL) "
+            "reads EOF and exits at once — it cannot wait for your input. "
+            "Inner double quotes get eaten by cmd: use single quotes inside, e.g. "
+            "date/time via: powershell -Command (Get-Date).ToString('yyyy-MM-dd dddd HH:mm') "
+            "(output is GBK-encoded). Unix-style flags like date \"+%Y\" are NOT valid here.",
             {
                 "command": {"type": "string"},
                 "cwd": {"type": "string", "description": "Working directory (optional)"},
