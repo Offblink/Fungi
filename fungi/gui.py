@@ -924,17 +924,6 @@ class ConfigPage(QWidget):
         self.save_btn.clicked.connect(self._save)
         root.addWidget(self.save_btn)
 
-        # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
-        root.addSpacing(10)
-        root.addWidget(SubtitleLabel("VidSense"))
-        self.video_status = BodyLabel()
-        self.video_status.setWordWrap(True)
-        root.addWidget(self.video_status)
-        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
-        self.download_btn.clicked.connect(self._download_models)
-        root.addWidget(self.download_btn)
-
-
         # 信使：消息信使（自动回复，可注入记忆）+ 文件信使（consent 卡片，零 Agent）
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("信使"))
@@ -963,6 +952,17 @@ class ConfigPage(QWidget):
         )
         file_hint.setWordWrap(True)
         root.addWidget(file_hint)
+
+        # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("VidSense"))
+        self.video_status = BodyLabel()
+        self.video_status.setWordWrap(True)
+        root.addWidget(self.video_status)
+        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
+        self.download_btn.clicked.connect(self._download_models)
+        root.addWidget(self.download_btn)
+
 
         # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）——压轴
         root.addSpacing(10)
