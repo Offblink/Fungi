@@ -708,6 +708,9 @@ function renderFriendList() {
 }
 
 async function openFriendChat(host) {
+  /* Nav audit: friend-row click is the only legit entry (see app.js twin). */
+  try { (window.__navlog = window.__navlog || [])
+    .push({ t: new Date().toISOString(), host, stack: new Error().stack }); } catch (e) {}
   leaveFriendView();
   friendView = host;
   lastFriendPayload = null;

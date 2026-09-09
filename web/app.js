@@ -881,6 +881,11 @@ function renderFriendList() {
   });
 }
 async function openFriendChat(host) {
+  /* Nav audit: this must only ever run from the friend-row click. If a user
+     ever reports an uninvited jump into the friend view, window.__navlog holds
+     every entry with the JS stack that triggered it. */
+  try { (window.__navlog = window.__navlog || [])
+    .push({ t: new Date().toISOString(), host, stack: new Error().stack }); } catch (e) {}
   friendView = host;
   lastFriendPayload = null;
   lastTransferCount = -1;
