@@ -528,3 +528,78 @@ def test_the_mobile_pane_keeps_its_owner(mobile_page, rooms):
     restored = _probe(mobile_page)
     assert restored["rows"], restored
     assert restored["rows"] != painted["rows"], restored  # the session came back, not the thread
+
+
+# ── sides: a turn's detail rows belong to the side that produced them ──
+
+SIDE_PROBE = """
+() => {
+  const align = sel => {
+    const el = msgs.querySelector(sel);
+    return el ? getComputedStyle(el).alignSelf : null;
+  };
+  return {
+    peer: align('.msg.friend-peer'),
+    prose: align('.msg.assistant.friend-mine') || align('.msg.assistant'),
+    reasoning: align('.msg.reasoning'),
+    tool: align('.msg.tool'),
+    error: align('.msg.error'),
+  };
+}
+"""
+
+
+def _detail_messages():
+    """A finished courier turn with everything one can leave behind: the peer's
+    line, our reasoning, our tool call and its result, our words, an error."""
+    return [
+        {"role": "system", "content": "You are the comm agent."},
+        {"role": "user", "content": "在吗", "ts": T0},
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning": "想想要不要回",
+            "ts": T0 + 1,
+            "tool_calls": [
+                {
+                    "id": "call_s",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "public/x"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_s", "content": "文件内容", "ts": T0 + 2},
+        {"role": "assistant", "content": "在的", "ts": T0 + 3},
+        {"role": "assistant", "content": "(LLM error: HTTP 401: boom)", "ts": T0 + 4},
+    ]
+
+
+def test_our_detail_rows_sit_on_our_side(page, rooms):
+    """2026-09-10 用户报告：好友视图里我方正文靠右，我方的思考/工具卡却贴左。
+    一行要么跟着说话的人走，要么这个视图就没有「侧」可言。"""
+    server, _client = rooms
+    _seed_transcript(server, "beta", _detail_messages())
+    _open_friend(page)
+    page.wait_for_function("() => msgs.querySelector('.msg.reasoning') !== null")
+
+    sides = page.evaluate(SIDE_PROBE)
+    assert sides["prose"] == "flex-end", sides  # 桌面端：我方在右
+    assert sides["peer"] == "flex-start", sides  # 对面在左
+    assert sides["reasoning"] == sides["prose"], sides
+    assert sides["tool"] == sides["prose"], sides
+    assert sides["error"] == sides["prose"], sides
+
+
+def test_mobile_detail_rows_track_our_prose(mobile_page, rooms):
+    """手机端好友视图与桌面同一套 side 类（2026-09-10：我方靠右，对面靠左），
+    细节行跟着正文走——手机端此前把对面的行画成了「我方」的气泡色。"""
+    server, _client = rooms
+    _seed_transcript(server, "beta", _detail_messages())
+    mobile_page.evaluate("async () => { await openFriendChat('beta'); }")
+    mobile_page.wait_for_function("() => msgs.querySelector('.msg.reasoning') !== null")
+
+    sides = mobile_page.evaluate(SIDE_PROBE)
+    assert sides["prose"] == "flex-end", sides  # 我方在右
+    assert sides["peer"] == "flex-start", sides  # 对面在左
+    assert sides["reasoning"] == sides["prose"], sides
+    assert sides["tool"] == sides["prose"], sides

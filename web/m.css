@@ -176,6 +176,14 @@ html[data-theme="dark"] .ic-sun{display:block}
 #chat-wrap,#messages{touch-action:pan-y}
 .session-row-act{font-size:16px;padding:9px 11px}
 
+/* 好友视图两侧：对面在左（素底小圆角），我方在右；我方的思考/工具卡随我方
+   （与桌面 style.css 同款类名，手机端只有尺寸差别）。 */
+.msg.user.friend-peer{align-self:flex-start;background:var(--surface);border:1px solid var(--border-light);color:var(--text);border-radius:var(--radius);border-bottom-left-radius:var(--radius-xs);box-shadow:var(--shadow-card)}
+.msg.user.friend-mine{align-self:flex-end}
+.msg.assistant.friend-mine{align-self:flex-end;border-radius:var(--radius);border-bottom-right-radius:var(--radius-xs)}
+.msg.friend-live.friend-mine{align-self:flex-end}
+.msg.reasoning.friend-mine,.msg.tool.friend-mine,.msg.error.friend-mine{align-self:flex-end}
+
 /* live spectate rows (in-flight comm clone turn in the friend view) */
 .msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
 .msg.reasoning.friend-live{box-shadow:none}

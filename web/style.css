@@ -212,6 +212,8 @@ html,body{font-family:var(--font);font-size:var(--fs-md);line-height:1.6;color:v
 .msg.user.friend-mine{align-self:flex-end}
 .msg.assistant.friend-mine{align-self:flex-end;border-radius:var(--radius);border-bottom-right-radius:var(--radius-xs)}
 .msg.friend-live.friend-mine{align-self:flex-end}
+/* 我方的思考/工具卡跟着我方走（2026-09-10 用户报告：话说在右边，思考还贴左边） */
+.msg.reasoning.friend-mine,.msg.tool.friend-mine,.msg.error.friend-mine{align-self:flex-end}
 
 /* ---- consent slider (per-friend allow/ask, drag or click) ---- */
 #friend-bar{display:none;align-items:center;gap:1rem;padding:0.55rem 1.5rem;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}

@@ -249,6 +249,9 @@ const renderOpts = extra => Object.assign({
   reasoningHtml: t => '<div>' + escapeHtml(t) + '</div>',
   liveText: r => { const text = FC.stripSilent(r.text); return text ? escapeHtml(text) : ''; },
 }, extra || {});
+/* 好友视图的两侧：对面在左（素底），我方在右——与桌面同一套 side 类
+   （顶栏的会话视图不受影响，它本来就不分侧）。 */
+const FRIEND_SIDE = { user: ' friend-peer', agent: ' friend-mine' };
 
 /* ---------- send / stream ---------- */
 let abortCtrl = null;
@@ -758,7 +761,7 @@ function renderFriendChat(d) {
   p.clearMsgs();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
-  const opts = renderOpts({ friend: true, mailBodies });
+  const opts = renderOpts({ friend: true, side: FRIEND_SIDE, mailBodies });
   FC.renderTranscript(p, messages, d.asks || [], opts);
   events.forEach(row => {
     let node = null;
@@ -780,7 +783,7 @@ function renderFriendChat(d) {
       : (String(m.from || '').endsWith(':human')
         ? '来自 ' + displayOf(m.peer) + ' 的用户'
         : displayOf(m.peer) + ' 的 Agent');
-    const bubble = p.add('user', html);
+    const bubble = p.add('user' + (m.mine ? ' friend-mine' : ' friend-peer'), html);
     const lab = document.createElement('div');
     lab.className = 'human-label';
     lab.textContent = who;

@@ -589,6 +589,14 @@
     if (el && typeof ts === 'number') el.dataset.ts = String(ts);
     return el;
   }
+  /* The friend thread has two sides: the peer's rows and ours (the courier's).
+     Everything a turn emits belongs to the side that produced it — its words,
+     but also its reasoning, its tool calls and its errors (2026-09-10 user
+     report: our prose sat right while our reasoning still hugged the left). */
+  function sided(el, extra) {
+    if (el && extra) el.className += extra;
+    return el;
+  }
   function insertByTs(p, el, ts) {
     if (!el || !p.active()) return el;
     if (typeof ts !== 'number') return el; // no stamp: keep it where it landed
@@ -645,19 +653,19 @@
       else if (m.role === 'assistant') {
         if (m.reasoning) {
           const det = document.createElement('details');
-          det.className = 'msg reasoning';
+          det.className = 'msg reasoning' + agentSide;
           det.innerHTML = '<summary>Thinking\u2026</summary>' + opts.reasoningHtml(m.reasoning);
           p.append(markTs(det, m.ts));
         }
         const text = stripSilent(m.content);
         if (text) {
           if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
-            markTs(p.add('error', '&#x26A0; ' + escapeHtml(text)), m.ts);
+            markTs(p.add('error' + agentSide, '&#x26A0; ' + escapeHtml(text)), m.ts);
           else markTs(p.add('assistant' + agentSide, marked.parse(text)), m.ts);
         }
         if (m.tool_calls) m.tool_calls.forEach(tc => {
           const d = buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: opts.argsMax || 80 });
-          p.append(markTs(d, m.ts));
+          p.append(markTs(sided(d, agentSide), m.ts));
           if (tc.function?.name === 'spawn' || tc.function?.name === 'background') attachSpawnClick(d, tc.id, opts.spawnLookup, opts.spawnTitle);
           if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
             // Anchored by the tool call that raised it; a record without a call
@@ -677,7 +685,7 @@
       } else if (m.role === 'tool') {
         const block = toolBlocks[m.tool_call_id];
         if (block) fillToolResult(block, m.content || '');
-        else markTs(p.add('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
+        else markTs(p.add('tool' + agentSide, '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
       }
     }
     // Leftovers: their tool call is gone from the transcript, so they belong to
@@ -695,6 +703,7 @@
      adjacent text/reasoning deltas into runs so streaming reads as paragraphs
      instead of one row per fragment. */
   function renderLiveEvents(live, p, opts) {
+    const agentSide = opts.side ? opts.side.agent : '';
     const runs = [];
     for (const ev of live || []) {
       const k = ev && ev.kind;
@@ -709,19 +718,19 @@
     for (const r of runs) {
       if (r.kind === 'text') {
         const html = opts.liveText(r);
-        if (html) p.add('friend-live' + (opts.side ? opts.side.agent : ''), html);
+        if (html) p.add('friend-live' + agentSide, html);
       } else if (r.kind === 'reasoning') {
         const det = document.createElement('details');
-        det.className = 'msg reasoning';
+        det.className = 'msg reasoning' + agentSide;
         det.innerHTML = '<summary>Thinking\u2026</summary>' + opts.reasoningHtml(r.text);
         p.append(det);
       } else if (r.kind === 'tool') {
         const c = (r.ev && r.ev.content) || {};
-        p.add('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+        p.add('tool' + agentSide, '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
           + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
       } else if (r.kind === 'tool_result') {
         const t = String(liveEvText(r.ev) || '');
-        p.add('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+        p.add('friend-live' + agentSide, '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
       } else if (r.kind === 'status') {
         p.add('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
       } else if (r.kind === 'error') {
