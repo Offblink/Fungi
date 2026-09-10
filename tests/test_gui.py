@@ -10,9 +10,11 @@ pytest.importorskip("qfluentwidgets", reason="PyQt6-Fluent-Widgets (qfluentwidge
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtCore import QSharedMemory
+from PyQt5.QtCore import QSharedMemory, Qt
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtNetwork import QLocalSocket
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtTest import QTest
+from PyQt5.QtWidgets import QApplication, QDialog
 
 from fungi import gui
 from fungi.gui import FungiGui, valid_host_name
@@ -654,3 +656,96 @@ def test_config_page_update_click_git_mode_pulls(window, monkeypatch):
     assert pulls  # pull 确实跑过
     assert "已是最新" in page.update_status.text()
     assert not page.update_btn.isVisibleTo(page)  # 更新完按钮退场
+
+
+# ── 回车即更新（用户定调：输入框里按回车就该生效，不必回鼠标点按钮）──
+
+
+def test_enter_starts_room_from_either_field(window, monkeypatch):
+    """主机名 / 昵称里按回车 = 点「发起房间」（这两个值只在发起时读）。"""
+    started = []
+
+    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
+        started.append((host, display))
+        return object()
+
+    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    page = window.host_page
+    page.name_edit.setText("pc-alpha")
+    page.nick_edit.setText("花酱")
+    QTest.keyClick(page.name_edit, Qt.Key_Return)
+    assert started == [("pc-alpha", "花酱")]
+    page.room = None  # release before the second launch
+    QTest.keyClick(page.nick_edit, Qt.Key_Return)
+    assert started == [("pc-alpha", "花酱"), ("pc-alpha", "花酱")]
+    page.room = None
+
+
+def test_enter_joins_room_and_ignores_a_press_mid_scan(window, monkeypatch):
+    """Token 里按回车 = 点「加入房间」；扫描中再按一次不得重开一次扫描。"""
+    scans = []
+
+    def fake_discover(token):
+        scans.append(token)
+        return None  # 未找到：_finish_join 会把按钮放回可用
+
+    monkeypatch.setattr(gui, "discover_room", fake_discover)
+    monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
+    page = window.join_page
+    page.ip_edit.clear()
+    page.token_edit.setText("tok")
+    page.join_btn.setEnabled(True)
+    QTest.keyClick(page.token_edit, Qt.Key_Return)
+    assert not page.join_btn.isEnabled()  # 禁用态即"扫描进行中"标志
+    page._join()  # 第二次回车（扫描未回）：必须直接返回
+    for _ in range(300):
+        QApplication.processEvents()
+        if page.join_btn.isEnabled():
+            break
+        time.sleep(0.01)
+    assert scans == ["tok"]
+    assert page.join_btn.isEnabled()
+
+
+def test_enter_saves_config_from_any_field(window, monkeypatch):
+    """设置页三个输入框：回车 = 点「保存配置」（含保存后清空三格的行为）。"""
+    saved = []
+    cfg = gui.load_config()
+    monkeypatch.setattr(gui, "load_config", lambda path=None: cfg)
+    monkeypatch.setattr(gui, "save_config", lambda c, path=None: saved.append(c))
+    page = window.cfg_page
+    page.key_edit.setText("sk-enter-key")
+    QTest.keyClick(page.key_edit, Qt.Key_Return)
+    assert saved[-1].api_key == "sk-enter-key"
+    assert page.key_edit.text() == ""  # 与按钮一致：保存后清空
+    page.endpoint_edit.setText("https://example.invalid/v1/chat/completions")
+    QTest.keyClick(page.endpoint_edit, Qt.Key_Return)
+    assert saved[-1].endpoint == "https://example.invalid/v1/chat/completions"
+    page.model_edit.setText("deepseek-v4-flash-vision-exp")
+    QTest.keyClick(page.model_edit, Qt.Key_Return)
+    assert saved[-1].model == "deepseek-v4-flash-vision-exp"
+    assert [page.key_edit.text(), page.endpoint_edit.text(), page.model_edit.text()] == ["", "", ""]
+    assert len(saved) == 3  # 三次回车 = 三次保存
+
+
+def test_ctrl_enter_saves_courier_memory(window, monkeypatch):
+    """信使页记忆是多行文本：回车留给换行，Ctrl+Enter 才是保存。"""
+    saved = []
+    cfg = gui.load_config()
+    monkeypatch.setattr(gui, "load_config", lambda path=None: cfg)
+    monkeypatch.setattr(gui, "save_config", lambda c, path=None: saved.append(c))
+    page = window.courier_page
+    assert page.memory_save_sc.key() == QKeySequence("Ctrl+Return")
+    page.memory_edit.setPlainText("工作日 8:00-17:00 在上课")
+    page.memory_save_sc.activated.emit()
+    assert saved[-1].courier_memory == "工作日 8:00-17:00 在上课"
+
+
+def test_ctrl_enter_accepts_day_dialog():
+    """日历录入框同理：Ctrl+Enter = 点「保存」，回车仍是换行（一行一条）。"""
+    dlg = gui._DayDialog("2026-09-11", ["出去玩"], None)
+    dlg.edit.setPlainText("出去玩\n去咖啡店")
+    assert dlg.save_sc.key() == QKeySequence("Ctrl+Return")
+    dlg.save_sc.activated.emit()
+    assert dlg.result() == QDialog.Accepted
+    assert dlg.items() == ["出去玩", "去咖啡店"]

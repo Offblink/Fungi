@@ -387,6 +387,12 @@ class HostPage(QWidget):
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
         root.addWidget(_row("昵称", self.nick_edit))
 
+        # Enter launches the room from either field: both are read only at
+        # _start, so there is no lighter commit to hang off them (the token
+        # field's live hot-swap already rides editingFinished).
+        self.name_edit.returnPressed.connect(self._start)
+        self.nick_edit.returnPressed.connect(self._start)
+
         # token is an input, not a status readout: customize it before
         # launching, or edit it live while the room runs (hot-swap)
         self.token_edit = LineEdit()
@@ -625,6 +631,11 @@ class JoinPage(QWidget):
         self.name_edit.setPlaceholderText("本机主机名（wire 身份，一般不用改）")
         root.addWidget(_row("主机名", self.name_edit))
 
+        # Enter joins from any field: the button is otherwise the only commit
+        # path, and a fresh join leaves three of these empty on purpose.
+        for edit in (self.ip_edit, self.token_edit, self.nick_edit, self.name_edit):
+            edit.returnPressed.connect(self._join)
+
         btn_row = QHBoxLayout()
         self.join_btn = PrimaryPushButton(FluentIcon.CONNECT, "加入房间")
         self.join_btn.clicked.connect(self._join)
@@ -662,7 +673,10 @@ class JoinPage(QWidget):
             self.nick_edit.setText(str(last_nick))
 
     def _join(self) -> None:
-        if self.room is not None:
+        # A disabled button IS the in-flight flag: without this guard, Enter
+        # during a scan starts a second discovery thread and double-emits
+        # join_done.
+        if self.room is not None or not self.join_btn.isEnabled():
             return
         ip = self.ip_edit.text().strip()
         token = self.token_edit.text().strip()
@@ -1010,6 +1024,11 @@ class ConfigPage(QWidget):
         # reactive status line: reflect unsaved edits live
         for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
             edit.textChanged.connect(self._refresh_status)
+        # Enter commits from whichever field you are in, exactly like 保存配置
+        # (which also clears all three afterwards: the key never lingers on
+        # screen). editingFinished would save on tab-out too — not wanted.
+        for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
+            edit.returnPressed.connect(self._save)
         self._refresh_status()
 
         # 视频模型状态轮询：下载子进程退出后自动复检（不用 Signal 传参）
@@ -1290,6 +1309,12 @@ class _DayDialog(QDialog):
         btns = QHBoxLayout()
         save = PrimaryPushButton(FluentIcon.SAVE, "保存")
         save.clicked.connect(self.accept)
+        save.setToolTip("Ctrl+Enter 也能保存（一行一条，回车留给换行）")
+        # Same rule as the courier memory box: a multi-line list keeps Enter as
+        # a newline, Ctrl+Enter is the keyboard commit.
+        self.save_sc = QShortcut(QKeySequence("Ctrl+Return"), self.edit)
+        self.save_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        self.save_sc.activated.connect(self.accept)
         cancel = PushButton("取消")
         cancel.clicked.connect(self.reject)
         btns.addStretch(1)
@@ -1333,6 +1358,13 @@ class CourierPage(QWidget):
         root.addWidget(self.memory_edit)
         self.memory_save_btn = PushButton(FluentIcon.SAVE, "保存记忆")
         self.memory_save_btn.clicked.connect(self._save_courier_memory)
+        self.memory_save_btn.setToolTip("Ctrl+Enter 也能保存（回车留给换行：记忆是多行的）")
+        # Ctrl+Enter commits without reaching for the mouse; plain Enter has to
+        # stay a newline in a multi-line box. Scoped to this box (not window-
+        # wide) so it never fires while you are editing another page.
+        self.memory_save_sc = QShortcut(QKeySequence("Ctrl+Return"), self.memory_edit)
+        self.memory_save_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        self.memory_save_sc.activated.connect(self._save_courier_memory)
         root.addWidget(self.memory_save_btn)
 
         # ── 短期待办 ──

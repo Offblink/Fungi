@@ -290,3 +290,19 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   主动记（含钟点）。
 - **GUI 信使页**：长期记忆编辑 + 4 周圆形日历（点日期弹窗录入，一行一条）；
   今天 accent 实心、有待办淡橙底色。信使开关仍在设置页。
+
+## 17. 增补（2026-09-10）：输入框回车即更新
+
+用户定调：凡是「要点按钮才提交」的输入框，键盘上按回车就该等效提交（按钮保留，不是替换）。
+- **单行 `LineEdit` → `returnPressed`**（不用 `editingFinished`：移开焦点也提交会变成
+  「一切换焦点就开房／加入」）。发起房间页 主机名/昵称 → `_start`；加入房间页四个框
+  （IP/Token/昵称/主机名）→ `_join`；设置页三个框 → `_save`（与按钮同语义：留空的框不覆盖
+  已存配置，保存后清空三格）。`JoinPage._join` 入口新增 `not join_btn.isEnabled()` 早退——
+  禁用态就是「扫描进行中」，否则第二次回车会再开一个发现线程并二次 emit `join_done`。
+- **多行 `TextEdit` → `Ctrl+Enter`**：回车必须留给换行。信使页长期记忆 →
+  `_save_courier_memory`；日历录入弹窗 → `accept`。`QShortcut("Ctrl+Return")` 挂在输入框上、
+  `WidgetWithChildrenShortcut` 上下文——只在该框聚焦时生效，不做窗口级劫持（HostPage 的
+  Ctrl+C 是窗口级旧例，新加的一律不跟）。保存按钮 tooltip 注明该键位。
+- **已有同款先例**：发起房间页 Token 的 `editingFinished`（§12）——单行框回车即热更新。
+- **验证**：`tests/test_gui.py` 用 `QTest.keyClick` 打真实按键（含 Ctrl 修饰键路径）；真机另跑
+  过一遍带活动窗口的验证——无头 offscreen 下 QShortcut 根本不激活，只有真机验得到。
