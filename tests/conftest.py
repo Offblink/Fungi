@@ -139,11 +139,19 @@ def _hermetic_gui_settings():
     app)` constructor off the registry (verified), while a test-only app name
     lands in its own key. Session-scoped because the module-scoped `window`
     builds its two QSettings once, before any function-scoped patch could apply.
-    """
-    from PyQt5.QtCore import QSettings
 
-    from fungi.gui import host as host_mod
-    from fungi.gui import join as join_mod
+    Qt is a GUI-only extra: without it (CI, headless runs) there are no GUI
+    tests to sandbox, and importing the pages here must not take the whole
+    suite down (it did — 404 errors on the first CI run of this guard).
+    """
+    try:
+        from PyQt5.QtCore import QSettings
+
+        from fungi.gui import host as host_mod
+        from fungi.gui import join as join_mod
+    except ImportError:
+        yield None
+        return
 
     real = join_mod.SETTINGS_APP
     sandbox = f"{real}-test"
