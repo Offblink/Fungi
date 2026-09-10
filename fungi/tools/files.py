@@ -203,6 +203,8 @@ def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     half = limit // 2
+    return f"{text[:half]}\n... [truncated {len(text) - limit} chars] ...\n{text[-half:]}"
+
 
 def tool_read(path: str) -> str:
     """Read a file, numbering lines. Supports `path:N` and `path:N-M` selectors."""

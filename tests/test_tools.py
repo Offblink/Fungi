@@ -6,7 +6,6 @@ import json
 import threading
 import time
 
-import pytest
 from PIL import Image
 
 import fungi.tools.shell as shell_mod
@@ -286,3 +285,21 @@ def test_bash_abort_kills_running_command_quickly():
     out = tool_bash("ping -n 30 127.0.0.1 >nul", should_abort=lambda: flag["on"])
     assert out == "ERROR: cancelled by user"
     assert time.time() - start < 5, "abort waited out the command instead of killing it"
+
+def test_read_truncates_large_files_with_head_and_tail(tmp_path):
+    """A file larger than TRUNCATE_READ must come back as head + tail with a
+    marker. It once returned None instead — a deleted `return` left `half`
+    dangling (commit 72dce8e), and the agent path stringifies that to the
+    literal 'None', so every big file read as 'None'."""
+    from fungi.tools.files import TRUNCATE_READ
+
+    big = tmp_path / "big.txt"
+    big.write_text("\n".join(f"line {i:06d}" for i in range(3000)), encoding="utf-8")
+    assert big.stat().st_size > TRUNCATE_READ  # the case must actually trigger
+
+    out = tool_read(str(big))
+    assert isinstance(out, str)
+    assert "[truncated" in out
+    assert "line 000000" in out  # head kept
+    assert "line 002999" in out  # tail kept
+    assert len(out) < TRUNCATE_READ * 2
