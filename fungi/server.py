@@ -24,6 +24,7 @@ from fungi.config import PROJECT_ROOT, RESOURCE_ROOT, load_config, save_config
 from fungi.events import Sink
 from fungi.hub.app import safe_name
 from fungi.tools.ask import resolve_ask
+from fungi.tools.mcp import mcp_extra_tools
 from fungi.trilayer import TriLayer
 
 WEB_DIR = RESOURCE_ROOT / "web"
@@ -95,9 +96,8 @@ def _extract_upload(body: bytes, boundary: bytes) -> tuple[str, bytes] | None:
     for part in body.split(b"--" + boundary):
         if part[:2] in (b"", b"--"):
             continue  # preamble/empty chunk, or the closing "--" terminator
-        if part.startswith(b"\r\n"):
-            part = part[2:]
-        head, sep, content = part.partition(b"\r\n\r\n")
+        chunk = part[2:] if part.startswith(b"\r\n") else part
+        head, sep, content = chunk.partition(b"\r\n\r\n")
         if not sep or b'filename="' not in head:
             continue
         m = re.search(rb'filename="([^"]*)"', head)
@@ -842,12 +842,6 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._send_json({"path": path or None})
         except Exception as exc:
             self._send_json({"path": None, "error": str(exc)})
-
-
-def make_webui_server(port: int | None, runtime: WebUIRuntime) -> ThreadingHTTPServer:
-    """Build (not start) the WebUI server; room mode embeds this in-process."""
-    handler = type("BoundHandler", (YesSirHandler,), {"runtime": runtime})
-    return ThreadingHTTPServer(("0.0.0.0", _free_port(port)), handler)
 
 
 def _free_port(preferred: int | None) -> int:

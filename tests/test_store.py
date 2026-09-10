@@ -57,8 +57,10 @@ def test_own_home_read_free_write_needs_consent(store):
 def test_other_home_requires_consent(store):
     with pytest.raises(GuardError):
         store.resolve("alpha", "homes/beta/secret.txt")
+    # own-home WRITES need the owner's consent too (own-home reads stay free):
+    # the duplicated assertion here used to leave that branch untested.
     with pytest.raises(GuardError):
-        store.resolve("alpha", "homes/beta/secret.txt")
+        store.resolve("alpha", "homes/alpha/notes/c.md", mutating=True)
 
 
 def test_other_home_with_answered_consent(store):

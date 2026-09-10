@@ -17,7 +17,7 @@ def test_write_then_read_roundtrip(tmp_path, monkeypatch):
     assert len(files) == 1
     read_back = diary.diary_tool({"action": "read"})
     assert "今天用户夸我了" in read_back
-    assert json.dumps(out)  # tool output is always a plain string
+    assert isinstance(out, str)  # tool output is always a plain string
 
 
 def test_section_empty_gives_guide_only(tmp_path, monkeypatch):

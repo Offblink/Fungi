@@ -8,7 +8,7 @@ and message-click both open the WebUI; right-click pops the fluent menu.
 import webbrowser
 from pathlib import Path
 
-from PyQt5.QtCore import QPoint, Qt
+from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QCursor, QIcon, QPainter, QPixmap
 from PyQt5.QtWidgets import QApplication, QSystemTrayIcon
 from qfluentwidgets import Action, MenuAnimationType, SystemTrayMenu

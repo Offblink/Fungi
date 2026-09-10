@@ -12,8 +12,12 @@ import datetime as _dt
 import json
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fungi.config import PROJECT_ROOT
+
+if TYPE_CHECKING:  # the import is deferred below (agent imports todos)
+    from fungi.agent import BoundTool
 
 TODOS_PATH = PROJECT_ROOT / "data" / "todos.json"
 _GUARD = threading.Lock()

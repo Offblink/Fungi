@@ -155,16 +155,6 @@
     gsap.to(w, { opacity: 0, duration: 0.18, onComplete: function () { w.remove(); } });
   }
 
-  /* Number counter for badges (friends count etc.). */
-  function counter(el, to) {
-    if (!el) return;
-    var from = parseInt(el.textContent, 10) || 0;
-    if (from === to) { el.textContent = to; return; }
-    var obj = { v: from };
-    gsap.to(obj, { v: to, duration: 0.5, ease: 'power1.out',
-      onUpdate: function () { el.textContent = Math.round(obj.v); } });
-  }
-
   /* Liquid send button: white ripple from the press point. Delegated here so
      app.js needs no wiring for it. */
   (function liquid() {

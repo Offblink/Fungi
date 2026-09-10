@@ -130,7 +130,6 @@ main{position:relative}
 .agent-bubble .lb{pointer-events:none}
 .agent-bubble .st{position:absolute;bottom:-1px;right:-1px;width:10px;height:10px;border-radius:50%;background:var(--tool-accent);border:2px solid var(--surface)}
 .agent-bubble[data-st="running"] .st{background:#22c55e;animation:breath 1.4s ease-in-out infinite}
-.agent-bubble[data-st="done"] .st{background:#22c55e}
 .agent-bubble[data-st="failed"] .st{background:#ef4444}
 .agent-bubble[data-st="aborted"] .st{background:#ef4444}
 .agent-bubble[data-st="done"] .st{background:#16a34a}

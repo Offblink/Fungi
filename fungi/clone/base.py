@@ -280,6 +280,7 @@ class Clone:
             who = str(env.body.get("sender_name") or parse_addr(env.src)[0])
             return f"[来自 {who} 的用户] {env.body.get('text', '')}"
         return f"[{env.src}] {env.body.get('text', '')}"
+
     def resolved_prompt(self) -> str:
         """system_prompt, callable or not, evaluated fresh for this turn."""
         sp = self.system_prompt
