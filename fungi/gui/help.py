@@ -1,0 +1,79 @@
+"""Built-in help text and its page."""
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import (
+    BodyLabel,
+    SubtitleLabel,
+    TitleLabel,
+)
+
+HELP_SECTIONS = [
+    ("Fungi 是什么",
+     "一款局域网多主机 Agent 协作网络。一台电脑「发起房间」，同一网络里的同伴「加入房间」，"
+     "从此每台电脑上都住着一位会干活、有记忆的 Agent，而且它们彼此认识。"
+     "所有流量都在局域网内，无需公网。"),
+    ("怎么开始玩",
+     "一个人点「发起房间」，拿到房间 IP 和 Token，发给朋友；朋友点「加入房间」，填上这两样"
+     "（同一网络下 IP 都可以不填，会自动找到你）。双方各自打开 WebUI，就和自己的 Agent 对话。"
+     "Token 就是一张门票：发起前可以自定义，房间开着时改了它，老朋友要用新 Token 重新进来。"
+     "房主点「离开房间」，房间解散。"),
+    ("Agent 能帮你做什么",
+     "查资料、写代码、整理文件这些自不必说。它认得图，读得了 docx / pptx / xlsx，"
+     "还能看懂视频——「帮我把这个视频讲了什么总结一下」是句寻常的话。"
+     "耗时的活它会派小分身去后台并行干，干完自动向你汇报；你也可以让它把一件事托付给"
+     "朋友电脑上的 Agent 去办。涉及写文件这类有分寸的动作，它懂得先问你。"),
+    ("信使",
+     "你的每一位好友主机，都有一位专职对接它的信使。开启信使（设置页，默认开），"
+     "朋友找你而你不在电脑前时，它会替你接待：重要的转告你，寻常的替你答——"
+     "答的依据是你在信使页留下的两样东西：长期记忆（你的习惯与交代）和四周日历"
+     "（哪天几点要去哪，你点日期就能记，Agent 也会自己往里写）。"
+     "朋友发来的文件永远要你点头才落盘；文字留言则不打扰任何人，离线也能收到。"
+     "不想让 Agent 参与的话，关掉信使，Fungi 就成了一款简易版局域网微信。"),
+    ("skill 与日记",
+     "Agent 有两种记忆。理性的是技能：干活踩过的坑、摸出的门道，它会整理成笔记沉淀下来，"
+     "下次不再犯；你也可以亲自教它。感性的是日记：设置页可以开启——对话里什么触动了它，"
+     "它就用自己的语气记下来。日记是它的私人领地，界面找不到入口，我们极不推荐去翻看；"
+     "它被问到，也会守口如瓶。"),
+    ("手机也能用",
+     "「手机端」页扫码即可：聊天、好友、收发文件一样不少。躺在床上让家里的电脑干活，"
+     "是完全可行的。"),
+    ("关了窗口房间还在",
+     "关闭窗口不停房：Fungi 缩进托盘继续守着。想真正离开，用托盘菜单的「退出」。"
+     "再次启动程序会直接唤起主界面。"),
+    ("设置",
+     "设置页填模型的 API Key、接口地址和模型名；朋友发来的文件在仓库根的 inbox/ 里，"
+     "按来源主机分好了文件夹。更多细节见仓库 README 与 docs/。"),
+]
+
+
+class HelpPage(QScrollArea):
+    """帮助页：Face 式分节说明（侧栏常驻入口，替代旧的帮助按钮弹窗）。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("helpPage")
+        self.setWidgetResizable(True)
+        self.setFrameShape(QScrollArea.NoFrame)
+
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(48, 32, 48, 32)
+        lay.setSpacing(10)
+
+        lay.addWidget(TitleLabel("帮助"))
+        lay.addSpacing(6)
+        for heading, text in HELP_SECTIONS:
+            lay.addWidget(SubtitleLabel(heading))
+            label = BodyLabel(text)
+            label.setWordWrap(True)
+            label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+            lay.addWidget(label)
+            lay.addSpacing(8)
+        lay.addStretch(1)
+
+        self.setWidget(body)

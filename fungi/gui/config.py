@@ -1,0 +1,435 @@
+"""Settings page: model config, courier switch, VidSense, updates."""
+
+import contextlib
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import threading
+import webbrowser
+
+from PyQt5.QtCore import QTimer, pyqtSignal
+from PyQt5.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import (
+    BodyLabel,
+    FluentIcon,
+    InfoBar,
+    LineEdit,
+    PrimaryPushButton,
+    PushButton,
+    SubtitleLabel,
+    SwitchButton,
+)
+
+from .. import config as config_mod
+from .. import update
+from ..config import (
+    DEFAULT_API_KEY,
+    PROJECT_ROOT,
+)
+from ..tools.video import _HEALABLE, _module_available, _video_ready
+from .widgets import _row
+
+
+def _hf_hub_missing() -> bool:
+    """True when Fungi's Python lacks huggingface_hub (download deps)."""
+    return not _module_available("huggingface_hub")
+
+
+class ConfigPage(QWidget):
+    """模型配置：迁移自 WebUI 的配置弹窗（api_key / endpoint / model）。"""
+
+    update_checked = pyqtSignal(object)
+    update_progress = pyqtSignal(int, int)
+    update_finished = pyqtSignal(object)
+
+    def __init__(self, window):
+        super().__init__()
+        self.window_ref = window
+        self.setObjectName("configPage")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(48, 14, 48, 14)
+        root.setSpacing(6)
+        title = SubtitleLabel("设置")
+        root.addWidget(title)
+
+        self.key_edit = LineEdit()
+        self.key_edit.setFixedWidth(360)
+        self.key_edit.setPlaceholderText("API Key（留空 = 保持不变）")
+        root.addWidget(_row("API Key", self.key_edit))
+
+        self.endpoint_edit = LineEdit()
+        self.endpoint_edit.setFixedWidth(360)
+        self.endpoint_edit.setPlaceholderText("接口地址（留空 = 保持不变）")
+        root.addWidget(_row("接口地址", self.endpoint_edit))
+
+        self.model_edit = LineEdit()
+        self.model_edit.setFixedWidth(360)
+        self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
+        root.addWidget(_row("模型", self.model_edit))
+
+        # 没有保存按钮：三个输入框回车即写盘（见文件末尾 returnPressed 接线），
+        # 用鼠标点走不算（editingFinished 故意不接）。
+        root.addSpacing(4)
+
+        # 信使：消息信使（自动回复，可注入记忆）+ 文件信使（consent 卡片，零 Agent）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("信使"))
+        msg_row = QHBoxLayout()
+        msg_lbl = BodyLabel("信使")
+        msg_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        msg_row.addWidget(msg_lbl)
+        msg_row.addSpacing(8)
+        self.courier_switch = SwitchButton()
+        self.courier_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # setChecked BEFORE connect: the InfoBar needs window_ref (see diary).
+        self.courier_switch.setChecked(config_mod.load_config().courier)
+        msg_row.addWidget(self.courier_switch)
+        self.courier_switch.checkedChanged.connect(self._toggle_courier)
+        msg_row.addStretch(1)
+        root.addLayout(msg_row)
+        courier_hint = BodyLabel(
+            "开着时，你不在电脑前也有人替你接待朋友：重要的转告你，寻常的代你答。\n"
+            "关掉则留言直达会话视图，不惊动 Agent。即时生效。"
+        )
+        courier_hint.setWordWrap(True)
+        root.addWidget(courier_hint)
+        file_hint = BodyLabel(
+            "文件不经信使：一律先弹卡片征求你的同意，收下的文件落在 inbox/ 里。"
+        )
+        file_hint.setWordWrap(True)
+        root.addWidget(file_hint)
+
+        # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("VidSense"))
+        self.video_status = BodyLabel()
+        self.video_status.setWordWrap(True)
+        root.addWidget(self.video_status)
+        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
+        self.download_btn.clicked.connect(self._download_models)
+        root.addWidget(self.download_btn)
+
+
+        # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）——压轴
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("实验性"))
+        diary_title_row = QHBoxLayout()
+        diary_lbl = BodyLabel("Diary")
+        # SwitchButton's default size policy is Expanding: without pinning
+        # both widgets to Fixed the switch drifts to mid-row instead of
+        # sitting right next to the label.
+        diary_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        diary_title_row.addWidget(diary_lbl)
+        diary_title_row.addSpacing(8)
+        self.diary_switch = SwitchButton()
+        self.diary_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # setChecked BEFORE connecting: checkedChanged fires on programmatic
+        # changes too, and _toggle_diary pops an InfoBar that needs window_ref.
+        self.diary_switch.setChecked(config_mod.load_config().diary)
+        diary_title_row.addWidget(self.diary_switch)
+        self.diary_switch.checkedChanged.connect(self._toggle_diary)
+        diary_title_row.addStretch(1)
+        root.addLayout(diary_title_row)
+        diary_hint = BodyLabel(
+            "让 Agent 记一本自己的日记——只有它自己能看，被问到也守口如瓶。\n"
+            "关闭后工具与记忆注入一并移除。"
+        )
+        diary_hint.setWordWrap(True)
+        root.addWidget(diary_hint)
+
+        # 软件更新：自动检查，落后才亮按钮（不自动更新）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("软件更新"))
+        self.update_status = BodyLabel()
+        self.update_status.setWordWrap(True)
+        root.addWidget(self.update_status)
+        self.update_btn = PrimaryPushButton(FluentIcon.SYNC, "下载并更新")
+        self.update_btn.clicked.connect(self._do_update)
+        self.update_btn.hide()
+        root.addWidget(self.update_btn)
+        root.addStretch(1)
+        self.status = BodyLabel()
+        self.status.setWordWrap(True)
+        root.addWidget(self.status)
+        # reactive status line: reflect unsaved edits live
+        for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
+            edit.textChanged.connect(self._refresh_status)
+        # Enter commits from whichever field you are in, exactly like 保存配置
+        # (which also clears all three afterwards: the key never lingers on
+        # screen). editingFinished would save on tab-out too — not wanted.
+        for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
+            edit.returnPressed.connect(self._save)
+        self._refresh_status()
+
+        # 视频模型状态轮询：下载子进程退出后自动复检（不用 Signal 传参）
+        self._dl_proc: subprocess.Popen | None = None
+        self._dl_steps: list[tuple[str, list[str]]] = []
+        self._dl_stage = ""
+        self._dl_timer = QTimer(self)
+        self._dl_timer.setInterval(1000)
+        self._dl_timer.timeout.connect(self._poll_download)
+        self.update_checked.connect(self._apply_update_status)
+        self.update_progress.connect(self._on_update_progress)
+        self.update_finished.connect(self._on_update_finished)
+        self._upd_thread: threading.Thread | None = None
+        self._upd_busy = False
+        self._upd_status: dict | None = None
+        with contextlib.suppress(Exception):
+            update.cleanup_old_install()  # 上次原地更新留下的 .old（新进程无锁可删）
+        self._check_video_models()
+        self.check_update()  # GUI 启动即自动检查，落后才亮按钮
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        super().showEvent(event)
+        # 模型可能在别处（命令行）补装了；下载中则保持进度文案不动
+        if self._dl_proc is None:
+            self._check_video_models()
+        if not self._upd_busy:
+            self.check_update()
+
+    def _check_video_models(self) -> None:
+        try:
+            ready = _video_ready()
+        except OSError as exc:
+            self.video_status.setText(f"VidSense 状态检查失败：{exc}")
+            self.download_btn.hide()
+            return
+        marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
+        missing = [name for name, ok in ready.items() if not ok]
+        healable = [name for name in missing if name in _HEALABLE]
+        if missing:
+            hint = (
+                "点「下载缺失模型」自动补齐"
+                if healable
+                else "需手动安装 VidSense 依赖"
+            )
+            self.video_status.setText(f"{marks}\n缺 {'、'.join(missing)}，{hint}")
+        else:
+            self.video_status.setText(f"{marks}\n已就绪，video 工具可用")
+        # 只有可自愈缺失才亮下载按钮（不需要就没有按钮）；下载进行中禁点
+        self.download_btn.setVisible(bool(healable))
+        self.download_btn.setEnabled(bool(healable) and self._dl_proc is None)
+
+    def _python_cmd(self) -> str | None:
+        """Interpreter for helper subprocesses: Fungi's own Python in dev;
+        frozen exe has none, fall back to a system Python on PATH."""
+        if not getattr(sys, "frozen", False):
+            return sys.executable
+        return shutil.which("python")
+
+    def _download_models(self) -> None:
+        if self._dl_proc is not None:
+            return
+        py = self._python_cmd()
+        if py is None:
+            self.video_status.setText(
+                "未找到系统 Python（exe 模式需先安装 Python 并加入 PATH）"
+            )
+            return
+        script = PROJECT_ROOT / "scripts" / "download_video_models.py"
+        if not script.is_file():
+            self.video_status.setText(
+                "下载脚本缺失（scripts/download_video_models.py），请手动预装模型。"
+            )
+            return
+        # 阶段链：缺 huggingface_hub 就先自动装依赖，再下模型
+        self._dl_steps: list[tuple[str, list[str]]] = []
+        if _hf_hub_missing():
+            self._dl_steps.append(
+                ("依赖 huggingface_hub", [py, "-m", "pip", "install", "huggingface_hub"])
+            )
+        self._dl_steps.append(("VidSense", [py, str(script)]))
+        self._start_next_dl_step()
+
+    def _start_next_dl_step(self) -> None:
+        stage, cmd = self._dl_steps.pop(0)
+        self._dl_stage = stage
+        try:
+            self._dl_proc = subprocess.Popen(
+                cmd,
+                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+            )
+        except OSError as exc:
+            self.video_status.setText(f"下载启动失败：{exc}")
+            self._dl_proc = None
+            return
+        self._check_video_models()  # 先禁用按钮, 再写进度文案(复检会覆写状态行)
+        self.video_status.setText(f"正在下载{stage}…（进度见弹出的控制台，完成后自动复检）")
+        self._dl_timer.start()
+
+    def _poll_download(self) -> None:
+        if self._dl_proc is None or self._dl_proc.poll() is None:
+            return
+        code = self._dl_proc.returncode
+        self._dl_proc = None
+        if code == 0 and self._dl_steps:
+            self._start_next_dl_step()  # 依赖装完 -> 接着下模型
+            return
+        self._dl_timer.stop()
+        self._check_video_models()
+        if code == 0:
+            InfoBar.success(
+                "下载完成", "VidSense 已就绪", duration=2500, parent=self.window_ref
+            )
+        else:
+            InfoBar.error(
+                "下载失败", f"「{self._dl_stage}」步骤退出码 {code}，详见其控制台窗口",
+                duration=4000, parent=self.window_ref,
+            )
+
+
+    def _refresh_status(self) -> None:
+        cfg = config_mod.load_config()
+        key = self.key_edit.text().strip() or cfg.api_key
+        state = (
+            "已配置"
+            if key and key != DEFAULT_API_KEY
+            else "未配置（使用占位 key，无法对话）"
+        )
+        endpoint = self.endpoint_edit.text().strip() or cfg.endpoint
+        model = self.model_edit.text().strip() or cfg.model
+        self.status.setText(
+            f"当前状态：{state} · 模型 {model} · 接口 {endpoint}"
+            "\n改完按回车即保存（三个输入框各自生效）"
+        )
+
+    def _save(self) -> None:
+        cfg = config_mod.load_config()
+        if self.key_edit.text().strip():
+            cfg.api_key = self.key_edit.text().strip()
+        if self.endpoint_edit.text().strip():
+            cfg.endpoint = self.endpoint_edit.text().strip()
+        if self.model_edit.text().strip():
+            cfg.model = self.model_edit.text().strip()
+        config_mod.save_config(cfg)
+        self.key_edit.clear()
+        self.endpoint_edit.clear()
+        self.model_edit.clear()
+        self._refresh_status()
+        InfoBar.success(
+            "已保存", "模型配置已写入 config.json", duration=2500, parent=self.window_ref
+        )
+
+    def _toggle_diary(self, checked: bool) -> None:
+        """实验性日记开关：即时写盘，下一轮对话生效（agent 每轮重建）。"""
+        cfg = config_mod.load_config()
+        cfg.diary = bool(checked)
+        config_mod.save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "日记已开启，下一轮对话生效" if checked else "日记已关闭，下一轮对话生效",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+    def _toggle_courier(self, checked: bool) -> None:
+        """信使开关：即时写盘；通讯 clone 每个信封重读配置，无需重启。"""
+        cfg = config_mod.load_config()
+        cfg.courier = bool(checked)
+        config_mod.save_config(cfg)
+        InfoBar.success(
+            "已保存",
+            "信使已开启" if checked else "信使已关闭：对面消息直达，Agent 零消耗",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+    def check_update(self) -> None:
+        """后台线程查 GitHub Releases；结果经信号回 GUI 线程。"""
+        if self._upd_busy or self._upd_thread is not None:
+            return
+        self.update_status.setText("正在检查更新…")
+        self._upd_thread = threading.Thread(target=self._upd_check_worker, daemon=True)
+        self._upd_thread.start()
+
+    def _upd_check_worker(self) -> None:
+        self.update_checked.emit(update.check())
+
+    def _apply_update_status(self, status: dict) -> None:
+        self._upd_thread = None
+        self._upd_status = status
+        self.update_btn.hide()
+        if status.get("error"):
+            self.update_status.setText(status["error"])
+            return
+        cur, latest = status["current"], status["latest"]
+        if not status["behind"]:
+            self.update_status.setText(f"已是最新（v{cur}）")
+            return
+        mode = status["mode"]
+        self.update_btn.setText(
+            "下载并更新" if mode == "exe"
+            else "git 拉取更新" if mode == "git"
+            else "打开下载页"
+        )
+        self.update_status.setText(f"当前 v{cur}，最新 {latest}")
+        self.update_btn.show()
+
+    def _do_update(self) -> None:
+        status = self._upd_status
+        if not status or not status["behind"] or self._upd_busy:
+            return
+        mode = status["mode"]
+        # 无 exe 资产或非冻结环境又没 git：退化为打开 Releases 页
+        if mode == "none" or (mode == "exe" and not status.get("asset_url")):
+            webbrowser.open(update.RELEASES_PAGE)
+            return
+        self._upd_busy = True
+        self.update_btn.setEnabled(False)
+        if mode == "git":
+            self.update_status.setText("正在 git pull --ff-only …")
+            threading.Thread(target=self._upd_git_worker, daemon=True).start()
+        else:
+            self.update_status.setText("正在下载更新包…")
+            threading.Thread(
+                target=self._upd_exe_worker, args=(status["asset_url"],), daemon=True
+            ).start()
+
+    def _upd_git_worker(self) -> None:
+        ok, out = update.update_source()
+        self.update_finished.emit({"mode": "git", "ok": ok, "out": out})
+
+    def _upd_exe_worker(self, asset_url: str) -> None:
+        try:
+            exe = update.update_exe(
+                asset_url,
+                progress=lambda done, total: self.update_progress.emit(done, total),
+            )
+        except Exception as exc:  # 网络/磁盘/坏 zip——都不能带崩 GUI
+            self.update_finished.emit({"mode": "exe", "ok": False, "out": str(exc)})
+            return
+        self.update_finished.emit({"mode": "exe", "ok": True, "out": "", "exe": str(exe)})
+
+    def _on_update_progress(self, done: int, total: int) -> None:
+        def mb(n: int) -> str:
+            return f"{n / (1024 * 1024):.1f} MB"
+
+        self.update_status.setText(
+            f"正在下载更新包… {mb(done)}" + (f" / {mb(total)}" if total else "")
+        )
+
+    def _on_update_finished(self, res: dict) -> None:
+        self._upd_busy = False
+        self.update_btn.setEnabled(True)
+        if not res["ok"]:
+            self.update_status.setText(f"更新失败：{res['out']}")
+            InfoBar.error(
+                "更新失败", "详见设置页状态行", duration=4000, parent=self.window_ref
+            )
+            return
+        if res["mode"] == "git":
+            self.update_btn.hide()
+            self.check_update()  # 拉取后 pyproject 已是新版本 -> 复检回到"已是最新"
+            return
+        self.update_status.setText("更新包已就位，正在重启…")
+        update.relaunch(pathlib.Path(res["exe"]))
+        QApplication.instance().quit()

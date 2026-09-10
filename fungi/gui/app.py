@@ -1,0 +1,165 @@
+"""The window itself: page assembly, single-instance guard, entry point."""
+
+import os
+import sys
+
+from PyQt5.QtCore import QSharedMemory, Qt, QTimer
+from PyQt5.QtNetwork import QLocalServer, QLocalSocket
+from PyQt5.QtWidgets import (
+    QApplication,
+    QMessageBox,
+    QScrollArea,
+)
+from qfluentwidgets import (
+    FluentIcon,
+    FluentWindow,
+)
+
+from .config import ConfigPage
+from .const import GUI_SCALE
+from .courier import CourierPage
+from .help import HelpPage
+from .host import HostPage
+from .join import JoinPage
+from .mobile import MobilePage
+from .trayicon import _Tray
+
+_GUI_IPC = "FungiGuiIPC"  # named pipe: second launch -> running window shows itself
+
+
+class FungiGui(FluentWindow):
+    def __init__(self):
+        super().__init__()
+        self.host_page = HostPage(self)
+        self.join_page = JoinPage(self)
+        self.mobile_page = MobilePage(self)
+        self.courier_page = CourierPage(self)
+        self.cfg_page = ConfigPage(self)
+        self.help_page = HelpPage()
+        # Every page rides a scroll area (help-page style): the window keeps
+        # its compact size no matter what each page's content minimum is.
+        self.addSubInterface(self._scroll(self.host_page, "hostScroll"), FluentIcon.HOME, "发起房间")
+        self.addSubInterface(self._scroll(self.join_page, "joinScroll"), FluentIcon.PEOPLE, "加入房间")
+        self.addSubInterface(self._scroll(self.mobile_page, "mobileScroll"), FluentIcon.QRCODE, "手机端")
+        self.addSubInterface(self._scroll(self.courier_page, "courierScroll"), FluentIcon.CALENDAR, "信使")
+        self.addSubInterface(self._scroll(self.cfg_page, "cfgScroll"), FluentIcon.SETTING, "设置")
+        self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
+        self.resize(840, 540)  # compact default; pages scroll instead of stretching it
+        self._tray: _Tray | None = None
+        # single-instance IPC: a second launch asks this window to show itself
+        QLocalServer.removeServer(_GUI_IPC)  # stale pipe from a hard crash
+        self._ipc_server = QLocalServer(self)
+        if self._ipc_server.listen(_GUI_IPC):
+            self._ipc_server.newConnection.connect(self._on_ipc_connection)
+
+    @staticmethod
+    def _scroll(page, name: str) -> QScrollArea:
+        box = QScrollArea()
+        box.setObjectName(name)
+        box.setWidgetResizable(True)
+        box.setFrameShape(QScrollArea.NoFrame)
+        box.setWidget(page)
+        return box
+
+    # ── tray / background lifecycle ──
+
+    def rooms(self) -> list:
+        """Live rooms across pages (a page holds at most one)."""
+        return [
+            page.room
+            for page in (self.host_page, self.join_page)
+            if getattr(page, "room", None) is not None
+        ]
+
+    def update_tray(self) -> None:
+        """The tray icon lives exactly while a room runs (it IS the backend)."""
+        if self.rooms():
+            if self._tray is None:
+                self._tray = _Tray(self)
+            self._tray.show()
+        elif self._tray is not None:
+            self._tray.hide()
+
+    def show_and_raise(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_ipc_connection(self) -> None:
+        """Second-launch signal: raise the running window (洞见-style)."""
+        conn = self._ipc_server.nextPendingConnection()
+        if conn is None:
+            return
+        conn.readAll()
+        conn.disconnectFromServer()
+        self.show_and_raise()
+
+    def open_webui_from_tray(self) -> None:
+        rooms = self.rooms()
+        if rooms:
+            rooms[0].open_webui()
+
+    def quit_from_tray(self) -> None:
+        """Real exit: stop rooms (proper leave envelopes), then quit."""
+        for page in (self.host_page, self.join_page):
+            room = getattr(page, "room", None)
+            if room is not None:
+                room.stop()
+                page.room = None
+        if self._tray is not None:
+            self._tray.hide()
+        # Deferred: calling quit() inside the current dispatch races the
+        # callback teardown (flaky silent exit / hard crash on Windows).
+        QTimer.singleShot(0, QApplication.quit)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self.rooms():
+            # Closing the window parks the room in the tray; only the tray
+            # menu's 退出 (or a page's 离开房间 button) actually stops it.
+            event.ignore()
+            self.hide()
+            if self._tray is None:
+                self.update_tray()
+        if self._tray is not None:
+            self._tray.hide()
+        super().closeEvent(event)
+
+
+def _singleton_taken(key: str = "FungiGuiSingleton") -> bool:
+    """True when another process already holds the GUI singleton slot."""
+
+    shared = QSharedMemory(key)
+    return shared.attach() or not shared.create(1)
+
+
+def _activate_running_instance() -> bool:
+    """Second launch: ask the running GUI to show itself. True when delivered."""
+    sock = QLocalSocket()
+    sock.connectToServer(_GUI_IPC)
+    ok = sock.waitForConnected(500)
+    if ok:
+        sock.write(b"show")
+        sock.waitForBytesWritten(200)
+        sock.disconnectFromServer()
+    return ok
+
+
+def run_gui() -> int:
+    # QT_SCALE_FACTOR grows fonts, widgets and the window together (must be set
+    # before QApplication exists); AA_EnableHighDpiScaling lets Qt5 honor it.
+    os.environ.setdefault("QT_SCALE_FACTOR", str(GUI_SCALE))
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    app = QApplication(sys.argv)
+    # Single instance: a second launcher raises the running window instead
+    # (IPC ping). Without the guard, two GUI windows (each able to host a
+    # room) could coexist (2026-09-04 real-machine finding; tray-room mode
+    # had the same guard).
+    if _singleton_taken():
+        if _activate_running_instance():
+            print("Fungi GUI 已在运行：已唤起主界面。")
+        else:
+            QMessageBox.warning(None, "Fungi", "Fungi GUI 已在运行。")
+        return 0
+    win = FungiGui()
+    win.show()
+    return app.exec_()

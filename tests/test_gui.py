@@ -25,14 +25,14 @@ def window(qapp):
     # Unique pipe name: the user's real running Fungi owns the production
     # _GUI_IPC pipe (Windows serves clients from the OLDEST same-name server),
     # so a fixed name makes the second-launch test hit the wrong window.
-    gui._GUI_IPC, _real = "fungi-gui-test-" + uuid.uuid4().hex[:8], gui._GUI_IPC
+    gui.app._GUI_IPC, _real = "fungi-gui-test-" + uuid.uuid4().hex[:8], gui.app._GUI_IPC
     win = FungiGui()
     yield win
     # close() only hides the window: without this the QLocalServer keeps the
     # fixed _GUI_IPC pipe alive, the NEXT fixture window's listen silently
     # fails, and the second-launch test talks to a stale unpatched window.
     win._ipc_server.close()
-    gui._GUI_IPC = _real
+    gui.app._GUI_IPC = _real
     win.close()
 
 
@@ -104,7 +104,7 @@ def test_host_page_starts_server_in_process(window, monkeypatch):
         started.append((host, display, token, port))
         return object()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page.name_edit.setText("pc-alpha")
     page.nick_edit.setText("🌸花酱")
     page._start()
@@ -124,7 +124,7 @@ def test_host_page_self_heals_pure_cjk_name(window, monkeypatch):
         started.append((host, display))
         return FakeRoom()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page.name_edit.setText("小新")  # pure CJK: nothing sanitizable
     page.nick_edit.setText("")
     page._start()
@@ -143,7 +143,7 @@ def test_host_page_sanitizes_mixed_name(window, monkeypatch):
         started.append((host, display))
         return FakeRoom()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page.name_edit.setText("pc 阿新!")
     page.nick_edit.setText("🌸花酱")  # already set: must not be overwritten
     page._start()
@@ -155,7 +155,7 @@ def test_host_page_sanitizes_mixed_name(window, monkeypatch):
 def test_host_page_refreshes_ip(window, monkeypatch):
     page = window.host_page
     page.ip_edit.setText("192.168.1.10")
-    monkeypatch.setattr(gui, "lan_ip", lambda: "10.0.0.9")
+    monkeypatch.setattr(gui.net, "lan_ip", lambda: "10.0.0.9")
     page._refresh_ip()
     assert page.ip_edit.text() == "10.0.0.9"
     page._refresh_ip()  # unchanged: must not raise
@@ -185,7 +185,7 @@ def test_host_page_start_uses_custom_token(window, monkeypatch):
         started.append(token)
         return object()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page.name_edit.setText("pc-alpha")
     page.token_edit.setText("my-token_1")
     page._start()
@@ -251,8 +251,8 @@ def test_join_page_discovers_and_joins_in_process(window, monkeypatch):
         joined.append((host, display, url, token))
         return FakeRoom()
 
-    monkeypatch.setattr(gui, "discover_room", fake_discover)
-    monkeypatch.setattr(gui, "start_client_room", fake_client)
+    monkeypatch.setattr(gui.net, "discover_room", fake_discover)
+    monkeypatch.setattr(gui.net, "start_client_room", fake_client)
     page = window.join_page
     page.ip_edit.clear()  # a real join on this box may have restored last_ip from QSettings
     page.token_edit.setText("tok")  # IP left empty: auto-discovery fills it
@@ -281,8 +281,8 @@ def test_join_page_uses_typed_ip(window, monkeypatch):
         joined.append((host, display, url, token))
         return FakeRoom()
 
-    monkeypatch.setattr(gui, "probe_room_port", fake_probe)
-    monkeypatch.setattr(gui, "start_client_room", fake_client)
+    monkeypatch.setattr(gui.net, "probe_room_port", fake_probe)
+    monkeypatch.setattr(gui.net, "start_client_room", fake_client)
     page = window.join_page
     page.ip_edit.setText("192.168.1.20")  # typed/refilled IP: no subnet sweep
     page.token_edit.setText("tok")
@@ -299,22 +299,22 @@ def test_join_page_uses_typed_ip(window, monkeypatch):
 
 
 def test_local_subnet_hosts_covers_self(monkeypatch):
-    monkeypatch.setattr(gui, "lan_ip", lambda: "192.168.0.104")
+    monkeypatch.setattr(gui.net, "lan_ip", lambda: "192.168.0.104")
     hosts = gui.local_subnet_hosts()
     assert len(hosts) == 254 and hosts[0] == "192.168.0.1" and "192.168.0.104" in hosts
 
 
 def test_discover_room_finds_matching_host(monkeypatch):
-    monkeypatch.setattr(gui, "local_subnet_hosts", lambda: ["10.0.0.1", "10.0.0.2"])
+    monkeypatch.setattr(gui.net, "local_subnet_hosts", lambda: ["10.0.0.1", "10.0.0.2"])
     monkeypatch.setattr(
-        gui,
+        gui.net,
         "_port_open",
         lambda ip, port, timeout=gui.SWEEP_TIMEOUT: (
             (ip, port) == ("10.0.0.2", gui.GUI_PORT)
         ),
     )
     monkeypatch.setattr(
-        gui,
+        gui.net,
         "_room_accepts",
         lambda ip, port, token: (ip, port) == ("10.0.0.2", gui.GUI_PORT),
     )
@@ -322,9 +322,9 @@ def test_discover_room_finds_matching_host(monkeypatch):
 
 
 def test_discover_room_returns_none_when_absent(monkeypatch):
-    monkeypatch.setattr(gui, "local_subnet_hosts", lambda: ["10.0.0.1"])
+    monkeypatch.setattr(gui.net, "local_subnet_hosts", lambda: ["10.0.0.1"])
     monkeypatch.setattr(
-        gui,
+        gui.net,
         "_port_open",
         lambda ip, port, timeout=gui.SWEEP_TIMEOUT: False,
     )
@@ -339,8 +339,8 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
         rooms.append(FakeRoom())
         return rooms[-1]
 
-    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)
-    monkeypatch.setattr(gui, "start_client_room", fake_client)
+    monkeypatch.setattr(gui.net, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)
+    monkeypatch.setattr(gui.net, "start_client_room", fake_client)
     page.ip_edit.setText("192.168.1.20")
     page.token_edit.setText("tok")
     page._join()
@@ -357,8 +357,8 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
 
 
 def test_join_page_reports_scan_miss(window, monkeypatch):
-    monkeypatch.setattr(gui, "discover_room", lambda *_a, **_k: None)
-    monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
+    monkeypatch.setattr(gui.net, "discover_room", lambda *_a, **_k: None)
+    monkeypatch.setattr(gui.net, "start_client_room", lambda *_: pytest.fail("must not join"))
     page = window.join_page
     page.ip_edit.clear()  # module-scoped window: drop any leftover from other tests
     page.token_edit.setText("tok")  # empty IP: full subnet discovery
@@ -375,7 +375,7 @@ def test_join_page_reports_scan_miss(window, monkeypatch):
 
 def test_join_page_refresh_fills_ip(window, monkeypatch):
     page = window.join_page
-    monkeypatch.setattr(gui, "discover_room", lambda *_a, **_k: ("10.0.0.9", gui.GUI_PORT))
+    monkeypatch.setattr(gui.net, "discover_room", lambda *_a, **_k: ("10.0.0.9", gui.GUI_PORT))
     page.token_edit.setText("tok")
     page._refresh_ip()
     for _ in range(200):
@@ -426,7 +426,7 @@ def test_second_launch_activates_existing_window(window, monkeypatch):
     calls = []
     monkeypatch.setattr(window, "show_and_raise", lambda: calls.append(1))
     sock = QLocalSocket()
-    sock.connectToServer(gui._GUI_IPC)
+    sock.connectToServer(gui.app._GUI_IPC)
     assert sock.waitForConnected(1000)
     sock.write(b"show")
     sock.waitForBytesWritten(500)
@@ -451,7 +451,7 @@ def test_config_page_video_models_all_present_disables_download(
 ):
     """运行时全就绪 -> 按钮禁用, 状态行打勾 (不缺失禁用下载)."""
     page = window.cfg_page
-    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready())
+    monkeypatch.setattr("fungi.gui.config._video_ready", lambda: _ready())
     page._check_video_models()
     assert "✓" in page.video_status.text()
     assert "✗" not in page.video_status.text()
@@ -460,7 +460,7 @@ def test_config_page_video_models_all_present_disables_download(
 
 def test_config_page_video_models_missing_enables_download(window, monkeypatch):
     page = window.cfg_page
-    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(CLIP=False))
+    monkeypatch.setattr("fungi.gui.config._video_ready", lambda: _ready(CLIP=False))
     page._check_video_models()
     assert "✗" in page.video_status.text() and "CLIP" in page.video_status.text()
     assert page.download_btn.isEnabled()
@@ -470,7 +470,7 @@ def test_config_page_missing_dep_enables_download(window, monkeypatch):
     """模型都在但 huggingface_hub 没了 -> 状态行标 ✗, 按钮启用(可自愈)."""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready(huggingface_hub=False)
+        "fungi.gui.config._video_ready", lambda: _ready(huggingface_hub=False)
     )
     page._check_video_models()
     assert "huggingface_hub" in page.video_status.text()
@@ -482,7 +482,7 @@ def test_config_page_non_healable_missing_disables_download(window, monkeypatch)
     """torch/ffmpeg 缺失不可自愈: 状态行提示手动装, 按钮不给下载."""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready(torch=False, ffmpeg=False)
+        "fungi.gui.config._video_ready", lambda: _ready(torch=False, ffmpeg=False)
     )
     page._check_video_models()
     assert "torch" in page.video_status.text() and "手动安装" in page.video_status.text()
@@ -493,9 +493,9 @@ def test_config_page_download_runs_script_and_rechecks(window, monkeypatch):
     """点下载 -> Popen 脚本 + 轮询结束后自动复检并恢复按钮可用性。"""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready(CLIP=False, whisper=False)
+        "fungi.gui.config._video_ready", lambda: _ready(CLIP=False, whisper=False)
     )
-    monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: False)
+    monkeypatch.setattr("fungi.gui.config._hf_hub_missing", lambda: False)
     page._check_video_models()
 
     spawned = []
@@ -517,7 +517,7 @@ def test_config_page_download_runs_script_and_rechecks(window, monkeypatch):
 
     # 下载结束后的复检, 两个模型都已就绪
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready()
+        "fungi.gui.config._video_ready", lambda: _ready()
     )
     page._poll_download()
     assert page._dl_proc is None
@@ -530,9 +530,9 @@ def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
     """缺 huggingface_hub: 先 pip 装依赖, 成功后自动接下载脚本, 全程一次点击。"""
     page = window.cfg_page
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready(CLIP=False, whisper=False)
+        "fungi.gui.config._video_ready", lambda: _ready(CLIP=False, whisper=False)
     )
-    monkeypatch.setattr("fungi.gui._hf_hub_missing", lambda: True)
+    monkeypatch.setattr("fungi.gui.config._hf_hub_missing", lambda: True)
 
     spawned = []
 
@@ -554,7 +554,7 @@ def test_config_page_download_installs_missing_dep_first(window, monkeypatch):
     assert len(spawned) == 2 and spawned[1][-1].endswith("download_video_models.py")
     assert "VidSense" in page.video_status.text()
     monkeypatch.setattr(
-        "fungi.gui._video_ready", lambda: _ready()
+        "fungi.gui.config._video_ready", lambda: _ready()
     )
     page._poll_download()  # 模型下完 -> 复检就绪并禁用按钮
     assert not page._dl_timer.isActive()
@@ -572,13 +572,13 @@ def test_config_page_frozen_exe_falls_back_to_path_python(monkeypatch):
 def test_config_page_download_btn_hidden_when_nothing_to_heal(window, monkeypatch):
     """用户定调: 没有可自愈缺失 -> 下载按钮整体隐藏 (不是灰着)。"""
     page = window.cfg_page
-    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready())
+    monkeypatch.setattr("fungi.gui.config._video_ready", lambda: _ready())
     page._check_video_models()
     assert not page.download_btn.isVisibleTo(page)
-    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(torch=False))
+    monkeypatch.setattr("fungi.gui.config._video_ready", lambda: _ready(torch=False))
     page._check_video_models()
     assert not page.download_btn.isVisibleTo(page)  # 不可自愈 -> 也不给按钮
-    monkeypatch.setattr("fungi.gui._video_ready", lambda: _ready(CLIP=False))
+    monkeypatch.setattr("fungi.gui.config._video_ready", lambda: _ready(CLIP=False))
     page._check_video_models()
     assert page.download_btn.isVisibleTo(page)  # 有可自愈缺失 -> 出现
 
@@ -669,7 +669,7 @@ def test_enter_starts_room_from_either_field(window, monkeypatch):
         started.append((host, display))
         return object()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page = window.host_page
     page.name_edit.setText("pc-alpha")
     page.nick_edit.setText("花酱")
@@ -688,8 +688,8 @@ def test_enter_joins_room_and_ignores_a_press_mid_scan(window, monkeypatch):
     def fake_discover(token):
         scans.append(token)
 
-    monkeypatch.setattr(gui, "discover_room", fake_discover)
-    monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
+    monkeypatch.setattr(gui.net, "discover_room", fake_discover)
+    monkeypatch.setattr(gui.net, "start_client_room", lambda *_: pytest.fail("must not join"))
     page = window.join_page
     page.ip_edit.clear()
     page.token_edit.setText("tok")
@@ -710,8 +710,8 @@ def test_enter_saves_config_from_any_field(window, monkeypatch):
     """设置页三个输入框：回车 = 点「保存配置」（含保存后清空三格的行为）。"""
     saved = []
     cfg = gui.load_config()
-    monkeypatch.setattr(gui, "load_config", lambda path=None: cfg)
-    monkeypatch.setattr(gui, "save_config", lambda c, path=None: saved.append(c))
+    monkeypatch.setattr("fungi.config.load_config", lambda path=None: cfg)
+    monkeypatch.setattr("fungi.config.save_config", lambda c, path=None: saved.append(c))
     page = window.cfg_page
     page.key_edit.setText("sk-enter-key")
     QTest.keyClick(page.key_edit, Qt.Key_Return)
@@ -731,8 +731,8 @@ def test_ctrl_enter_saves_courier_memory(window, monkeypatch):
     """信使页记忆是多行文本：回车留给换行，Ctrl+Enter 才是保存。"""
     saved = []
     cfg = gui.load_config()
-    monkeypatch.setattr(gui, "load_config", lambda path=None: cfg)
-    monkeypatch.setattr(gui, "save_config", lambda c, path=None: saved.append(c))
+    monkeypatch.setattr("fungi.config.load_config", lambda path=None: cfg)
+    monkeypatch.setattr("fungi.config.save_config", lambda c, path=None: saved.append(c))
     page = window.courier_page
     assert page.memory_save_sc.key() == QKeySequence("Ctrl+Return")
     page.memory_edit.setPlainText("工作日 8:00-17:00 在上课")
@@ -750,6 +750,36 @@ def test_ctrl_enter_accepts_day_dialog():
     assert dlg.items() == ["出去玩", "去咖啡店"]
 
 
+def test_calendar_day_click_records_entries(window, monkeypatch):
+    """日历录入走通到 todos：点某天 -> 对话框 -> 写入 -> 那天亮起。
+
+    拆包后这页自己拿 todos（from .. import todos），所以打在 todos 模块上。
+    """
+    from fungi import todos as todos_mod
+
+    page = window.courier_page
+    iso = sorted(page._buttons)[0]
+    saved, loaded = [], []
+
+    class FakeDialog:
+        def __init__(self, *_a, **_k):
+            pass
+
+        def exec_(self):
+            return 1  # accepted
+
+        def items(self):
+            return ["六点老地方见"]
+
+    monkeypatch.setattr(todos_mod, "set_day", lambda day, items: saved.append((day, items)))
+    monkeypatch.setattr(todos_mod, "load", lambda: (loaded.append(1), {})[1])
+    monkeypatch.setattr(gui.courier, "_DayDialog", FakeDialog)
+
+    page._open_day(iso)
+    assert saved == [(iso, ["六点老地方见"])]
+    assert loaded, "the page must repaint after recording a day"
+
+
 def test_enter_in_token_field_launches_the_room(window, monkeypatch):
     """发起房间页 Token 里按回车 = 发起房间（未开房时没有活动 token 可热更）。
 
@@ -761,7 +791,7 @@ def test_enter_in_token_field_launches_the_room(window, monkeypatch):
         started.append(token)
         return object()
 
-    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    monkeypatch.setattr(gui.net, "start_server_room", fake_start)
     page = window.host_page
     page.room = None
     page._set_started(False)
@@ -775,7 +805,7 @@ def test_enter_in_token_field_launches_the_room(window, monkeypatch):
 
 def test_token_focus_out_never_launches_the_room(window, monkeypatch):
     """移开焦点只提交 token：切页面/点别处不许把房间开起来。"""
-    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not start"))
+    monkeypatch.setattr(gui.net, "start_server_room", lambda *_: pytest.fail("must not start"))
     page = window.host_page
     page.room = None
     page.token_edit.setText("probe-token-2")
@@ -815,7 +845,7 @@ def _running_room(host="pc-alpha", display="花酱"):
 
 def test_enter_in_host_nickname_renames_the_running_room(window, monkeypatch):
     """用户要的：开房后昵称那格按回车＝即时改名（像 Token 热更一样）。"""
-    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
+    monkeypatch.setattr(gui.net, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
     page = window.host_page
     room = _running_room()
     page.room = room
@@ -831,7 +861,7 @@ def test_enter_in_host_nickname_renames_the_running_room(window, monkeypatch):
 
 def test_enter_in_host_wire_name_is_refused_while_running(window, monkeypatch):
     """wire 身份开房后固定：回车不许静默失败，也不许改成别的名字。"""
-    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
+    monkeypatch.setattr(gui.net, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
     page = window.host_page
     room = _running_room()
     page.room = room
