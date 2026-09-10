@@ -44,7 +44,7 @@ jobs:
         run: >
           python -m PyInstaller --noconfirm --noconsole --name Fungi start.py
           --add-data "web;web" --add-data "pyproject.toml;."
-          --collect-all qfluentwidgets --collect-all vidsense
+          --collect-all qfluentwidgets --collect-all vidsense --collect-all segno
           --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6
           --exclude-module shiboken2 --exclude-module shiboken6
 

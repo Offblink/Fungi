@@ -70,6 +70,48 @@ def test_three_pages_present(window):
     window.host_page._set_started(False)
 
 
+def test_mobile_page_keeps_the_url_when_the_qr_dependency_is_missing(window, monkeypatch):
+    """2026-09-10 用户报告：二维码报错「缺少依赖 segno」。缺依赖时页面必须仍然可用——
+    地址照填（手机手输也能进）+ 一键安装，而不是只留一句报错就返回。"""
+    import sys
+
+    from fungi.server import WEBUI_TOKEN
+
+    page = window.mobile_page
+
+    class FakeWebRoom:
+        def open_webui(self, open_browser=True):
+            return "http://localhost:12345"
+
+    window.host_page.room = FakeWebRoom()
+    monkeypatch.setitem(sys.modules, "segno", None)  # `import segno` -> ImportError
+    try:
+        page.refresh()
+        assert page.url_edit.text() == f"http://{gui.lan_ip()}:12345/m?t={WEBUI_TOKEN}"
+        assert "segno" in page.qr_label.text()
+        assert page.qr_dep_btn.isVisibleTo(page)
+
+        started: list[list[str]] = []
+
+        class FakePopen:
+            returncode = 0
+
+            def __init__(self, cmd, **_kw):
+                started.append(list(cmd))
+
+            def poll(self):
+                return 0
+
+        monkeypatch.setattr(gui.subprocess, "Popen", FakePopen)
+        page.qr_dep_btn.click()
+        assert started and started[0][1:3] == ["-m", "pip"] and started[0][-1] == "segno"
+    finally:
+        page._dep_timer.stop()
+        page._dep_proc = None
+        window.host_page.room = None
+        page.refresh()  # segno 仍在 monkeypatch 里：这里只清干净，隐藏断言放在有依赖的用例
+
+
 def test_mobile_page_renders_qr_for_running_room(window):
     from fungi.server import WEBUI_TOKEN
 
@@ -90,6 +132,7 @@ def test_mobile_page_renders_qr_for_running_room(window):
         )
         pm = page.qr_label.pixmap()
         assert pm is not None and not pm.isNull()
+        assert not page.qr_dep_btn.isVisibleTo(page)  # 依赖在 → 不给安装按钮
     finally:
         window.host_page.room = None
         page.refresh()
