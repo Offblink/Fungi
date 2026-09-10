@@ -12,7 +12,7 @@ from fungi.consent_rules import ConsentRules
 from fungi.events import NullSink
 from fungi.hub.app import Hub
 from fungi.protocol import Envelope
-from fungi.room import RoomClient, RoomRuntime, RoomServer
+from fungi.room import RoomClient, RoomRuntime, RoomServer, merge_comm_history
 
 CFG = Config(api_key="k", endpoint="e", model="m")  # assembly reads max_file_mb/inbox_dir
 LLM = object()
@@ -111,6 +111,37 @@ def test_server_ask_becomes_card_and_answer_envelope_flows(server_room):
     answers = [m for m in msgs if m.type == "answer" and m.reply_to == ask.id]
     assert answers and answers[0].body == {"value": "yes"}
     assert room.hub.asks.get(ask.id)["status"] == "answered"
+
+
+def test_comm_history_merge_drops_the_abstention_marker():
+    """`<<SILENT>>` is a delivery control token, and a browser renders the
+    leftover marker as `<>` (HTML eats the unknown tag). It must not reach the
+    stored transcript — and a row that carried real work keeps that work."""
+    stored = [{"role": "user", "content": "早", "ts": 1.0}]
+    fresh = [
+        {"role": "user", "content": "早"},
+        {"role": "assistant", "content": "<<SILENT>>"},
+        {"role": "assistant", "content": "好 <<SILENT>>", "reasoning": "想好了"},
+    ]
+    merged = merge_comm_history(stored, fresh, ts=2.0)
+    assert [m["content"] for m in merged] == ["早", "好"]
+    assert merged[0]["ts"] == 1.0  # the stored row keeps the stamp it had
+    assert "<<SILENT>>" not in json.dumps(merged)
+
+
+def test_comm_history_merge_keeps_rows_the_clone_forgot(server_room):
+    """A clone rebuilt after its peer dropped off the roster comes back with an
+    empty history: the stored transcript must be carried forward, marker rows
+    and all stripped on both sides so the alignment still lines up."""
+    stored = [
+        {"role": "user", "content": "早", "ts": 1.0},
+        {"role": "assistant", "content": "<<SILENT>>", "ts": 1.5},
+        {"role": "user", "content": "在吗", "ts": 2.0},
+    ]
+    assert merge_comm_history(stored, [], ts=3.0) == [
+        {"role": "user", "content": "早", "ts": 1.0},
+        {"role": "user", "content": "在吗", "ts": 2.0},
+    ]
 
 
 def test_answered_card_verdict_persists_to_comm_transcript(server_room):
@@ -521,10 +552,16 @@ def test_chat_turn_with_cumulative_history_does_not_duplicate(server_room):
     ]
     room._record_comm_turn("beta", "chat", first, FakeAgent)
     stamped = room.webui_runtime().comm_log("beta")["messages"]
-    room._record_comm_turn("beta", "chat", first + [
-        {"role": "user", "content": "[beta:comm-alpha] three"},
-        {"role": "assistant", "content": "four"},
-    ], FakeAgent)
+    room._record_comm_turn(
+        "beta",
+        "chat",
+        [
+            *first,
+            {"role": "user", "content": "[beta:comm-alpha] three"},
+            {"role": "assistant", "content": "four"},
+        ],
+        FakeAgent,
+    )
 
     msgs = room.webui_runtime().comm_log("beta")["messages"]
     assert [m["content"] for m in msgs] == ["sys", "[beta:comm-alpha] one", "two",

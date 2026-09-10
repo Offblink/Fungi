@@ -26,7 +26,7 @@ from pathlib import Path
 from .agent import Agent
 from .cards import AskCards
 from .clone.base import Clone, LocalTransport, RemoteTransport
-from .clone.comm import build_comm_clone
+from .clone.comm import SILENT_REPLY, build_comm_clone
 from .clone.local import build_local_clone
 from .config import PROJECT_ROOT, Config, load_config
 from .consent_rules import ConsentRules
@@ -65,6 +65,31 @@ def _comparable(msgs: list[dict]) -> list[dict]:
     return [{k: v for k, v in m.items() if k != "ts"} for m in msgs]
 
 
+def _drop_silent(msgs: list[dict]) -> list[dict]:
+    """Transcript rows with the courier's abstention marker removed.
+
+    `<<SILENT>>` is a delivery control token (clone/comm.SILENT_REPLY): when the
+    courier has nothing to say, the bare marker suppresses the reply. It is not
+    something to read later — and the browser renders the leftover marker as
+    `<>`, because HTML throws the unknown tag away (2026-09-10 user report).
+
+    Both sides of `merge_comm_history` go through this, so a stripped stored row
+    still lines up with the clone's copy of it; a row whose only content was the
+    marker keeps its reasoning/tool calls and loses the empty bubble.
+    """
+    out = []
+    for m in msgs:
+        content = m.get("content")
+        if not isinstance(content, str) or SILENT_REPLY not in content:
+            out.append(m)
+            continue
+        stripped = content.replace(SILENT_REPLY, "").strip()
+        if not stripped and not m.get("tool_calls") and not m.get("reasoning"):
+            continue  # a turn that only said "nothing" leaves no row at all
+        out.append({**m, "content": stripped or None})
+    return out
+
+
 def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = None) -> list[dict]:
     """Transcript body (system prompt excluded) after a chat turn.
 
@@ -78,13 +103,13 @@ def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = N
     transcript with the timestamped ask/event/mail rows by that stamp.
     """
     now = time.time() if ts is None else ts
-    stored = [m for m in prev if m.get("role") != "system"]
-    carried = [m for m in fresh if m.get("role") != "system"]
+    stored = _drop_silent([m for m in prev if m.get("role") != "system"])
+    carried = _drop_silent([m for m in fresh if m.get("role") != "system"])
     stored_c, carried_c = _comparable(stored), _comparable(carried)
     # Align the stored transcript with the clone's history (it grows at the end):
     # a row the clone still carries keeps the ts it was first stamped with.
     merged, si = [], 0
-    for row, comp in zip(carried, carried_c):
+    for row, comp in zip(carried, carried_c, strict=False):
         if si < len(stored_c) and comp == stored_c[si]:
             merged.append({**row, "ts": stored[si].get("ts", now)})
             si += 1
@@ -96,7 +121,7 @@ def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = N
     # carry them forward instead of overwriting the user's conversation.
     remaining = list(carried_c)
     keep = []
-    for row, comp in zip(stored, stored_c):
+    for row, comp in zip(stored, stored_c, strict=False):
         if comp in remaining:
             remaining.remove(comp)  # the clone still has this row: fresh carries it
         else:
@@ -335,7 +360,10 @@ class RoomBase:
                     msgs = head + merge_comm_history(prev.get("messages") or [], messages, ts)
                 else:
                     msgs = [m for m in prev.get("messages") or [] if m.get("role") != "system"]
-                    msgs += [{**m, "ts": ts} for m in messages if m.get("role") != "system"]
+                    msgs += [
+                        {**m, "ts": ts}
+                        for m in _drop_silent([m for m in messages if m.get("role") != "system"])
+                    ]
                     msgs.insert(0, messages[0])
                 subs = list(prev.get("subagents") or [])
                 new_subs = getattr(agent, "subagents", None)
