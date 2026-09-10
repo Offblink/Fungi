@@ -217,7 +217,7 @@ def tool_video(
                 if os.name == "nt":
                     subprocess.run(
                         ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                        capture_output=True,
+                        check=False, capture_output=True,
                         timeout=10,
                     )
                 else:

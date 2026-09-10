@@ -16,7 +16,7 @@ from fungi import update
 def test_local_version_reads_pyproject():
     # reads the real pyproject.toml; compare against the file, never a pinned
     # version (that broke the suite on every release bump)
-    with open("pyproject.toml", "rb") as fh:
+    with Path("pyproject.toml").open("rb") as fh:
         expected = tomllib.load(fh)["project"]["version"]
     assert update.local_version() == expected
 

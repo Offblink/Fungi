@@ -21,7 +21,7 @@ from fungi.gui import FungiGui, valid_host_name
 
 
 @pytest.fixture(scope="module")
-def window(qapp):  # noqa: ARG001 (Qt app fixture)
+def window(qapp):
     # Unique pipe name: the user's real running Fungi owns the production
     # _GUI_IPC pipe (Windows serves clients from the OLDEST same-name server),
     # so a fixed name makes the second-launch test hit the wrong window.
@@ -120,7 +120,7 @@ def test_host_page_self_heals_pure_cjk_name(window, monkeypatch):
     page = window.host_page
     started = []
 
-    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
+    def fake_start(host, display, token, port):
         started.append((host, display))
         return FakeRoom()
 
@@ -139,7 +139,7 @@ def test_host_page_sanitizes_mixed_name(window, monkeypatch):
     page = window.host_page
     started = []
 
-    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
+    def fake_start(host, display, token, port):
         started.append((host, display))
         return FakeRoom()
 
@@ -273,7 +273,7 @@ def test_join_page_discovers_and_joins_in_process(window, monkeypatch):
 def test_join_page_uses_typed_ip(window, monkeypatch):
     joined = []
 
-    def fake_probe(ip, token, start=gui.GUI_PORT, limit=gui.PORT_SCAN_LIMIT):  # noqa: ARG001
+    def fake_probe(ip, token, start=gui.GUI_PORT, limit=gui.PORT_SCAN_LIMIT):
         assert ip == "192.168.1.20" and token == "tok"
         return gui.GUI_PORT + 3
 
@@ -309,14 +309,14 @@ def test_discover_room_finds_matching_host(monkeypatch):
     monkeypatch.setattr(
         gui,
         "_port_open",
-        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: (  # noqa: ARG005
+        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: (
             (ip, port) == ("10.0.0.2", gui.GUI_PORT)
         ),
     )
     monkeypatch.setattr(
         gui,
         "_room_accepts",
-        lambda ip, port, token: (ip, port) == ("10.0.0.2", gui.GUI_PORT),  # noqa: ARG005
+        lambda ip, port, token: (ip, port) == ("10.0.0.2", gui.GUI_PORT),
     )
     assert gui.discover_room("tok") == ("10.0.0.2", gui.GUI_PORT)
 
@@ -326,7 +326,7 @@ def test_discover_room_returns_none_when_absent(monkeypatch):
     monkeypatch.setattr(
         gui,
         "_port_open",
-        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: False,  # noqa: ARG005
+        lambda ip, port, timeout=gui.SWEEP_TIMEOUT: False,
     )
     assert gui.discover_room("tok") is None
 
@@ -335,11 +335,11 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
     page = window.join_page
     rooms = []
 
-    def fake_client(host, display, url, token):  # noqa: ARG001 (fakes ignore args)
+    def fake_client(host, display, url, token):
         rooms.append(FakeRoom())
         return rooms[-1]
 
-    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)  # noqa: ARG005
+    monkeypatch.setattr(gui, "probe_room_port", lambda *a, **k: gui.GUI_PORT + 3)
     monkeypatch.setattr(gui, "start_client_room", fake_client)
     page.ip_edit.setText("192.168.1.20")
     page.token_edit.setText("tok")
@@ -665,7 +665,7 @@ def test_enter_starts_room_from_either_field(window, monkeypatch):
     """主机名 / 昵称里按回车 = 点「发起房间」（这两个值只在发起时读）。"""
     started = []
 
-    def fake_start(host, display, token, port):  # noqa: ARG001 (fakes ignore token/port)
+    def fake_start(host, display, token, port):
         started.append((host, display))
         return object()
 
@@ -687,7 +687,6 @@ def test_enter_joins_room_and_ignores_a_press_mid_scan(window, monkeypatch):
 
     def fake_discover(token):
         scans.append(token)
-        return None  # 未找到：_finish_join 会把按钮放回可用
 
     monkeypatch.setattr(gui, "discover_room", fake_discover)
     monkeypatch.setattr(gui, "start_client_room", lambda *_: pytest.fail("must not join"))
@@ -807,7 +806,7 @@ def _running_room(host="pc-alpha", display="花酱"):
         def stop(self):
             pass
 
-        def open_webui(self, open_browser=True):  # noqa: ARG002
+        def open_webui(self, open_browser=True):
             return "http://localhost:1"
 
     Room.calls = []

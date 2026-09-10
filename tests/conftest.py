@@ -116,9 +116,9 @@ def qapp():
     with it and the next module that builds fluent widgets dies with
     "wrapped C/C++ object of type QConfig has been deleted" (or crashes).
     """
-    import os  # noqa: PLC0415 (test helper)
+    import os
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt5.QtWidgets import QApplication  # noqa: PLC0415
+    from PyQt5.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])

@@ -311,6 +311,6 @@ def test_ask_sweep_outlasts_every_waiter():
     from fungi.tools.ask import ASK_TIMEOUT_S
 
     consent_wait = inspect.signature(build_comm_clone).parameters["ask_timeout_s"].default
-    assert ASK_TIMEOUT > max(ASK_TIMEOUT_S, consent_wait), (
+    assert max(ASK_TIMEOUT_S, consent_wait) < ASK_TIMEOUT, (
         f"sweep {ASK_TIMEOUT} must outlast inquire {ASK_TIMEOUT_S} and consent {consent_wait}"
     )

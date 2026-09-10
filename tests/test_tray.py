@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import QSystemTrayIcon
 from fungi.tray import TrayController
 
 
-def test_activation_and_message_click_open_webui(qapp):  # noqa: ARG001 (Qt app fixture)
+def test_activation_and_message_click_open_webui(qapp):
     clicks = []
     tray = TrayController(on_open_webui=lambda: clicks.append(1))
     tray._on_activated(QSystemTrayIcon.Trigger)
@@ -24,7 +24,7 @@ def test_activation_and_message_click_open_webui(qapp):  # noqa: ARG001 (Qt app 
     tray.hide()
 
 
-def test_context_menu_click_does_not_open_webui(qapp):  # noqa: ARG001 (Qt app fixture)
+def test_context_menu_click_does_not_open_webui(qapp):
     clicks = []
     tray = TrayController(on_open_webui=lambda: clicks.append(1))
     tray._on_activated(QSystemTrayIcon.Context)  # pops the fluent menu instead

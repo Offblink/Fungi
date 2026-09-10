@@ -129,7 +129,9 @@ def test_trailing_comma_args_are_repaired(tmp_path):
     target = tmp_path / "f.txt"
     target.write_text("data", encoding="utf-8")
     results = [
-        LLMResult(tool_calls=[tool_call("read", '{"path": "%s",}' % str(target).replace("\\", "\\\\"))]),
+        LLMResult(
+            tool_calls=[tool_call("read", '{"path": "' + str(target).replace("\\", "\\\\") + '",}')]
+        ),
         LLMResult(content="done"),
     ]
     agent, _fake, _events = make_agent(results)
@@ -294,8 +296,8 @@ def test_should_abort_passed_to_stream_chat(monkeypatch):
         _messages,
         _tool_defs,
         _on_delta=None,
-        should_abort=None,
-        max_tokens=None,  # noqa: ARG001 (fake must accept stream_chat kwarg names)
+        should_abort=None,  # both are stream_chat kwargs: the fake must accept them
+        max_tokens=None,
     ):
         seen.append(should_abort)
         return LLMResult(content="ok")

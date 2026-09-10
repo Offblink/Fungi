@@ -6,6 +6,9 @@ requires-python = ">=3.13"
 dependencies = ["segno>=1.6", "pillow>=10.0"]
 
 [project.optional-dependencies]
+# Dev tooling. The ruff pin is read by CI (.github/workflows/ci.yml) — a ruff
+# release that changes a rule must not be able to redden an untouched tree.
+dev = ["pytest", "ruff==0.13.0"]
 # Qt is needed by the GUI and the tray only (gui.py / tray.py import PyQt5 +
 # qfluentwidgets at module scope; __main__.py lazily in room mode). Every
 # headless path — CLI single-shot, hub/server, WebUI runtime, and CI (where the
@@ -63,3 +66,10 @@ testpaths = ["tests"]
 "fungi/tray.py" = ["RUF001", "RUF002", "RUF003"]
 "fungi/update.py" = ["RUF001", "RUF002", "RUF003"]
 "fungi/gui.py" = ["RUF001", "RUF002", "RUF003"]
+# …and so is the Chinese prose inside the prompts the courier/local agents get
+"fungi/clone/comm.py" = ["RUF001"]
+"fungi/tools/ask.py" = ["RUF001"]
+# Tests: Chinese docstrings and test data (RUF00x), deferred imports of optional
+# deps and fixtures (PLC0415), unused fixture/lambda arguments (ARG*), and
+# class-level lookup tables (RUF012) are all deliberate test idioms here.
+"tests/**" = ["RUF001", "RUF002", "RUF003", "PLC0415", "ARG001", "ARG002", "ARG005", "RUF012"]

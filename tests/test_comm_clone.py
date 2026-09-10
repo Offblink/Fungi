@@ -299,8 +299,8 @@ def test_courier_memory_config_roundtrip(tmp_path):
 
 def test_courier_calendar_injected(monkeypatch):
     """GUI 日历待办进入信使 prompt（overdue + 未来 21 天）。"""
-    from fungi import todos as todos_mod
     from fungi import config as config_mod
+    from fungi import todos as todos_mod
 
     monkeypatch.setattr(config_mod, "load_config", lambda path=None: CFG)
     orig = todos_mod.load

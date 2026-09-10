@@ -31,13 +31,13 @@ class _FakeTransport:
     def send(self, env):
         self.sent.append(env)
 
-    def poll(self, after, timeout):  # noqa: ARG002
+    def poll(self, after, timeout):
         return [], after
 
-    def fs(self, op, path, **kw):  # noqa: ARG002
+    def fs(self, op, path, **kw):
         return {"error": "no hub"}
 
-    def download_transfer(self, transfer_id, dest):  # noqa: ARG002
+    def download_transfer(self, transfer_id, dest):
         dest.write_text("bytes")
 
 
@@ -94,7 +94,7 @@ def test_comm_send_human_transfer_stages_and_sends(tmp_path):
     transport = _wire_clone(room)
     src = tmp_path / "plan.txt"
     src.write_text("hello")
-    transport.upload_transfer = lambda path, name, to_host: {  # noqa: ARG005
+    transport.upload_transfer = lambda path, name, to_host: {
         "id": "t9", "name": name, "size": src.stat().st_size
     }
     out = room.comm_send_human("bob", file_path=str(src))
@@ -181,7 +181,7 @@ def test_courier_off_human_transfer_card_names_the_human(tmp_path, monkeypatch):
 
 def test_courier_on_render_input_attributes_the_human():
     cfg = config_mod.Config()
-    clone = Clone("alice:comm-bob", _FakeTransport(), cfg, sink=lambda *a, **k: None)  # noqa: ARG005
+    clone = Clone("alice:comm-bob", _FakeTransport(), cfg, sink=lambda *a, **k: None)
     env = Envelope(src="bob:comm-alice", dst="alice:comm-bob", type="chat",
                    body={"text": "在吗", "from_human": True, "sender_name": "阿宝"})
     assert clone.render_input(env) == "[来自 阿宝 的用户] 在吗"
@@ -217,7 +217,7 @@ class _Scripted:
     def __init__(self, results):
         self.results = list(results)
 
-    def __call__(self, _messages, tool_defs):  # noqa: ARG002
+    def __call__(self, _messages, tool_defs):
         if self.results:
             return self.results.pop(0)
         return LLMResult(content="(idle)")
@@ -386,7 +386,7 @@ def test_courier_wake_answers_the_human_end_to_end(tmp_path, monkeypatch):
 
         def __call__(self, _messages, _tool_defs):
             self.calls += 1
-            return LLMResult(content="收到，我在" if self.calls == 1 else "<<SILENT>>")  # noqa: RUF001
+            return LLMResult(content="收到，我在" if self.calls == 1 else "<<SILENT>>")
 
     try:
         assert _wait(lambda: server._clones.get("beta") is not None)
@@ -395,7 +395,7 @@ def test_courier_wake_answers_the_human_end_to_end(tmp_path, monkeypatch):
         assert server.comm_send_human("beta", text="在吗")["ok"]
         assert _wait(
             lambda: any(
-                "收到，我在" in str(m.get("content"))  # noqa: RUF001
+                "收到，我在" in str(m.get("content"))
                 for m in ((server._comm_store.load("comm-beta") or {}).get("messages") or [])
             ),
             timeout_s=20.0,

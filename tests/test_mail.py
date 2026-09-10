@@ -128,19 +128,19 @@ class _FakeTransport:
     def send(self, env):
         self.sent.append(env)
 
-    def poll(self, after, timeout):  # noqa: ARG002
+    def poll(self, after, timeout):
         return [], after
 
-    def fs(self, op, path, **kw):  # noqa: ARG002
+    def fs(self, op, path, **kw):
         return {"error": "no hub"}
 
-    def download_transfer(self, transfer_id, dest):  # noqa: ARG002
+    def download_transfer(self, transfer_id, dest):
         dest.write_text("bytes")
 
 
 def _clone(on_direct):
     cfg = config_mod.Config()
-    return Clone("alice:comm-bob", _FakeTransport(), cfg, sink=lambda *a, **k: None,  # noqa: ARG005
+    return Clone("alice:comm-bob", _FakeTransport(), cfg, sink=lambda *a, **k: None,
                  on_direct=on_direct)
 
 
@@ -154,7 +154,7 @@ def test_dispatch_courier_off_direct_eats_chat():
 
 
 def test_dispatch_courier_on_queues_turn():
-    c = _clone(lambda env: False)  # noqa: ARG005
+    c = _clone(lambda env: False)
     c.dispatch(Envelope(src="bob:comm-alice", dst="alice:comm-bob", type="chat",
                         body={"text": "hello"}))
     assert not c._work.empty()

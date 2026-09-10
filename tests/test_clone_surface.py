@@ -39,10 +39,10 @@ class SpyTransport:
         self.sent.append(env)
         return {"ok": True}
 
-    def poll(self, after: int, timeout: float) -> tuple[list[Envelope], int]:  # noqa: ARG002
+    def poll(self, after: int, timeout: float) -> tuple[list[Envelope], int]:
         return [], after
 
-    def fs(self, op: str, path: str, **kw) -> dict:  # noqa: ARG002
+    def fs(self, op: str, path: str, **kw) -> dict:
         return {"error": "no hub attached"}
 
 
@@ -137,7 +137,7 @@ def test_chat_reply_goes_through_send_peer_only():
     transport = SpyTransport()
 
     class SendPeerLLM:
-        def __call__(self, messages: list[dict], tool_defs: list[dict]) -> LLMResult:  # noqa: ARG002
+        def __call__(self, messages: list[dict], tool_defs: list[dict]) -> LLMResult:
             return LLMResult(
                 content="",
                 tool_calls=[

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from .. import config as config_mod
 from .. import todos
 from ..agent import Agent  # noqa: F401 (re-exported type)
 from ..config import Config
@@ -57,8 +58,10 @@ def build_comm_clone(
         """Message-courier prompt, re-read per turn: the GUI memory entry
         (config.courier_memory) and the calendar (todos.upcoming) apply to
         the next incoming chat, live."""
-        from ..config import load_config  # noqa: PLC0415 — re-read per turn, like the courier switch
-        memory = (load_config().courier_memory or "").strip()
+        # Read THROUGH the module: the courier re-reads the config every turn,
+        # so a GUI edit applies to the next incoming message (and a caller that
+        # swaps `config.load_config` — tests do — is honoured).
+        memory = (config_mod.load_config().courier_memory or "").strip()
         entries = todos.upcoming()
         calendar = ""
         if entries:

@@ -284,8 +284,8 @@ def test_layer_models_route_to_stream_chat(monkeypatch):
         messages,
         _tool_defs,
         _on_delta=None,
-        should_abort=None,  # noqa: ARG001 (fake must accept stream_chat kwarg names)
-        max_tokens=None,  # noqa: ARG001 (same)
+        should_abort=None,  # both are stream_chat kwargs: the fake must accept them
+        max_tokens=None,
     ):
         models_seen.append(model)
         system = messages[0]["content"]

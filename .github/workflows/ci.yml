@@ -1,10 +1,9 @@
 name: CI
 
-# pytest is the only CI gate. Ruff stays a local-only gate (scripts/check.ps1):
-# the last ruff version the tree formatted clean with is unknown — 0.15.15
-# reports 23 check errors / 14 reformats, 0.11–0.13 all report 16 reformats,
-# 0.8.6/0.9.0 were never confirmed. Do not add a ruff step until the tree is
-# reformatted against a pinned version and committed intentionally.
+# pytest is the gate. Ruff (check only, never format) runs against the version
+# pinned in pyproject's dev extra: a ruff release that changes a rule must not be
+# able to redden an untouched tree. The tree is check-clean as of 2026-09-10, so
+# this is a whole-tree check — no changed-files diff to get subtly wrong.
 
 on:
   push:
@@ -28,8 +27,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pillow
+          # the ruff pin lives in pyproject [dev] — read it instead of repeating it here
+          python -c "import pathlib,re;print(re.search(r'ruff==[0-9.]+',pathlib.Path('pyproject.toml').read_text('utf-8')).group(0))" > pin.txt
+          python -m pip install -r pin.txt
 
       # GUI/tray tests call pytest.importorskip on qfluentwidgets/PyQt5, which is
       # not installed here — they skip gracefully; everything else is stdlib.
+      # The web tests need playwright + a browser and skip the same way.
+      - name: Lint
+        run: python -m ruff check
+
       - name: Run tests
         run: python -m pytest tests -q
