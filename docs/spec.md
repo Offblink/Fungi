@@ -338,3 +338,35 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   的行沿用存储副本（保 ts），被遗忘的行前置携带，新增行追加；任务分支本就是追加。回归测试：
   `test_chat_turn_after_a_clone_rebuild_keeps_the_earlier_transcript`、
   `test_chat_turn_with_cumulative_history_does_not_duplicate`、`test_ask_record_carries_its_tool_call_id`。
+
+## 19. 增补（2026-09-10 深夜）：消息时间标签、好友视图分侧、设置页预填、转录合并的身份判据
+
+同一夜的四件现场事（用户报告为准）+ 一件事故善后：
+
+- **每条消息悬停显示发送时间**（用户要求）：`common.js::whenLabel(ts)` 把 ts 说成人话——今天/昨天/前天，
+  七天内用星期几，再远用 `YYYY-MM-DD`，时间一律 24 小时制。`markTs()` 顺手写进 `data-when`；
+  `style.css`/`m.css` 用 `::after{content:attr(data-when)}` 常驻但 `display:none`，`:hover` 时才显示
+  （真机上悬停才出现小字）。伪元素不进 `textContent`，行内容探测不受影响。会话转录原先没有逐行时间：
+  `public_messages()` 在持久化边界给**首次落盘**的行打 `ts`（就地写，回合开始的那次 save 定住 user 行、
+  结束那次 save 定住本轮新行——否则会把老行重打成回合结束时刻）。`ts` 是存储字段，不是协议字段：
+  `llm._wire_messages()` 在出网前剥掉，避免凭空给 provider 造一个字段。
+- **好友视图分侧**：我方（信使）的**思考 `<details>`、工具卡、错误行**原先是 `align-self:flex-start`，
+  而我方正文靠右——同一轮的东西被拆到两边（用户：「因为这是我方的」）。共享渲染器把 `opts.side.agent`
+  一并加到 reasoning/tool/error 行（含 live tape 的 reasoning/tool/result）。桌面此前只给我方正文加了
+  `friend-mine`；手机端干脆**没有侧**，对面的行还落进 `.msg.user` 的强调色气泡里（看着像"我说的"）。
+  现两端同一套 `side` 类：对面在左（素底），我方在右。移动端会话视图不受影响。
+- **设置页显示当前配置**（用户要求）：三个框不再是空的——接口地址/模型直接预填（可编辑），API Key
+  只把掩码 `sk-12…a5f4` 放进**占位符**（真 key 依旧不上屏，空框 = 保持不变的老语义不变）；保存后
+  `_load_fields()` 让框回到当前值（不是清空），进页(`showEvent`)也刷新一次，命令行/WebUI 改过模型能立刻看到。
+- **转录合并按"身份"对齐，不按整字典**：`_comparable()` 原先把除 `ts` 外的整个字典拿来比。clone 的
+  history 副本与存储副本并不逐字相同（`run_turn` 补写的 assistant 行不带 agent 那份 `reasoning`），
+  于是一模一样的行被当新行 → 对齐错位 → 走了"clone 忘了这些行"的携带分支 → **信使的上一条回复在
+  最新对话里出现两次，还被顶到它自己的提问前面**。现在只比 (role, content, tool_call_id, 工具调用名)，
+  匹配上的行沿用存储副本（连带 reasoning 与 ts）。复现：对面一次发两条 + 信使两条都回 → 浏览器里
+  DOM 出现两行相同 assistant；修后 0 重复。回归：`test_comm_history_merge_keeps_a_reply_with_its_question`。
+- **事故善后（拆包写坏用户配置）**：`fungi/gui/` 拆包后页面改读 `fungi.config`，而 GUI 测试还打在
+  `fungi.gui.load_config/save_config` 门面上，patch 失效 → 真 `save_config` 被调用，把测试串写进了用户
+  的长期记忆（`courier_memory`）与 key。已从 `data/comm-sessions/comm-pc.json` 的 system prompt 与用户
+  自己留存的配置副本取回旧值并写回。**结构性防复发**：`tests/conftest.py::_never_write_the_user_config`
+  把 `config.CONFIG_PATH` 指向 tmp 副本（放在子目录里，避免被把 tmp_path 当数据目录的用例 glob 到），
+  从此任何测试都不可能碰到仓库里的 `config.json`。
