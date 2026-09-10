@@ -71,8 +71,29 @@ def _write_atomic(path: Path, text: str) -> None:
         raise
 
 
+_SID_LOCK = threading.Lock()
+_SID_STATE = {"tick": "", "seq": 0}  # the second the last id was issued in, and how many
+
+
 def new_session_id() -> str:
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    """A new session id, never twice in the same clock tick.
+
+    The resolution is one second, and the id *is* the file name, so two `/new`
+    calls inside the same second used to return the same id: the second session
+    silently overwrote the first (the client had just created it, so it looked
+    like the session had vanished — 2026-09-10). The first id in a tick keeps the
+    readable shape; later ones in that tick get a counter. (Two processes
+    sharing one sessions directory could still race — the GUI's single-instance
+    guard and the per-role directories are what prevent that.)
+    """
+    tick = datetime.now().strftime("%Y%m%d-%H%M%S")
+    with _SID_LOCK:
+        if tick == _SID_STATE["tick"]:
+            _SID_STATE["seq"] += 1
+        else:
+            _SID_STATE["tick"], _SID_STATE["seq"] = tick, 0
+        seq = _SID_STATE["seq"]
+    return tick if seq == 0 else f"{tick}-{seq}"
 
 
 def get_session_title(messages: list[dict[str, Any]]) -> str:

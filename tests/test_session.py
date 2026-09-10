@@ -1,6 +1,7 @@
 """Tests for session storage (schema compatibility with the PowerShell original)."""
 
 import json
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -201,3 +202,42 @@ def test_a_save_waits_out_an_outside_reader(monkeypatch, tmp_path):
             holder.close()
 
     assert store.load("s1")["title"] == "new"
+
+
+def test_two_sessions_created_in_the_same_second_get_different_ids(monkeypatch):
+    """The id is the file name, so a collision is a lost conversation: the
+    second session used to overwrite the first (its client had just created it
+    and saw it disappear)."""
+    frozen = datetime(2026, 9, 10, 20, 12, 3)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, *_a, **_k):
+            return frozen
+
+    monkeypatch.setattr(session, "datetime", FrozenDatetime)
+    monkeypatch.setattr(session, "_SID_STATE", {"tick": "", "seq": 0})
+
+    first = session.new_session_id()
+    same_second = [session.new_session_id() for _ in range(3)]
+
+    assert first == "20260910-201203"  # the readable shape survives
+    assert len({first, *same_second}) == 4
+    assert all(sid.startswith(first + "-") for sid in same_second)
+    assert all(sid.replace("-", "").isalnum() for sid in same_second)  # filename-safe
+
+
+def test_the_next_second_starts_clean(monkeypatch):
+    ticks = iter(["20260910-201203", "20260910-201203", "20260910-201204"])
+
+    class TickingDatetime(datetime):
+        @classmethod
+        def now(cls, *_a, **_k):
+            return datetime.strptime(next(ticks), "%Y%m%d-%H%M%S")
+
+    monkeypatch.setattr(session, "datetime", TickingDatetime)
+    monkeypatch.setattr(session, "_SID_STATE", {"tick": "", "seq": 0})
+
+    assert session.new_session_id() == "20260910-201203"
+    assert session.new_session_id() == "20260910-201203-1"
+    assert session.new_session_id() == "20260910-201204"  # new tick: no counter

@@ -955,6 +955,31 @@ def test_events_returns_done_when_nothing_runs(server_room):
         server.server_close()
 
 
+def test_two_new_sessions_in_the_same_second_do_not_collide(server_room):
+    """端到端：连按两次「新建」拿到的 id 必须不同——id 就是文件名，撞了等于丢掉一个会话
+    （秒级时间戳，2026-09-10）。"""
+
+    room = server_room
+    server = _webui_server(room)
+    try:
+        port = server.server_address[1]
+        ids = []
+        for _ in range(2):
+            with _post(port, "/new", {}) as resp:
+                ids.append(json.loads(resp.read())["id"])
+        assert ids[0] != ids[1]
+        listed = {
+            s["id"]
+            for s in json.loads(
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/sessions", timeout=10).read()
+            )["sessions"]
+        }
+        assert set(ids) <= listed, f"{ids} vs {sorted(listed)}"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_events_follows_running_turn_and_reports_running_flag(gated_room):
     """Refresh mid-turn: the reattached client must stay connected while the
     turn runs, then receive its tail events + done; /sessions must flag the
