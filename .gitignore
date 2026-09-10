@@ -7,3 +7,6 @@ __pycache__/
 .ruff_cache/
 inbox/
 output/
+
+# Working documents the user edits in Word (kept on disk, out of the repo)
+docs/*.docx
