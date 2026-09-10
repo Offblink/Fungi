@@ -536,11 +536,27 @@ def test_the_mobile_pane_keeps_its_owner(mobile_page, rooms):
 WEEKDAYS_CN = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
 
 WHEN_PROBE = r"""
-() => Array.from(msgs.children).filter(n => n.dataset.when).map(n => ({
-  text: (n.textContent || '').replace(/\s+/g, '').slice(0, 6),
-  when: n.dataset.when,
-  shown: getComputedStyle(n, '::after').display !== 'none',
-}))
+() => {
+  const rows = Array.from(msgs.children).filter(n => n.dataset.when);
+  const geom = n => {
+    const s = getComputedStyle(n, '::after');
+    return {position: s.position, top: s.top, left: s.left, right: s.right, display: s.display};
+  };
+  const find = t => rows.find(n => (n.textContent || '').replace(/\s+/g, '').startsWith(t));
+  const mine = find('我方');
+  const peer = find('昨天的话');
+  return {
+    scroll: msgs.scrollHeight,
+    heights: rows.map(n => n.offsetHeight),
+    mine: mine ? geom(mine) : null,
+    peer: peer ? geom(peer) : null,
+    rows: rows.map(n => ({
+      text: (n.textContent || '').replace(/\s+/g, '').slice(0, 6),
+      when: n.dataset.when,
+      shown: getComputedStyle(n, '::after').display !== 'none',
+    })),
+  };
+}
 """
 
 
@@ -552,9 +568,10 @@ def _noon(days_ago: int, hour: int = 12):
 
 
 def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
-    """2026-09-10 user request: hovering a message shows its send date + time —
-    今天/昨天/前天 up close, the weekday inside the last seven days, 年月日
-    beyond that, 24h clock."""
+    """2026-09-10 user report: 今天/昨天/前天 this week, the weekday inside the
+    last seven days, 年月日 beyond that, 24h clock — drawn just outside the card,
+    on the sender's side, and without moving anything (the first cut grew the
+    row on hover and shoved the whole page)."""
     server, _client = rooms
     rows = [
         ("今天", _noon(0)),
@@ -567,17 +584,18 @@ def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
         server,
         "beta",
         [{"role": "system", "content": "sys"}]
-        + [{"role": "user", "content": f"{tag}的话", "ts": ts} for tag, ts in rows],
+        + [{"role": "user", "content": f"{tag}的话", "ts": ts} for tag, ts in rows]
+        + [{"role": "assistant", "content": "我方昨天的话", "ts": _noon(1)}],
     )
     _open_friend(page)
-    page.wait_for_function("() => msgs.children.length >= 5")
+    page.wait_for_function("() => msgs.children.length >= 6")
 
-    labels = page.evaluate(WHEN_PROBE)
+    probe = page.evaluate(WHEN_PROBE)
     weekday = WEEKDAYS_CN[datetime.datetime.fromtimestamp(rows[3][1]).weekday()]
     long_ago = datetime.datetime.fromtimestamp(rows[4][1]).strftime("%Y-%m-%d")
     # The module-scoped room keeps the mails earlier tests delivered, so read
     # the rows we seeded by their own text instead of by position.
-    ours = {r["text"]: r for r in labels if r["text"].endswith("的话")}
+    ours = {r["text"]: r for r in probe["rows"] if r["text"].endswith("的话")}
     assert ours["今天的话"]["when"] == "今天 12:00", ours
     assert ours["昨天的话"]["when"] == "昨天 12:00", ours
     assert ours["前天的话"]["when"] == "前天 12:00", ours
@@ -585,14 +603,25 @@ def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
     assert ours["年月日的话"]["when"] == f"{long_ago} 12:00", ours
     assert not any(r["shown"] for r in ours.values()), ours  # 不悬停就不显示
 
+    # 贴着发送方那一侧：我方靠右、对面靠左；且绝对定位（不参与布局）
+    assert probe["mine"]["position"] == "absolute", probe["mine"]
+    assert probe["mine"]["right"] == "0px" and probe["mine"]["left"] != "0px", probe["mine"]
+    assert probe["peer"]["position"] == "absolute", probe["peer"]
+    assert probe["peer"]["left"] == "0px" and probe["peer"]["right"] != "0px", probe["peer"]
+    assert probe["mine"]["top"] == "100%" and probe["peer"]["top"] == "100%", probe
+
     index = page.evaluate(
         "() => Array.from(msgs.children).findIndex(n => n.textContent.startsWith('昨天的话'))"
     )
     page.hover(f"#messages > *:nth-child({index + 1})")
     page.wait_for_timeout(100)
-    hovered = {r["text"]: r for r in page.evaluate(WHEN_PROBE) if r["text"].endswith("的话")}
-    assert hovered["昨天的话"]["shown"], hovered
-    assert not hovered["今天的话"]["shown"], hovered
+    hovered = page.evaluate(WHEN_PROBE)
+    shown = {r["text"]: r for r in hovered["rows"] if r["text"].endswith("的话")}
+    assert shown["昨天的话"]["shown"], shown
+    assert not shown["今天的话"]["shown"], shown
+    # 悬停不得改变布局（原报告：一悬停行就变高、整页跟着跳）
+    assert hovered["scroll"] == probe["scroll"], (hovered["scroll"], probe["scroll"])
+    assert hovered["heights"] == probe["heights"], (hovered["heights"], probe["heights"])
 
 
 def test_the_session_view_labels_its_rows_too(page, rooms):
@@ -611,7 +640,7 @@ def test_the_session_view_labels_its_rows_too(page, rooms):
     page.evaluate("async () => { await switchSession('20260101-000000'); }")
     page.wait_for_function("() => pane.owner() === 'session'")
 
-    labels = [r["when"] for r in page.evaluate(WHEN_PROBE)]
+    labels = [r["when"] for r in page.evaluate(WHEN_PROBE)["rows"]]
     assert labels and all(lbl.startswith("今天 ") for lbl in labels), labels
 
 

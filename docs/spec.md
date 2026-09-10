@@ -345,8 +345,10 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 
 - **每条消息悬停显示发送时间**（用户要求）：`common.js::whenLabel(ts)` 把 ts 说成人话——今天/昨天/前天，
   七天内用星期几，再远用 `YYYY-MM-DD`，时间一律 24 小时制。`markTs()` 顺手写进 `data-when`；
-  `style.css`/`m.css` 用 `::after{content:attr(data-when)}` 常驻但 `display:none`，`:hover` 时才显示
-  （真机上悬停才出现小字）。伪元素不进 `textContent`，行内容探测不受影响。会话转录原先没有逐行时间：
+  `style.css`/`m.css` 用 `::after{content:attr(data-when)}`。**位置**：绝对定位在卡片**下方**、贴**发送方**
+  那一侧（我方靠右、对面靠左），默认 `display:none`，`:hover` 才 `block`——不参与布局，行高与滚动高度
+  都不变（第一版把时间写在气泡里，一悬停就把行撑高、整页跟着跳，用户当场退回）。伪元素不进
+  `textContent`，行内容探测不受影响。会话转录原先没有逐行时间：
   `public_messages()` 在持久化边界给**首次落盘**的行打 `ts`（就地写，回合开始的那次 save 定住 user 行、
   结束那次 save 定住本轮新行——否则会把老行重打成回合结束时刻）。`ts` 是存储字段，不是协议字段：
   `llm._wire_messages()` 在出网前剥掉，避免凭空给 provider 造一个字段。
