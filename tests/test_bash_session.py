@@ -2,11 +2,14 @@
 
 Acceptance: a two-input script answers both prompts; interactive `date` sees
 EOF and exits on stdin=nul; sessions die on abort (=/stop), when the owning
-agent is garbage-collected (turn end), on kill, and on the idle cap.
+agent is garbage-collected (turn end), and on kill; an EXITED session stays
+registered and readable (post-mortem) until the idle cap.
 """
 
 import gc
+import pathlib
 import sys
+import tempfile
 import time
 
 import pytest
@@ -73,8 +76,29 @@ def test_interactive_date_eof_exits_on_nul():
     sid = _sid(out)
     assert sid
     assert _wait_exit(sid), "interactive date should read EOF and exit"
-    shell_mod._reap_sessions_once()
-    assert "ERROR: no such bash session" in tool_bash_send(id=sid, text="x")
+    # Post-mortem: an exited session stays registered and readable until the
+    # idle cap — its output and exit code are the only way to see why it died.
+    r = tool_bash_send(id=sid, text="x")
+    assert "exit code" in r
+    assert sid in shell_mod._SESSIONS
+
+
+def test_output_arriving_before_first_send_is_visible():
+    """Regression: bash_send consumed from 'since this send', so output that
+    landed between start and the first send was swallowed (npm's prompt was
+    never seen). send must return from the session-wide read cursor."""
+    script = pathlib.Path(tempfile.gettempdir()) / "fungi-prompt-test.py"
+    script.write_text(
+        "import time; time.sleep(1.2)\n"  # print AFTER bash_start's 1s window
+        "print('PROMPT', flush=True)\ninput()\nprint('BYE', flush=True)\n",
+        encoding="utf-8",
+    )
+    out = tool_bash_start(f'"{sys.executable}" "{script}"', stdin_arg="pipe")
+    assert "PROMPT" not in out, "prompt must arrive after start returns"
+    sid = _sid(out)
+    time.sleep(1.5)  # the child prints its prompt while we "think"
+    r = tool_bash_send(id=sid, text="answer")
+    assert "PROMPT" in r
 
 
 def test_send_rejects_nul_session():

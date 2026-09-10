@@ -134,6 +134,7 @@ class _BashSession:
         self.buf_lock = threading.Lock()
         self.chunks: list[str] = []
         self.last_activity = time.monotonic()
+        self.read_pos = 0  # consumed by take_unseen; bash_send returns from here
         # WeakMethod: a bound method (Agent._aborted) dies with its Agent, so
         # a finished turn orphans the session and the reaper collects it. A
         # bare lambda (tests, callers without an Agent) can't be weak-ref'd:
@@ -160,6 +161,18 @@ class _BashSession:
         with self.buf_lock:
             text = "".join(self.chunks)
         return text[pos:], len(text)
+
+    def take_unseen(self) -> str:
+        """Everything pumped since the last read, advancing the read cursor.
+
+        bash_send must consume from this cursor, not from 'since this send':
+        output arriving between calls (npm's prompt, an error, a crash) is
+        exactly what the agent needs to see."""
+        with self.buf_lock:
+            text = "".join(self.chunks)
+        extra = text[self.read_pos:]
+        self.read_pos = len(text)
+        return extra
 
     def _pump(self, stream) -> None:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -204,14 +217,19 @@ def _kill_session_tree(s: _BashSession) -> None:
 
 
 def _reap_sessions_once(force_idle_check: bool = False) -> None:
-    """Kill + drop sessions that exited, lost their turn, or idled out."""
+    """Kill + drop sessions that lost their turn or idled out.
+
+    A merely EXITED session is kept (until the idle cap): its buffered output
+    and exit code are the only way to find out why it died — the post-mortem
+    must stay readable via bash_send. This bit us: npm create vite failed and
+    the reaper erased the evidence within 2s, leaving only
+    'ERROR: no such bash session'."""
     now = time.monotonic()
     with _SESSIONS_LOCK:
         victims = [
             s
             for s in _SESSIONS.values()
-            if s.proc.poll() is not None
-            or s.aborted()
+            if s.aborted()
             or (force_idle_check and now - s.last_activity > BASH_SESSION_IDLE)
         ]
         for s in victims:
@@ -276,8 +294,8 @@ def _start_session(
         time.sleep(0.1)
     out, _ = s.snapshot(0)
     kind = "interactive (bash_send can feed input)" if s.interactive else "stdin=NUL: interactive input sees EOF"
+    s.read_pos = len(out)  # what start already showed; sends return only newer output
     return f"id={sid} ({kind})\n{out.strip() or '(no output yet)'}"
-
 
 def tool_bash_start(
     command: str,
@@ -296,37 +314,41 @@ def tool_bash_send(id: str, text: str = "") -> str:
         s = _SESSIONS.get(sid)
     if s is None:
         return f"ERROR: no such bash session: {sid} (it exited or was reaped; re-run bash_start)"
-    if not s.interactive:
-        return "ERROR: session was started with stdin=nul — start a new one with stdin_arg='pipe' to feed input"
-    _, pos = s.snapshot(0)
     with s.lock:
         if s.proc.poll() is not None:
-            extra, _ = s.snapshot(pos)
-            return (extra.strip() or "(no output)") + f"\n[session {sid} exited]"
+            # Post-mortem works for ANY session (even stdin=nul): the buffered
+            # output + exit code is how the caller finds out what happened.
+            extra = s.take_unseen()
+            s.last_activity = time.monotonic()
+            return (extra.strip() or "(no output)") + (
+                f"\n[session {sid} exited, exit code {s.proc.returncode}]"
+            )
+    if not s.interactive:
+        return "ERROR: session was started with stdin=nul — start a new one with stdin_arg='pipe' to feed input"
+    with s.lock:
         try:
             s.proc.stdin.write((text + "\n").encode("utf-8"))
             s.proc.stdin.flush()
         except OSError:
-            extra, _ = s.snapshot(pos)
+            extra = s.take_unseen()
             return (extra.strip() or "(no output)") + f"\n[session {sid} exited (stdin closed)]"
         s.last_activity = time.monotonic()
         deadline = time.monotonic() + SEND_READ_WAIT
-        last_len = pos
-        while time.monotonic() < deadline:
-            time.sleep(0.15)
-            cur, _ = s.snapshot(pos)
-            if len(cur) > last_len:
-                last_len = len(cur)
+        seen = s.read_pos  # watermark must move in-loop: comparing against
+        while time.monotonic() < deadline:  # the frozen read_pos extends the
+            time.sleep(0.15)                # deadline forever once output flows
+            _, total = s.snapshot(0)
+            if total > seen:
+                seen = total
                 deadline = min(deadline + 0.3, time.monotonic() + 0.5)
             if s.proc.poll() is not None:
                 break
-        extra, _ = s.snapshot(pos)
+        extra = s.take_unseen()
     s.last_activity = time.monotonic()
     result = extra.strip() or "(no new output)"
+    # An exited session STAYS registered (until the idle cap): the exit note
+    # plus whatever it printed is the post-mortem. No registry pop here.
     if s.proc.poll() is not None:
-        with _SESSIONS_LOCK:
-            _SESSIONS.pop(sid, None)
-        _kill_session_tree(s)
         result += f"\n[session {sid} exited, exit code {s.proc.returncode}]"
     return _truncate(result)
 
