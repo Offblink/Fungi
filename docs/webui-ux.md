@@ -297,6 +297,7 @@ agent 气泡轨道漂移 + 进度环。
 - **验证中抓到并修复的既有 bug**（2eeeac7）：磁带 60s grace-pop 按会话 id 无世代 pop——上一回合 done 后 60s 内同会话开新回合，新回合运行中磁带被弹掉，刷新重连拿到裸 done 静默丢失直播视图（桌面同样中招）。修复：pop 按磁带对象身份校验；grace 提为 `_TAPE_GRACE_S` 供测试。
 - **前端坑**：scroll-bottom 按钮必须放在 `#messages` 外层（全量重绘 innerHTML='' 会销毁它，桌面靠 `if (!b) return` 掩盖成功能缺失而非崩溃；移动端曾因此 TypeError 吞掉 reattach）。
 - **`#messages` 一次只有一个主人（2026-09-10 真机：好友对话"像被刷新掉了"）**：好友视图打开时，**任何会话侧的重绘都必须早退**——`renderMessages` 入口 `if (friendView) return;`（`reloadSessionFromServer`/`switchSession` 都经它落笔），`handleTurnEvent` 的 `done` 分支与 `recoverAfterDrop` 也只刷新会话列表不落笔。此前用「会话回合跑完」触发 `reloadSessionFromServer()` 会把好友对话整屏换成会话（复现：回合中途点进好友视图，done 到了以后 `#messages` 从 44 个 friend 节点变成 2 个会话节点），而 comm-log 载荷没变 → `lastFriendPayload` 让好友视图再也画不回来，只有刷新页面才恢复。配套三条硬约束：① `renderFriendChat` **先判空后清屏**（空载荷不得擦掉已有画面）② 载荷没变不重绘 ③ 重绘抛错必须 `lastFriendPayload = null` 解缓存，否则一次异常就把视图冻死到刷新为止（手机端 m.js 是同一套代码，同样三条）。
+- **好友会话渲染的是一张时间轴（2026-09-10 顺序根治，用户点名「卡片没按时间顺序渲染」）**：载荷里的东西各有各的顺序（transcript 列表、hub 事件按 ts、mail 按 ts、asks 累计桶），**不许串接**。规则：`renderTranscript` 里 ask 卡按 `call_id` 锚在触发它的工具调用处（旧记录退化为「问题原文与调用参数逐字相等」的精确匹配 → 再退化到存储顺序）；带 `ts` 的行（事件/邮件/带 ts 的卡片 ask）用 `insertByTs` 插到第一个 `data-ts` 更大的兄弟节点前；没有 `ts` 的行（旧转录、旧 ask）保持到达顺序——旧 ask 的工具调用已不在转录里 ⇒ 属于更早的回合 ⇒ **前置**，不甩末尾。数据侧：`asks` 记录带 `call_id`+`ts`，comm 转录消息落盘时由 `merge_comm_history` 给新行打 `ts`（旧行保留原 ts）。
 - **验证**：280 tests 全绿（+7）；门控 harness + browser-act 实测 token 门禁（LAN 无 token 403 / 带 token 200 / loopback 免检）、抽屉合成触摸手势开合、流式回合、done 落点、中途刷新重连接续、agent 气泡+模态。真机手机扫码待用户实测（Windows 防火墙可能需放行 Python 入站）。
 
 ## 真机首扫反馈修复（2026-09-06 晚）

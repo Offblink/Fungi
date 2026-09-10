@@ -140,57 +140,109 @@ function renderMessages(s) {
   placeAskCards(); // friend-view inline cards move back to the banner here
 }
 
+/* Timeline helpers for the friend thread: rows that carry a `ts` merge into
+   the transcript by time instead of piling up at the end. Nodes without a ts
+   (transcripts recorded before 2026-09-10) keep their arrival order. */
+function markTs(el, ts) {
+  if (el && typeof ts === 'number') el.dataset.ts = String(ts);
+  return el;
+}
+function insertByTs(el, ts) {
+  if (!el) return el;
+  if (typeof ts !== 'number') return el; // no stamp: keep it where it landed
+  for (const kid of [...msgs.children]) {
+    const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
+    if (kts !== null && kts > ts) { msgs.insertBefore(el, kid); return el; }
+  }
+  return el;
+}
+/* The question text a tool call itself carries — the only way to place an ask
+   record from before records carried `call_id`. Exact match, no fuzzy. */
+function askTextOfCall(tc) {
+  try {
+    const args = JSON.parse(tc.function && tc.function.arguments || '{}');
+    const first = Array.isArray(args.questions) && args.questions.length ? args.questions[0] : args;
+    return String((first && first.question) || args.question || '').trim();
+  } catch (e) { return ''; }
+}
+
 /* Session-style rendering shared by local sessions and friend transcripts:
    markdown text, reasoning details, tool blocks, answered ask cards. */
 function renderTranscript(messages, asks, friendThread) {
   let toolBlocks = {};
-  const askQueue = (asks || []).slice(); // replayed in order at their inquire call site (legacy ask_user too)
+  const askByCall = new Map();  // ask record -> the tool call that raised it
+  const askQueue = [];          // records without a call id, in stored order
+  (asks || []).forEach(rec => {
+    if (rec && rec.call_id) askByCall.set(rec.call_id, rec);
+    else if (rec) askQueue.push(rec);
+  });
   // Friend thread: the peer's rows sit left, our courier's right (see style.css)
   const userSide = friendThread ? ' friend-peer' : '';
   const agentSide = friendThread ? ' friend-mine' : '';
   for (const m of messages || []) {
     if (m.role === 'user') {
       const c = String(m.content || '');
-      if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      if (c.startsWith('[background report]')) markTs(addDiv('sys-note', escapeHtml(c)), m.ts);
       else if (m.sender === 'human' && !m.mine) {
-        const bubble = addDiv('user' + userSide, marked.parse(c));
+        const bubble = markTs(addDiv('user' + userSide, marked.parse(c)), m.ts);
         const lab = document.createElement('div');
         lab.className = 'human-label';
         lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
         bubble.prepend(lab);
       }
-      else addDiv('user' + userSide, marked.parse(c));
+      else markTs(addDiv('user' + userSide, marked.parse(c)), m.ts);
     }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
         det.className = 'msg reasoning';
         det.innerHTML = '<summary>Thinking\u2026</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(m.reasoning) + '</div>';
-        msgs.appendChild(det);
+        msgs.appendChild(markTs(det, m.ts));
       }
       if (m.content) {
         const c = String(m.content);
         if (c.startsWith('(LLM error:') || c.startsWith('(Hit max tool rounds'))
-          addDiv('error', '&#x26A0; ' + escapeHtml(c));
-        else addDiv('assistant' + agentSide, marked.parse(m.content));
+          markTs(addDiv('error', '&#x26A0; ' + escapeHtml(c)), m.ts);
+        else markTs(addDiv('assistant' + agentSide, marked.parse(m.content)), m.ts);
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
         const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 80 });
-        msgs.appendChild(d);
+        msgs.appendChild(markTs(d, m.ts));
         if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId]);
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
-          const rec = askQueue.shift();
-          if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
+          // Anchored by the tool call that raised it; a record without a call
+          // id falls back to stored order, then to the call's own question text
+          // (records written before `call_id` existed).
+          let rec = askByCall.get(tc.id);
+          if (rec) askByCall.delete(tc.id);
+          else {
+            const text = askTextOfCall(tc);
+            const idx = text ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === text) : -1;
+            rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
+          }
+          if (rec) msgs.appendChild(markTs(buildAnsweredAskCard(rec), rec.ts));
         }
         toolBlocks[tc.id] = d;
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
       if (block) FC.fillToolResult(block, m.content || '');
-      else addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>');
+      else markTs(addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
     }
   }
-  askQueue.forEach(renderArchivedAsk); // leftovers (e.g. turn died mid-ask)
+  // Leftovers: their tool call is gone from the transcript, so they belong to a
+  // turn older than anything on screen (legacy records carry no ts) — a
+  // timestamped one (card asks) slots into the timeline like any other row.
+  askQueue.forEach(rec => {
+    const node = markTs(buildAnsweredAskCard(rec), rec.ts);
+    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
+    else msgs.prepend(node);
+  });
+  askByCall.forEach(rec => {  // answers whose call predates the transcript
+    const node = markTs(buildAnsweredAskCard(rec), rec.ts);
+    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
+    else msgs.prepend(node);
+  });
 }
 async function newSession() {
   leaveFriendView();
@@ -773,9 +825,6 @@ const Asks = FC.initAsks({
 const saveAskCardState = Asks.saveAskCardState;
 const buildActiveAskCard = Asks.buildActiveAskCard;
 const buildAnsweredAskCard = Asks.buildAnsweredAskCard;
-function renderArchivedAsk(rec) {
-  msgs.appendChild(Asks.buildAnsweredAskCard(rec));
-}
 
 
 /* ---------- pending card asks (consent / cross-host asks, out-of-band) ---------- */
@@ -1043,12 +1092,18 @@ function renderFriendChat(d) {
   renderTranscript(messages, d.asks || [], true);
   var fileNodes = [];
   events.forEach(row => {
+    let node = null;
     if (row.kind === 'transfer')
-      fileNodes.push(addDiv('friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer')));
+      node = addDiv('friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     else if (row.kind === 'task')
-      addDiv('friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = addDiv('friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      addDiv('friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = addDiv('friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+    if (node) {
+      markTs(node, row.ts);      // envelopes carry the hub's timestamp
+      insertByTs(node, row.ts);
+      if (row.kind === 'transfer') fileNodes.push(node);
+    }
   });
   // New file landed since the previous poll -> spore burst from its card
   // (first render of a view replays history silently: lastTransferCount < 0).
@@ -1072,6 +1127,8 @@ function renderFriendChat(d) {
     lab.className = 'human-label';
     lab.textContent = who;
     bubble.prepend(lab);
+    markTs(bubble, m.ts);   // mail rows carry the mailbox timestamp
+    insertByTs(bubble, m.ts);
   });
   renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint

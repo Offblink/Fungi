@@ -306,3 +306,28 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 - **已有同款先例**：发起房间页 Token 的 `editingFinished`（§12）——单行框回车即热更新。
 - **验证**：`tests/test_gui.py` 用 `QTest.keyClick` 打真实按键（含 Ctrl 修饰键路径）；真机另跑
   过一遍带活动窗口的验证——无头 offscreen 下 QShortcut 根本不激活，只有真机验得到。
+
+## 18. 增补（2026-09-10）：好友视图一张时间轴（把乱序根治掉）
+
+现场两句：**「好友对话跑完一轮就没了」**（已由 §15 的 `#messages` 归属修复，见 `docs/webui-ux.md`
+前端坑）与**「thinking 和工具调用的卡片没有按时间顺序渲染」**。后者是结构问题，不是渲染 bug：
+
+- **根因一（串接）**：`renderFriendChat` 把三份各自有序的列表**接在一起**（transcript 列表 →
+  hub 事件按 ts → mail 按 ts），而 ask 卡要靠「按存储顺序 shift」猜位置，猜不中就 append 到末尾。
+  实测（真转录 17 条消息 / 3 条 ask）：两条 ask 被甩到最底部，而它们其实比画面里所有消息都早。
+- **根因二（数据没有排序信息）**：`asks` 记录只有 `{id, questions, answers, status}`——既不知道
+  是哪次工具调用触发的，也没有时间戳；转录消息同样没有时间戳。没有可排序的量。
+- **改法**：`make_ask_tool` 改 `with_call_id=True`，记录带 `call_id` + `ts`；卡片 ask
+  （`_record_card_verdict`）带 `ts`；comm 转录的消息落盘时由 `merge_comm_history` 给**新到**的行打
+  `ts`（已有行保留原 ts）。前端 `renderTranscript`/`renderFriendChat` 合成**一张时间轴**：ask 按
+  `call_id` 精确锚在它的工具调用处（旧记录退化为「问题原文与调用参数逐字相等」的精确匹配，再退化
+  到存储顺序）；带 `ts` 的事件/邮件/卡片 ask 用 `insertByTs` 插到第一个更晚的兄弟节点前；没有 `ts`
+  的行保持到达顺序（旧转录整块在前）。
+- **旧数据**：2026-09-10 之前的 ask 记录没有 `ts`/`call_id`，无法回溯定位——它们的工具调用已不在
+  转录里，属于比画面更早的回合，因此**前置**到最前（不再甩末尾）；旧转录消息没有 `ts`，与事件/邮件
+  的合并从新数据开始生效。
+- **顺带修数据丢失**：chat 分支原先 `msgs = list(messages)` 直接覆盖；clone 被 roster 回收后重建时
+  历史为空，下一轮就把整段转录覆盖掉（磁盘一起丢）。现由 `merge_comm_history` 做并集：clone 仍带着
+  的行沿用存储副本（保 ts），被遗忘的行前置携带，新增行追加；任务分支本就是追加。回归测试：
+  `test_chat_turn_after_a_clone_rebuild_keeps_the_earlier_transcript`、
+  `test_chat_turn_with_cumulative_history_does_not_duplicate`、`test_ask_record_carries_its_tool_call_id`。

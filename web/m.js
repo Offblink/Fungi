@@ -221,6 +221,9 @@ const fmtDate = d => FC.fmtDate(d, 'zh-CN');
 
 /* ---------- transcript render (full re-render = refresh-grade) ---------- */
 function renderMessages(s) {
+  // #messages 一次只有一个主人：好友视图开着时任何会话侧重绘都不许落笔
+  // （桌面同款，2026-09-10 真机 bug：回合 done 把好友对话整屏换成会话）。
+  if (friendView) return;
   _liveCount = 0;
   // Full re-render must replace: renderTranscript only appends (b8e3b65 contract).
   msgs.innerHTML = '';
@@ -234,52 +237,93 @@ function renderMessages(s) {
   }
   placeAskCards();
 }
+/* 好友会话的时间轴：带 ts 的行按时间插进转录里，不再全堆到末尾；
+   没有 ts 的行（2026-09-10 之前记录的转录）保持到达顺序。 */
+function markTs(el, ts) {
+  if (el && typeof ts === 'number') el.dataset.ts = String(ts);
+  return el;
+}
+function insertByTs(el, ts) {
+  if (!el) return el;
+  if (typeof ts !== 'number') return el;
+  for (const kid of [...msgs.children]) {
+    const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
+    if (kts !== null && kts > ts) { msgs.insertBefore(el, kid); return el; }
+  }
+  return el;
+}
+/* 工具调用参数里自带的问题原文——只在旧记录缺 call_id 时用来精确对位（不做模糊匹配）。 */
+function askTextOfCall(tc) {
+  try {
+    const args = JSON.parse(tc.function && tc.function.arguments || '{}');
+    const first = Array.isArray(args.questions) && args.questions.length ? args.questions[0] : args;
+    return String((first && first.question) || args.question || '').trim();
+  } catch (e) { return ''; }
+}
 function renderTranscript(messages, asks) {
   let toolBlocks = {};
-  const askQueue = (asks || []).slice();
+  const askByCall = new Map();  // ask 记录 -> 引发它的工具调用
+  const askQueue = [];          // 没有 call_id 的记录，按存储顺序
+  (asks || []).forEach(rec => {
+    if (rec && rec.call_id) askByCall.set(rec.call_id, rec);
+    else if (rec) askQueue.push(rec);
+  });
   for (const m of messages || []) {
     if (m.role === 'user') {
       const c = String(m.content || '');
-      if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
+      if (c.startsWith('[background report]')) markTs(addDiv('sys-note', escapeHtml(c)), m.ts);
       else if (m.sender === 'human' && !m.mine) {
-        const bubble = addDiv('user', marked.parse(c));
+        const bubble = markTs(addDiv('user', marked.parse(c)), m.ts);
         const lab = document.createElement('div');
         lab.className = 'human-label';
         lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
         bubble.prepend(lab);
       }
-      else addDiv('user', marked.parse(c));
+      else markTs(addDiv('user', marked.parse(c)), m.ts);
     }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
         det.className = 'msg reasoning';
         det.innerHTML = '<summary>Thinking\u2026</summary><div>' + escapeHtml(m.reasoning) + '</div>';
-        msgs.appendChild(det);
+        msgs.appendChild(markTs(det, m.ts));
       }
       if (m.content) {
         const c = String(m.content);
         if (c.startsWith('(LLM error:') || c.startsWith('(Hit max tool rounds'))
-          addDiv('error', '&#x26A0; ' + escapeHtml(c));
-        else addDiv('assistant', marked.parse(m.content));
+          markTs(addDiv('error', '&#x26A0; ' + escapeHtml(c)), m.ts);
+        else markTs(addDiv('assistant', marked.parse(m.content)), m.ts);
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
         const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 60 });
-        msgs.appendChild(d);
+        msgs.appendChild(markTs(d, m.ts));
         if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
-          const rec = askQueue.shift();
-          if (rec) msgs.appendChild(buildAnsweredAskCard(rec));
+          let rec = askByCall.get(tc.id);
+          if (rec) askByCall.delete(tc.id);
+          else {
+            const text = askTextOfCall(tc);
+            const idx = text ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === text) : -1;
+            rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
+          }
+          if (rec) msgs.appendChild(markTs(buildAnsweredAskCard(rec), rec.ts));
         }
         toolBlocks[tc.id] = d;
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
       if (block) FC.fillToolResult(block, m.content || '');
-      else addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>');
+      else markTs(addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
     }
   }
-  askQueue.forEach(rec => msgs.appendChild(buildAnsweredAskCard(rec)));
+  // 剩下的：工具调用已不在转录里 → 属于比画面更早的回合（旧记录没有 ts）；
+  // 带 ts 的（卡片 ask）按时间插队。
+  const leftover = [...askQueue, ...askByCall.values()];
+  leftover.forEach(rec => {
+    const node = markTs(buildAnsweredAskCard(rec), rec.ts);
+    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
+    else msgs.prepend(node);
+  });
 }
 
 /* ---------- send / stream ---------- */
@@ -394,7 +438,8 @@ function reattachIfRunning(sid) {
    arriving to reload them. */
 async function recoverAfterDrop(sid) {
   if (!sid) return;
-  await reloadSessionFromServer();
+  // 好友视图开着时不抢 #messages：会话侧的补画留给离开好友视图时做。
+  if (!friendView) await reloadSessionFromServer();
   if (turn || processing) return; // user already started something else
   await loadSessions();           // fresh s.running for the reattach check
   reattachIfRunning(sid);
@@ -524,7 +569,8 @@ function handleTurnEvent(obj) {
       if (!t.sessionId) t.sessionId = obj.content;
       break;
     case 'done': {
-      const viewing = currentSessionId === t.sessionId;
+      // 好友视图开着时只刷会话列表，不重绘 #messages（见 renderMessages 的所有权）。
+      const viewing = currentSessionId === t.sessionId && !friendView;
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
@@ -759,7 +805,13 @@ async function refreshFriendChat() {
     const payload = JSON.stringify(d);
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
-    renderFriendChat(d);
+    try {
+      renderFriendChat(d);
+    } catch (e) {
+      // 重绘抛错必须解缓存，否则一次异常把视图冻死到刷新为止（桌面同款）。
+      lastFriendPayload = null;
+      console.error('renderFriendChat:', e);
+    }
   } catch (e) {}
 }
 
@@ -806,25 +858,28 @@ function renderLiveEvents(live) {
   }
 }
 function renderFriendChat(d) {
-  msgs.innerHTML = '';
   const messages = d.messages || [];
   const events = d.events || [];
   const live = d.live || [];
-  if (!messages.length && !events.length && !(d.mails || []).length && !live.length) {
-    return;
+  const mails = d.mails || [];
+  if (!messages.length && !events.length && !mails.length && !live.length) {
+    return; // 先判空后清屏：空载荷不得擦掉已有画面
   }
+  msgs.innerHTML = '';
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   renderTranscript(messages, d.asks || []);
   events.forEach(row => {
+    let node = null;
     if (row.kind === 'transfer')
-      addDiv('friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+      node = addDiv('friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     else if (row.kind === 'task')
-      addDiv('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = addDiv('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      addDiv('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = addDiv('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+    if (node) { markTs(node, row.ts); insertByTs(node, row.ts); }  // 信封自带 hub 时间戳
   });
   MailUnread.markPeerRead(friendView); // seeing the thread IS reading it
-  (d.mails || []).forEach(m => {
+  mails.forEach(m => {
     const body = String(m.body || '');
     const subject = String(m.subject || '');
     const html = (subject && subject !== '(no subject)' && subject !== body
@@ -838,6 +893,8 @@ function renderFriendChat(d) {
     lab.className = 'human-label';
     lab.textContent = who;
     bubble.prepend(lab);
+    markTs(bubble, m.ts);   // 邮件行自带邮箱时间戳
+    insertByTs(bubble, m.ts);
   });
   renderLiveEvents(live);
   placeAskCards(); // re-seat pending asks after the transcript repaint
