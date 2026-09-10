@@ -210,10 +210,40 @@ def test_host_page_leave_stops_room(window):
     room = FakeRoom()
     page.room = room
     page._set_started(True)
+    page.token_edit.setText("tok-keep-me")
     page._leave()
     assert room.stopped and page.room is None
     assert page.start_btn.isEnabled() and not page.leave_btn.isVisibleTo(page)
     assert page.ip_edit.text() == ""  # status card reset
+    # 离开不再换 Token：下一个房间继续用同一个，好友不必重输
+    assert page.token_edit.text() == "tok-keep-me"
+
+
+def test_gui_remembers_the_host_identity_and_token(window):
+    """发起房间页也要记住：Token 每次现场随机生成、昵称不记，用户每次进来都像换了个身份
+    （2026-09-10 用户报告）。现在 token / 昵称 / 主机名都从 QSettings 还原。"""
+    page = window.host_page
+    page.settings.setValue("last_token", "tok-remembered")
+    page.settings.setValue("last_nick", "花酱")
+    page.settings.setValue("last_host_name", "OwO")
+    fresh = gui.host.HostPage(window)  # 新实例＝下次打开
+    try:
+        assert fresh.token_edit.text() == "tok-remembered"
+        assert fresh.nick_edit.text() == "花酱"
+        assert fresh.name_edit.text() == "OwO"
+    finally:
+        fresh.deleteLater()
+        for key in ("last_token", "last_nick", "last_host_name"):
+            page.settings.remove(key)
+
+
+def test_gui_settings_live_in_a_sandbox(window):
+    """测试绝不能碰用户真正的 QSettings（token/昵称/IP 都在 `HKCU\\...\\FungiGUI`）：
+    conftest 把两个页面都指到 test-only 的 app 名上。"""
+    for page in (window.join_page, window.host_page):
+        name = page.settings.fileName()
+        assert name.endswith("FungiGUI-test"), name
+        assert not name.endswith("\\FungiGUI"), name
 
 
 def test_host_page_leave_without_room_is_noop(window):
@@ -309,8 +339,6 @@ def test_join_page_discovers_and_joins_in_process(window, monkeypatch):
     assert page.ip_edit.text() == "192.168.1.20"  # discovered IP visible in the field
     assert joined == [("pc-alpha", "🌸花酱", f"http://192.168.1.20:{gui.GUI_PORT + 3}", "tok")]
     assert page.settings.value("last_token") == "tok"
-    for key in ("last_ip", "last_token", "last_nick"):  # don't leak into user QSettings
-        page.settings.remove(key)
 
 
 def test_join_page_uses_typed_ip(window, monkeypatch):
@@ -337,8 +365,6 @@ def test_join_page_uses_typed_ip(window, monkeypatch):
         if joined:
             break
     assert joined == [("pc-alpha", "🌸花酱", "http://192.168.1.20:8902", "tok")]
-    for key in ("last_ip", "last_token", "last_nick"):
-        page.settings.remove(key)
 
 
 def test_local_subnet_hosts_covers_self(monkeypatch):
@@ -395,8 +421,6 @@ def test_join_page_webui_button_lifecycle(window, monkeypatch):
     page._leave()
     assert rooms[0].stopped
     assert not page.webui_row.isVisibleTo(page)
-    for key in ("last_ip", "last_token", "last_nick"):  # don't leak into user QSettings
-        page.settings.remove(key)
 
 
 def test_join_page_reports_scan_miss(window, monkeypatch):

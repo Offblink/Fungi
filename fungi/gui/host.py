@@ -2,6 +2,7 @@
 
 import secrets
 
+from PyQt5.QtCore import QSettings
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -21,6 +22,7 @@ from qfluentwidgets import (
 )
 
 from . import net
+from .const import SETTINGS_APP, SETTINGS_ORG
 from .widgets import _copy, _copy_button, _row
 
 
@@ -31,6 +33,7 @@ class HostPage(QWidget):
         super().__init__()
         self.window_ref = window
         self.setObjectName("hostPage")
+        self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
         self.room = None
         self._token = ""
 
@@ -43,13 +46,15 @@ class HostPage(QWidget):
 
         self.name_edit = LineEdit()
         self.name_edit.setFixedWidth(360)
-        self.name_edit.setText(net.default_host_name())
+        self.name_edit.setText(str(self.settings.value("last_host_name", "") or "")
+                              or net.default_host_name())
         self.name_edit.setPlaceholderText("本机主机名（房间内的 wire 身份）")
         self.name_edit.setToolTip("开房前：回车＝发起房间；开房后该身份固定（地址/文件名/对面信使都以它为准），改名需先离开房间")
         root.addWidget(_row("主机名", self.name_edit))
 
         self.nick_edit = LineEdit()
         self.nick_edit.setFixedWidth(360)
+        self.nick_edit.setText(str(self.settings.value("last_nick", "") or ""))
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
         self.nick_edit.setToolTip("开房前：回车＝发起房间；开房后：回车即时改名（对面立刻看到新昵称）")
         root.addWidget(_row("昵称", self.nick_edit))
@@ -77,7 +82,11 @@ class HostPage(QWidget):
         # keeps meaning only "commit the token" — tabbing through must never
         # start a room.
         self.token_edit.returnPressed.connect(self._token_enter)
-        self.token_edit.setText(secrets.token_urlsafe(12))
+        # Remember the token: a fresh random one on every visit meant the user
+        # had to re-send it to every friend (and 离开房间 regenerated it again).
+        saved_token = str(self.settings.value("last_token", "") or "")
+        self.token_edit.setText(saved_token if net._valid_token(saved_token) else
+                               secrets.token_urlsafe(12))
         self.token_btn = _copy_button()
         self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
         self.token_row = _row("Token", self.token_edit, self.token_btn)
@@ -188,6 +197,7 @@ class HostPage(QWidget):
             return
         applied = self.room.set_display(display)
         self.nick_edit.setText(applied)
+        self.settings.setValue("last_nick", applied)
         InfoBar.success(
             "昵称已更新",
             f"对面看到的是「{applied or self.room.host}」，即时生效",
@@ -222,6 +232,7 @@ class HostPage(QWidget):
             return
         self.room.hub.token = token
         self._token = token
+        self.settings.setValue("last_token", token)
         InfoBar.success(
             "Token 已更新",
             "新 Token 即时生效；已加入的好友需用新 Token 重新加入",
@@ -243,7 +254,8 @@ class HostPage(QWidget):
         self._set_started(False)
         self.window_ref.update_tray()
         self.ip_edit.clear()
-        self.token_edit.setText(secrets.token_urlsafe(12))
+        # The token stays as it is (and stays remembered): the next room reuses
+        # it unless the user edits the field, so friends never have to re-type.
         self.status.setText(self._idle_status)
         InfoBar.info("已离开", "房间已停止", duration=2500, parent=self.window_ref)
 
@@ -285,6 +297,11 @@ class HostPage(QWidget):
         self.room = net.start_server_room(host, display, self._token, port)
         self.ip_edit.setText(net.lan_ip())
         self.token_edit.setText(self._token)
+        # Remember what this host launches with: next time the page opens (or
+        # the next room starts) the same identity and token are waiting.
+        self.settings.setValue("last_token", self._token)
+        self.settings.setValue("last_nick", display)
+        self.settings.setValue("last_host_name", host)
         self._set_started(True)
         self.window_ref.update_tray()
         self.status.setText(

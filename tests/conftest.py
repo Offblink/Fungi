@@ -124,6 +124,37 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _hermetic_gui_settings():
+    """Keep the real QSettings out of every test run.
+
+    The GUI remembers the user's identity there — token, nickname, host name,
+    LAN ip — and on Windows that is `HKCU\\Software\\Offblink\\FungiGUI`. The
+    join tests used to write their dummy values into it and then `remove()` the
+    keys "so they don't leak", which deleted the user's own saved token and
+    nickname every time the suite ran (2026-09-10 user report: 每次进去都是新的).
+
+    The redirection is by app name, not by format: on Windows
+    `QSettings.setDefaultFormat(IniFormat)` does not move the `QSettings(org,
+    app)` constructor off the registry (verified), while a test-only app name
+    lands in its own key. Session-scoped because the module-scoped `window`
+    builds its two QSettings once, before any function-scoped patch could apply.
+    """
+    from PyQt5.QtCore import QSettings
+
+    from fungi.gui import host as host_mod
+    from fungi.gui import join as join_mod
+
+    real = join_mod.SETTINGS_APP
+    sandbox = f"{real}-test"
+    join_mod.SETTINGS_APP = host_mod.SETTINGS_APP = sandbox
+    try:
+        yield sandbox
+    finally:
+        join_mod.SETTINGS_APP = host_mod.SETTINGS_APP = real
+        QSettings(join_mod.SETTINGS_ORG, sandbox).clear()
+
+
 @pytest.fixture(autouse=True)
 def _never_write_the_user_config(tmp_path, monkeypatch):
     """Point the one config path at a throwaway copy.
