@@ -843,7 +843,9 @@ def test_turn_persists_user_message_while_streaming(gated_room):
         ), "session never appeared on disk while the turn was running"
         sid = room.webui_runtime().sessions_list()[0]["id"]
         stored = room.webui_runtime().sessions_load(sid)
-        assert stored["messages"][-1] == {"role": "user", "content": "hello there"}
+        row = stored["messages"][-1]
+        assert (row["role"], row["content"]) == ("user", "hello there")
+        assert isinstance(row.get("ts"), float)  # stamped for the hover label
     finally:
         gate.set()
         server.shutdown()

@@ -14,6 +14,7 @@ a browser stays green.
 """
 
 import contextlib
+import datetime
 import time
 
 import pytest
@@ -528,6 +529,90 @@ def test_the_mobile_pane_keeps_its_owner(mobile_page, rooms):
     restored = _probe(mobile_page)
     assert restored["rows"], restored
     assert restored["rows"] != painted["rows"], restored  # the session came back, not the thread
+
+
+# ── hover: a message says when it was sent ──
+
+WEEKDAYS_CN = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+
+WHEN_PROBE = r"""
+() => Array.from(msgs.children).filter(n => n.dataset.when).map(n => ({
+  text: (n.textContent || '').replace(/\s+/g, '').slice(0, 6),
+  when: n.dataset.when,
+  shown: getComputedStyle(n, '::after').display !== 'none',
+}))
+"""
+
+
+def _noon(days_ago: int, hour: int = 12):
+    """Noon-anchored: the label buckets are calendar-day based, so a test that
+    seeded "now minus 86400" could land on either side of midnight."""
+    day = datetime.datetime.now().replace(hour=hour, minute=0, second=0, microsecond=0)
+    return (day - datetime.timedelta(days=days_ago)).timestamp()
+
+
+def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
+    """2026-09-10 user request: hovering a message shows its send date + time —
+    今天/昨天/前天 up close, the weekday inside the last seven days, 年月日
+    beyond that, 24h clock."""
+    server, _client = rooms
+    rows = [
+        ("今天", _noon(0)),
+        ("昨天", _noon(1)),
+        ("前天", _noon(2)),
+        ("星期一", _noon(3)),
+        ("年月日", _noon(9)),
+    ]
+    _seed_transcript(
+        server,
+        "beta",
+        [{"role": "system", "content": "sys"}]
+        + [{"role": "user", "content": f"{tag}的话", "ts": ts} for tag, ts in rows],
+    )
+    _open_friend(page)
+    page.wait_for_function("() => msgs.children.length >= 5")
+
+    labels = page.evaluate(WHEN_PROBE)
+    weekday = WEEKDAYS_CN[datetime.datetime.fromtimestamp(rows[3][1]).weekday()]
+    long_ago = datetime.datetime.fromtimestamp(rows[4][1]).strftime("%Y-%m-%d")
+    # The module-scoped room keeps the mails earlier tests delivered, so read
+    # the rows we seeded by their own text instead of by position.
+    ours = {r["text"]: r for r in labels if r["text"].endswith("的话")}
+    assert ours["今天的话"]["when"] == "今天 12:00", ours
+    assert ours["昨天的话"]["when"] == "昨天 12:00", ours
+    assert ours["前天的话"]["when"] == "前天 12:00", ours
+    assert ours[f"{weekday}的话"]["when"] == f"{weekday} 12:00", ours
+    assert ours["年月日的话"]["when"] == f"{long_ago} 12:00", ours
+    assert not any(r["shown"] for r in ours.values()), ours  # 不悬停就不显示
+
+    index = page.evaluate(
+        "() => Array.from(msgs.children).findIndex(n => n.textContent.startsWith('昨天的话'))"
+    )
+    page.hover(f"#messages > *:nth-child({index + 1})")
+    page.wait_for_timeout(100)
+    hovered = {r["text"]: r for r in page.evaluate(WHEN_PROBE) if r["text"].endswith("的话")}
+    assert hovered["昨天的话"]["shown"], hovered
+    assert not hovered["今天的话"]["shown"], hovered
+
+
+def test_the_session_view_labels_its_rows_too(page, rooms):
+    """Session transcripts carry the same per-row stamp (public_messages), so
+    the shared renderer labels them the same way as the friend thread."""
+    server, _client = rooms
+    _seed_session(
+        server,
+        "20260101-000000",
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "两小时前问的", "ts": time.time() - 7200},
+            {"role": "assistant", "content": "刚答的", "ts": time.time()},
+        ],
+    )
+    page.evaluate("async () => { await switchSession('20260101-000000'); }")
+    page.wait_for_function("() => pane.owner() === 'session'")
+
+    labels = [r["when"] for r in page.evaluate(WHEN_PROBE)]
+    assert labels and all(lbl.startswith("今天 ") for lbl in labels), labels
 
 
 # ── sides: a turn's detail rows belong to the side that produced them ──

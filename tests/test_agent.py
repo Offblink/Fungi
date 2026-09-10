@@ -339,3 +339,21 @@ def test_parallel_batch_keeps_private_tools_off_the_stream():
     results = [c["content"] for kind, c in events if kind == "tool_result"]
     assert offered == ["todo"]  # the parallel batch still went through both
     assert all("felt seen" not in str(r) for r in results)
+
+
+def test_public_messages_stamps_the_moment_a_row_lands():
+    """The WebUI says when each message was sent, so the transcript boundary is
+    where a row gets its `ts`: stamped once, never moved by the next save (a
+    turn's end save must not restamp the user message its start save wrote)."""
+    messages = [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "yo", "ts": 5.0},
+    ]
+    fungi_agent.public_messages(messages)
+    assert "ts" not in messages[0]  # the system prompt is not a message row
+    assert messages[1]["ts"] > 0
+    assert messages[2]["ts"] == 5.0  # an already-stamped row keeps its moment
+    stamped = messages[1]["ts"]
+    fungi_agent.public_messages(messages)
+    assert messages[1]["ts"] == stamped

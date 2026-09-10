@@ -184,6 +184,10 @@ html[data-theme="dark"] .ic-sun{display:block}
 .msg.friend-live.friend-mine{align-self:flex-end}
 .msg.reasoning.friend-mine,.msg.tool.friend-mine,.msg.error.friend-mine{align-self:flex-end}
 
+/* 悬停一条消息：底部小字给出它是什么时候发的（见 common.js whenLabel） */
+.msg.user[data-when]::after,.msg.assistant[data-when]::after,.msg.error[data-when]::after,.msg.friend-live[data-when]::after,.msg.ask-card[data-when]::after{content:attr(data-when);display:none;margin-top:0.3rem;font-family:var(--mono);font-size:0.64rem;line-height:1.2;letter-spacing:0.02em;opacity:0.6}
+.msg.user[data-when]:hover::after,.msg.assistant[data-when]:hover::after,.msg.error[data-when]:hover::after,.msg.friend-live[data-when]:hover::after,.msg.ask-card[data-when]:hover::after{display:block}
+
 /* live spectate rows (in-flight comm clone turn in the friend view) */
 .msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
 .msg.reasoning.friend-live{box-shadow:none}

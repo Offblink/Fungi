@@ -212,6 +212,11 @@ html,body{font-family:var(--font);font-size:var(--fs-md);line-height:1.6;color:v
 .msg.user.friend-mine{align-self:flex-end}
 .msg.assistant.friend-mine{align-self:flex-end;border-radius:var(--radius);border-bottom-right-radius:var(--radius-xs)}
 .msg.friend-live.friend-mine{align-self:flex-end}
+/* 悬停一条消息：底部小字给出它是什么时候发的（今天 21:51 / 星期三 18:00 /
+   2026-08-31 09:12，见 common.js whenLabel）。伪元素常驻但默认隐藏，所以
+   pseudo-element 的 content 不进入 textContent，行内容探测不受影响。 */
+.msg.user[data-when]::after,.msg.assistant[data-when]::after,.msg.error[data-when]::after,.msg.friend-live[data-when]::after,.msg.ask-card[data-when]::after{content:attr(data-when);display:none;margin-top:0.35rem;font-family:var(--mono);font-size:0.68rem;line-height:1.2;letter-spacing:0.02em;opacity:0.6}
+.msg.user[data-when]:hover::after,.msg.assistant[data-when]:hover::after,.msg.error[data-when]:hover::after,.msg.friend-live[data-when]:hover::after,.msg.ask-card[data-when]:hover::after{display:block}
 /* 我方的思考/工具卡跟着我方走（2026-09-10 用户报告：话说在右边，思考还贴左边） */
 .msg.reasoning.friend-mine,.msg.tool.friend-mine,.msg.error.friend-mine{align-self:flex-end}
 

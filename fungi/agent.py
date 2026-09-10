@@ -83,10 +83,19 @@ def public_messages(messages: list[dict]) -> list[dict]:
     messages, where the assistant message itself carries tool_calls - so the
     persistence boundary must strip them too. The LLM context keeps them (the
     API requires the pairing); they are stateless tool calls, nothing is lost.
+
+    Rows get their first-seen `ts` here: the WebUI labels each message with the
+    moment it was sent (hover), and a session row is stamped once — the turn's
+    start save fixes the user message, its end save the rows the turn produced.
+    The stamp is store-only: `llm.stream_chat` strips it from the wire.
     """
     private_ids: set[str] = set()
     out: list[dict] = []
     for m in messages:
+        if m.get("role") != "system" and "ts" not in m:
+            # In place, so the next save (and the retry path) keeps the moment
+            # this row first reached the transcript instead of re-stamping it.
+            m["ts"] = time.time()
         role = m.get("role")
         tcs = m.get("tool_calls") if role == "assistant" else None
         if role == "tool" and m.get("tool_call_id") in private_ids:

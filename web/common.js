@@ -586,8 +586,29 @@
        liveText        (run) -> html for a streaming text run
   */
   function markTs(el, ts) {
-    if (el && typeof ts === 'number') el.dataset.ts = String(ts);
+    if (el && typeof ts === 'number') {
+      el.dataset.ts = String(ts);
+      el.dataset.when = whenLabel(ts); // hover label (style.css ::after)
+    }
     return el;
+  }
+  const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+  /* When a message was sent, in words: 今天/昨天/前天 up close, the weekday
+     inside the last seven days, 年月日 beyond that. 24h clock. Computed at
+     paint time and re-painted with the row, so a "今天" that has since turned
+     into yesterday is corrected on the next poll. */
+  function whenLabel(ts) {
+    const d = new Date(ts * 1000), now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const sameDay = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((sameDay(now) - sameDay(d)) / 86400000);
+    let date;
+    if (days === 0) date = '今天';
+    else if (days === 1) date = '昨天';
+    else if (days === 2) date = '前天';
+    else if (days >= 0 && days < 7) date = WEEKDAYS[d.getDay()];
+    else date = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    return date + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
   /* The friend thread has two sides: the peer's rows and ours (the courier's).
      Everything a turn emits belongs to the side that produced it — its words,
@@ -752,6 +773,6 @@
     buildToolCard, fillToolResult, attachSpawnClick,
     initAsks, initPendingAsks, initMailUnread,
     initPane, stripSilent, humanEcho,
-    markTs, insertByTs, askTextOfCall, renderTranscript, renderLiveEvents,
+    markTs, insertByTs, askTextOfCall, renderTranscript, renderLiveEvents, whenLabel,
   };
 })();

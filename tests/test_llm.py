@@ -149,6 +149,39 @@ def test_stream_chat_length_cap_with_empty_reply_raises():
         server.shutdown()
 
 
+def test_stream_chat_keeps_the_transcript_stamp_off_the_wire():
+    """`ts` is the WebUI's own per-row stamp (session transcripts carry it so
+    hovering a message can say when it was sent). It must not ride along to the
+    provider as an invented message field."""
+    lines = [b"data: [DONE]\n\n"]
+    bodies: list[bytes] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            bodies.append(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            for line in lines:
+                self.wfile.write(line)
+                self.wfile.flush()
+
+        def log_message(self, fmt, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1"
+        stamped = [{"role": "user", "content": "hi", "ts": 1700000000.0}]
+        stream_chat("m", url, "k", stamped, [])
+        assert b'"content": "hi"' in bodies[0]
+        assert b'"ts"' not in bodies[0]
+        assert stamped[0]["ts"] == 1700000000.0  # the caller's row keeps its stamp
+    finally:
+        server.shutdown()
+
+
 def test_stream_chat_early_close_without_finish_signal_raises():
     """Server closing mid-generation (no finish_reason, no [DONE]) -> LLMError,
     never a silent empty reply."""

@@ -53,6 +53,20 @@ def _apply_delta(tool_acc: dict[int, dict], delta: dict) -> None:
             slot["function"]["arguments"] += fn["arguments"]
 
 
+def _wire_messages(messages: list[dict]) -> list[dict]:
+    """Messages as the provider should see them: `ts` is the transcript's own
+    stamp (the WebUI hover label), not part of the protocol. Returns the list
+    untouched when there is nothing to strip — the common case, and the reason
+    this costs no copies.
+
+    `reasoning` is ours too but has always shipped upstream, so it stays: this
+    only keeps a stamp we invented today from inventing a new wire field.
+    """
+    if not any("ts" in m for m in messages):
+        return messages
+    return [{k: v for k, v in m.items() if k != "ts"} for m in messages]
+
+
 def stream_chat(
     model: str,
     endpoint: str,
@@ -65,7 +79,12 @@ def stream_chat(
 ) -> LLMResult:
     """One streaming completion; raises LLMError on failure, LLMAbortedError
     (carrying the partial result) when `should_abort` fires mid-stream."""
-    payload: dict = {"model": model, "messages": messages, "tools": tools, "stream": True}
+    payload: dict = {
+        "model": model,
+        "messages": _wire_messages(messages),
+        "tools": tools,
+        "stream": True,
+    }
     if max_tokens:
         payload["max_tokens"] = max_tokens
     body = json.dumps(payload).encode("utf-8")
