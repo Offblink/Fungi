@@ -326,8 +326,7 @@ def test_a_failed_repaint_recovers_on_the_next_poll(page, rooms):
 
     # A changed payload (so the poll cannot skip the render) whose last row only
     # appears if the render runs to the end, plus a seam that blows up in the
-    # middle of it. marked.parse is a getter-only accessor (patching it silently
-    # fails), so the seam is the tool card the transcript builds.
+    # middle of it: the shared transcript renderer the friend view calls.
     _seed_transcript(
         server,
         "beta",
@@ -336,8 +335,8 @@ def test_a_failed_repaint_recovers_on_the_next_poll(page, rooms):
     )
     page.evaluate("""() => {
       msgs.innerHTML = '';
-      window.__realToolCard = FC.buildToolCard;
-      FC.buildToolCard = () => { throw new Error('boom'); };
+      window.__realRender = FC.renderTranscript;
+      FC.renderTranscript = () => { throw new Error('boom'); };
     }""")
     page.evaluate("async () => { await refreshFriendChat(); }")
     after_throw = _probe(page)
@@ -346,7 +345,7 @@ def test_a_failed_repaint_recovers_on_the_next_poll(page, rooms):
         "the failed payload stayed cached"
     )
 
-    page.evaluate("() => { FC.buildToolCard = window.__realToolCard; }")
+    page.evaluate("() => { FC.renderTranscript = window.__realRender; }")
     page.evaluate("async () => { await refreshFriendChat(); }")
     recovered = _probe(page)
     assert any("再来一条" in r["text"] for r in recovered["rows"]), (
@@ -467,6 +466,32 @@ def test_a_human_echo_without_its_mail_still_renders(page, rooms):
 
 
 # ── the mobile twin ──
+
+
+def test_the_mobile_transcript_uses_the_shared_opts(mobile_page, rooms):
+    """Sharing the renderer only holds if the mobile opts are wired: the mail
+    echo is deduped here too, and the ask card still sits with its tool call."""
+    server, _client = rooms
+    server.hub.mail.deliver_pair("beta:human", "alpha", "", "手机端老地方见")
+    _seed_transcript(
+        server,
+        "beta",
+        [
+            *_transcript_messages(),
+            {"role": "user", "content": "[来自 beta 的用户] 手机端老地方见", "ts": T0 + 4},
+        ],
+        _asks(),
+    )
+    mobile_page.evaluate("async () => { await openFriendChat('beta'); }")
+    mobile_page.wait_for_function("() => pane.owner() === 'friend'")
+    mobile_page.wait_for_function("() => msgs.querySelector('.ask-card') !== null")
+
+    rows = _probe(mobile_page)["rows"]
+    assert sum("手机端老地方见" in r["text"] for r in rows) == 1, rows
+    assert not any("[来自 " in r["text"] for r in rows), rows
+    tool_i = next(i for i, r in enumerate(rows) if " tool" in r["cls"])
+    ask_i = next(i for i, r in enumerate(rows) if "ask-card" in r["cls"])
+    assert tool_i < ask_i, rows
 
 
 def test_the_mobile_pane_keeps_its_owner(mobile_page, rooms):

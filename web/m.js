@@ -230,7 +230,7 @@ function renderMessages(s) {
   // Full re-render must replace: renderTranscript only appends (b8e3b65 contract).
   S.clearMsgs();
   registerArchived(s.subagents); // spawn cards from past sessions stay clickable
-  renderTranscript(rawMessages, s.asks || [], S);
+  FC.renderTranscript(S, rawMessages, s.asks || [], renderOpts());
   if (turn && turn.sessionId === currentSessionId) {
     if (turn.userText && rawMessages.some(m => m.role === 'user' && m.content === turn.userText)) {
       turn.userRendered = true; // disk copy already has it; live bubble would double it
@@ -239,103 +239,16 @@ function renderMessages(s) {
   }
   placeAskCards();
 }
-/* 好友会话的时间轴：带 ts 的行按时间插进转录里，不再全堆到末尾；
-   没有 ts 的行（2026-09-10 之前记录的转录）保持到达顺序。 */
-function markTs(el, ts) {
-  if (el && typeof ts === 'number') el.dataset.ts = String(ts);
-  return el;
-}
-function insertByTs(p, el, ts) {
-  if (!el || !p.active()) return el;
-  if (typeof ts !== 'number') return el;
-  for (const kid of [...p.el().children]) {
-    const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
-    if (kts !== null && kts > ts) { p.before(el, kid); return el; }
-  }
-  return el;
-}
-/* 工具调用参数里自带的问题原文——只在旧记录缺 call_id 时用来精确对位（不做模糊匹配）。 */
-function askTextOfCall(tc) {
-  try {
-    const args = JSON.parse(tc.function && tc.function.arguments || '{}');
-    const first = Array.isArray(args.questions) && args.questions.length ? args.questions[0] : args;
-    return String((first && first.question) || args.question || '').trim();
-  } catch (e) { return ''; }
-}
-function renderTranscript(messages, asks, p, mailBodies) {
-  let toolBlocks = {};
-  const askByCall = new Map();  // ask 记录 -> 引发它的工具调用
-  const askQueue = [];          // 没有 call_id 的记录，按存储顺序
-  (asks || []).forEach(rec => {
-    if (rec && rec.call_id) askByCall.set(rec.call_id, rec);
-    else if (rec) askQueue.push(rec);
-  });
-  for (const m of messages || []) {
-    if (m.role === 'user') {
-      const c = String(m.content || '');
-      const echo = FC.humanEcho(c);
-      if (echo) {
-        if (mailBodies && mailBodies.has(echo.text)) continue; // the mailbox copy is already on screen
-        const bubble = markTs(p.add('user', marked.parse(echo.text)), m.ts);
-        const lab = document.createElement('div');
-        lab.className = 'human-label';
-        lab.textContent = '来自 ' + echo.who + ' 的用户';
-        bubble.prepend(lab);
-      }
-      else if (c.startsWith('[background report]')) markTs(p.add('sys-note', escapeHtml(c)), m.ts);
-      else if (m.sender === 'human' && !m.mine) {
-        const bubble = markTs(p.add('user', marked.parse(c)), m.ts);
-        const lab = document.createElement('div');
-        lab.className = 'human-label';
-        lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
-        bubble.prepend(lab);
-      }
-      else markTs(p.add('user', marked.parse(c)), m.ts);
-    }
-    else if (m.role === 'assistant') {
-      if (m.reasoning) {
-        const det = document.createElement('details');
-        det.className = 'msg reasoning';
-        det.innerHTML = '<summary>Thinking\u2026</summary><div>' + escapeHtml(m.reasoning) + '</div>';
-        p.append(markTs(det, m.ts));
-      }
-      const text = FC.stripSilent(m.content);
-      if (text) {
-        if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
-          markTs(p.add('error', '&#x26A0; ' + escapeHtml(text)), m.ts);
-        else markTs(p.add('assistant', marked.parse(text)), m.ts);
-      }
-      if (m.tool_calls) m.tool_calls.forEach(tc => {
-        const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 60 });
-        p.append(markTs(d, m.ts));
-        if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
-        if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
-          let rec = askByCall.get(tc.id);
-          if (rec) askByCall.delete(tc.id);
-          else {
-            const text = askTextOfCall(tc);
-            const idx = text ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === text) : -1;
-            rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
-          }
-          if (rec) p.append(markTs(buildAnsweredAskCard(rec), rec.ts));
-        }
-        toolBlocks[tc.id] = d;
-      });
-    } else if (m.role === 'tool') {
-      const block = toolBlocks[m.tool_call_id];
-      if (block) FC.fillToolResult(block, m.content || '');
-      else markTs(p.add('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
-    }
-  }
-  // 剩下的：工具调用已不在转录里 → 属于比画面更早的回合（旧记录没有 ts）；
-  // 带 ts 的（卡片 ask）按时间插队。
-  const leftover = [...askQueue, ...askByCall.values()];
-  leftover.forEach(rec => {
-    const node = markTs(buildAnsweredAskCard(rec), rec.ts);
-    if (typeof rec.ts === 'number') insertByTs(p, node, rec.ts);
-    else p.prepend(node);
-  });
-}
+/* 时间轴与转录渲染都在 common.js（FC.renderTranscript / FC.insertByTs）：m.js 与
+   桌面是同一个渲染器，只是外观不同——两份拷贝正是好友视图的 bug 被修两遍的原因。 */
+const renderOpts = extra => Object.assign({
+  asks: { buildAnsweredAskCard },
+  spawnLookup: callId => specByCall[callId] || archivedByCall[callId],
+  argsMax: 60,                       // 手机端工具卡参数更短
+  spawnTitle: '点按查看子代理详情',
+  reasoningHtml: t => '<div>' + escapeHtml(t) + '</div>',
+  liveText: r => { const text = FC.stripSilent(r.text); return text ? escapeHtml(text) : ''; },
+}, extra || {});
 
 /* ---------- send / stream ---------- */
 let abortCtrl = null;
@@ -832,49 +745,7 @@ async function refreshFriendChat() {
   } catch (e) {}
 }
 
-function liveEvText(ev) {
-  const c = ev && ev.content;
-  if (typeof c === 'string') return c;
-  if (c && typeof c === 'object') return c.text || c.content || c.name || '';
-  return '';
-}
-function renderLiveEvents(live, p) {
-  // In-flight comm clone turn: merge adjacent text/reasoning deltas into
-  // runs so streaming reads as paragraphs, not one fragment per row.
-  const runs = [];
-  for (const ev of live || []) {
-    const k = ev && ev.kind;
-    if (k === 'reasoning_start' || k === 'reasoning_end') continue;
-    const last = runs[runs.length - 1];
-    if ((k === 'text' || k === 'reasoning') && last && last.kind === k) {
-      last.text += liveEvText(ev);
-      continue;
-    }
-    runs.push({ kind: k, text: liveEvText(ev), ev });
-  }
-  for (const r of runs) {
-    if (r.kind === 'text') {
-      const text = FC.stripSilent(r.text);
-      if (text) p.add('friend-live', escapeHtml(text));
-    } else if (r.kind === 'reasoning') {
-      const det = document.createElement('details');
-      det.className = 'msg reasoning';
-      det.innerHTML = '<summary>Thinking…</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(r.text) + '</div>';
-      p.append(det);
-    } else if (r.kind === 'tool') {
-      const c = (r.ev && r.ev.content) || {};
-      p.add('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
-        + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
-    } else if (r.kind === 'tool_result') {
-      const t = String(liveEvText(r.ev) || '');
-      p.add('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
-    } else if (r.kind === 'status') {
-      p.add('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
-    } else if (r.kind === 'error') {
-      p.add('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
-    }
-  }
-}
+/* 实时磁带渲染也共用（FC.renderLiveEvents） */
 function renderFriendChat(d) {
   const p = F;
   const messages = d.messages || [];
@@ -887,7 +758,8 @@ function renderFriendChat(d) {
   p.clearMsgs();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
-  renderTranscript(messages, d.asks || [], p, mailBodies);
+  const opts = renderOpts({ friend: true, mailBodies });
+  FC.renderTranscript(p, messages, d.asks || [], opts);
   events.forEach(row => {
     let node = null;
     if (row.kind === 'transfer')
@@ -896,7 +768,7 @@ function renderFriendChat(d) {
       node = p.add('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
       node = p.add('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
-    if (node) { markTs(node, row.ts); insertByTs(p, node, row.ts); }  // 信封自带 hub 时间戳
+    if (node) { FC.markTs(node, row.ts); FC.insertByTs(p, node, row.ts); }  // 信封自带 hub 时间戳
   });
   MailUnread.markPeerRead(friendView); // seeing the thread IS reading it
   mails.forEach(m => {
@@ -913,10 +785,10 @@ function renderFriendChat(d) {
     lab.className = 'human-label';
     lab.textContent = who;
     bubble.prepend(lab);
-    markTs(bubble, m.ts);   // 邮件行自带邮箱时间戳
-    insertByTs(p, bubble, m.ts);
+    FC.markTs(bubble, m.ts);   // 邮件行自带邮箱时间戳
+    FC.insertByTs(p, bubble, m.ts);
   });
-  renderLiveEvents(live, p);
+  FC.renderLiveEvents(live, p, opts);
   placeAskCards(); // re-seat pending asks after the transcript repaint
   if (stick) p.stick();
   updateScrollBtn();

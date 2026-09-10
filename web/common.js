@@ -568,6 +568,174 @@
     return s.includes(SILENT_MARKER) ? s.split(SILENT_MARKER).join('').trim() : s;
   }
 
+  /* ---------- transcript rendering (both clients) ----------
+     Session-style rendering: markdown text, reasoning details, tool blocks and
+     answered ask cards — plus the friend thread's timeline, where rows carrying
+     a `ts` merge into the transcript by time and ask cards sit at the tool call
+     that raised them. The two clients differ only in cosmetics, so those come
+     in through opts:
+
+       asks            the client's FC.initAsks() bundle (answered cards)
+       spawnLookup     callId -> subagent spec (the client's replay store)
+       friend          true for the friend thread (mail echo dedupe on)
+       side            {user, agent} extra classes for the friend thread
+       mailBodies      Set of mailbox bodies already on screen (echo dedupe)
+       argsMax         tool-card argument preview length
+       spawnTitle      tooltip wording for spawn cards (mobile says 点按…)
+       reasoningHtml   (text) -> inner html of the reasoning <details>
+       liveText        (run) -> html for a streaming text run
+  */
+  function markTs(el, ts) {
+    if (el && typeof ts === 'number') el.dataset.ts = String(ts);
+    return el;
+  }
+  function insertByTs(p, el, ts) {
+    if (!el || !p.active()) return el;
+    if (typeof ts !== 'number') return el; // no stamp: keep it where it landed
+    for (const kid of [...p.el().children]) {
+      const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
+      if (kts !== null && kts > ts) { p.before(el, kid); return el; }
+    }
+    return el;
+  }
+  /* The question text a tool call itself carries — the only way to place an ask
+     record from before records carried `call_id`. Exact match, no fuzzy. */
+  function askTextOfCall(tc) {
+    try {
+      const args = JSON.parse(tc.function && tc.function.arguments || '{}');
+      const first = Array.isArray(args.questions) && args.questions.length ? args.questions[0] : args;
+      return String((first && first.question) || args.question || '').trim();
+    } catch (e) { return ''; }
+  }
+
+  function renderTranscript(p, messages, asks, opts) {
+    const side = opts.side || {};
+    const userSide = side.user || '';
+    const agentSide = side.agent || '';
+    const mailBodies = opts.mailBodies;
+    let toolBlocks = {};
+    const askByCall = new Map();  // ask record -> the tool call that raised it
+    const askQueue = [];          // records without a call id, in stored order
+    (asks || []).forEach(rec => {
+      if (rec && rec.call_id) askByCall.set(rec.call_id, rec);
+      else if (rec) askQueue.push(rec);
+    });
+    for (const m of messages || []) {
+      if (m.role === 'user') {
+        const c = String(m.content || '');
+        const echo = opts.friend ? humanEcho(c) : null; // only the friend thread merges mail
+        if (echo) {
+          if (mailBodies && mailBodies.has(echo.text)) continue; // the mailbox copy is already on screen
+          const bubble = markTs(p.add('user' + userSide, marked.parse(echo.text)), m.ts);
+          const lab = document.createElement('div');
+          lab.className = 'human-label';
+          lab.textContent = '来自 ' + echo.who + ' 的用户';
+          bubble.prepend(lab);
+        }
+        else if (c.startsWith('[background report]')) markTs(p.add('sys-note', escapeHtml(c)), m.ts);
+        else if (m.sender === 'human' && !m.mine) {
+          const bubble = markTs(p.add('user' + userSide, marked.parse(c)), m.ts);
+          const lab = document.createElement('div');
+          lab.className = 'human-label';
+          lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
+          bubble.prepend(lab);
+        }
+        else markTs(p.add('user' + userSide, marked.parse(c)), m.ts);
+      }
+      else if (m.role === 'assistant') {
+        if (m.reasoning) {
+          const det = document.createElement('details');
+          det.className = 'msg reasoning';
+          det.innerHTML = '<summary>Thinking\u2026</summary>' + opts.reasoningHtml(m.reasoning);
+          p.append(markTs(det, m.ts));
+        }
+        const text = stripSilent(m.content);
+        if (text) {
+          if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
+            markTs(p.add('error', '&#x26A0; ' + escapeHtml(text)), m.ts);
+          else markTs(p.add('assistant' + agentSide, marked.parse(text)), m.ts);
+        }
+        if (m.tool_calls) m.tool_calls.forEach(tc => {
+          const d = buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: opts.argsMax || 80 });
+          p.append(markTs(d, m.ts));
+          if (tc.function?.name === 'spawn' || tc.function?.name === 'background') attachSpawnClick(d, tc.id, opts.spawnLookup, opts.spawnTitle);
+          if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
+            // Anchored by the tool call that raised it; a record without a call
+            // id falls back to stored order, then to the call's own question text
+            // (records written before `call_id` existed).
+            let rec = askByCall.get(tc.id);
+            if (rec) askByCall.delete(tc.id);
+            else {
+              const qtext = askTextOfCall(tc);
+              const idx = qtext ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === qtext) : -1;
+              rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
+            }
+            if (rec) p.append(markTs(opts.asks.buildAnsweredAskCard(rec), rec.ts));
+          }
+          toolBlocks[tc.id] = d;
+        });
+      } else if (m.role === 'tool') {
+        const block = toolBlocks[m.tool_call_id];
+        if (block) fillToolResult(block, m.content || '');
+        else markTs(p.add('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
+      }
+    }
+    // Leftovers: their tool call is gone from the transcript, so they belong to
+    // a turn older than anything on screen (legacy records carry no ts) — a
+    // timestamped one (card asks) slots into the timeline like any other row.
+    const leftover = [...askQueue, ...askByCall.values()];
+    leftover.forEach(rec => {
+      const node = markTs(opts.asks.buildAnsweredAskCard(rec), rec.ts);
+      if (typeof rec.ts === 'number') insertByTs(p, node, rec.ts);
+      else p.prepend(node);
+    });
+  }
+
+  /* In-flight turn tape (a comm clone's live events, friend view): merge
+     adjacent text/reasoning deltas into runs so streaming reads as paragraphs
+     instead of one row per fragment. */
+  function renderLiveEvents(live, p, opts) {
+    const runs = [];
+    for (const ev of live || []) {
+      const k = ev && ev.kind;
+      if (k === 'reasoning_start' || k === 'reasoning_end') continue;
+      const last = runs[runs.length - 1];
+      if ((k === 'text' || k === 'reasoning') && last && last.kind === k) {
+        last.text += liveEvText(ev);
+        continue;
+      }
+      runs.push({ kind: k, text: liveEvText(ev), ev });
+    }
+    for (const r of runs) {
+      if (r.kind === 'text') {
+        const html = opts.liveText(r);
+        if (html) p.add('friend-live' + (opts.side ? opts.side.agent : ''), html);
+      } else if (r.kind === 'reasoning') {
+        const det = document.createElement('details');
+        det.className = 'msg reasoning';
+        det.innerHTML = '<summary>Thinking\u2026</summary>' + opts.reasoningHtml(r.text);
+        p.append(det);
+      } else if (r.kind === 'tool') {
+        const c = (r.ev && r.ev.content) || {};
+        p.add('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+          + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
+      } else if (r.kind === 'tool_result') {
+        const t = String(liveEvText(r.ev) || '');
+        p.add('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+      } else if (r.kind === 'status') {
+        p.add('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
+      } else if (r.kind === 'error') {
+        p.add('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
+      }
+    }
+  }
+  function liveEvText(ev) {
+    const c = ev && ev.content;
+    if (typeof c === 'string') return c;
+    if (c && typeof c === 'object') return c.text || c.content || c.name || '';
+    return '';
+  }
+
   window.FungiCommon = {
     initHttp, url, fetchJSON, postJSON,
     escapeHtml, fmtDate, getSessionTitle,
@@ -575,5 +743,6 @@
     buildToolCard, fillToolResult, attachSpawnClick,
     initAsks, initPendingAsks, initMailUnread,
     initPane, stripSilent, humanEcho,
+    markTs, insertByTs, askTextOfCall, renderTranscript, renderLiveEvents,
   };
 })();
