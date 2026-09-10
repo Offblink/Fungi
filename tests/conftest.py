@@ -125,6 +125,27 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
+def _never_write_the_user_config(tmp_path, monkeypatch):
+    """Point the one config path at a throwaway copy.
+
+    2026-09-10: the GUI tests patched `gui.load_config`/`gui.save_config`, which
+    the split `fungi/gui/` package no longer reads — so a "save the courier
+    memory" test wrote its own string into the user's real long-term memory
+    (and the settings test wrote its key). Per-test patching is one rename away
+    from missing again: redirect the path itself, here, for every test.
+    """
+    from fungi import config as config_mod
+
+    # A subdirectory, not tmp_path itself: tests that treat tmp_path as a data
+    # directory (test_session's SESSIONS_DIR) glob it for *.json.
+    target = tmp_path / "user-config" / "config.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if config_mod.CONFIG_PATH.is_file():
+        target.write_text(config_mod.CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", target)
+
+
+@pytest.fixture(autouse=True)
 def _fast_room_clocks(monkeypatch):
     """Rooms poll on production intervals; tests wait on those clocks for no
     reason (a courier wake is a 3s mail poll, a roster diff is a 10s heartbeat).
