@@ -129,16 +129,18 @@ def test_answered_card_verdict_persists_to_comm_transcript(server_room):
     runtime: RoomRuntime = room.webui_runtime()
     assert runtime.route_answer(ask.id, "yes") is True
     data = room._comm_store.load("comm-selftest")
-    assert data["asks"] == [
-        {
-            "id": ask.id,
-            "questions": [
-                {"question": "Allow write on homes/alpha/x?", "options": [], "allow_custom": True}
-            ],
-            "answers": ["yes"],
-            "status": "answered",
-        }
-    ]
+    (rec,) = data["asks"]
+    # card asks carry no tool-call id, but they do carry when they were answered
+    # (the friend view slots them into the transcript timeline by that stamp)
+    assert isinstance(rec.pop("ts"), float)
+    assert rec == {
+        "id": ask.id,
+        "questions": [
+            {"question": "Allow write on homes/alpha/x?", "options": [], "allow_custom": True}
+        ],
+        "answers": ["yes"],
+        "status": "answered",
+    }
 
 
 def test_cross_host_card_verdict_has_no_local_transcript(server_room):
@@ -463,10 +465,75 @@ def test_comm_turn_transcript_recorded_for_friend_view(server_room):
     room._record_comm_turn("beta", "chat", msgs, FakeAgent)
     runtime = room.webui_runtime()
     d = runtime.comm_log("beta")
-    assert d["messages"] == msgs
+    # the store stamps every turn-carried message with `ts` (friend view: merge
+    # with the timestamped ask/event/mail rows); the wire content is untouched
+    assert [{k: v for k, v in m.items() if k != "ts"} for m in d["messages"]] == msgs
+    assert all(isinstance(m["ts"], float) for m in d["messages"] if m["role"] != "system")
     assert d["subagents"][0]["id"] == "s1"
     assert d["asks"][0]["id"] == "a1"
     assert isinstance(d["events"], list)
+
+
+def test_chat_turn_after_a_clone_rebuild_keeps_the_earlier_transcript(server_room):
+    """A comm clone rebuilt after its peer dropped off the roster starts with
+    an empty history: that turn's chat record must extend the stored
+    transcript, not replace it. 2026-09-10 real-machine finding — replacing
+    there threw every earlier turn away (and the disk copy with it)."""
+
+    class FakeAgent:
+        subagents: dict = {}
+        asks: list = []
+
+    room = server_room
+    room._record_comm_turn("beta", "chat", [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[beta:comm-alpha] 早先的留言"},
+        {"role": "assistant", "content": "早先的回复"},
+    ], FakeAgent)
+    # rebuilt clone: its history only knows this turn
+    room._record_comm_turn("beta", "chat", [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[beta:comm-alpha] 新留言"},
+        {"role": "assistant", "content": "新回复"},
+    ], FakeAgent)
+
+    msgs = room.webui_runtime().comm_log("beta")["messages"]
+    assert [m["content"] for m in msgs] == [
+        "sys", "[beta:comm-alpha] 早先的留言", "早先的回复",
+        "[beta:comm-alpha] 新留言", "新回复",
+    ]
+
+
+def test_chat_turn_with_cumulative_history_does_not_duplicate(server_room):
+    """The normal case: the clone's history already contains the stored
+    transcript, so the stored copy is dropped and the history continues it —
+    no duplicated rows, and the earlier rows keep their original ts."""
+
+    class FakeAgent:
+        subagents: dict = {}
+        asks: list = []
+
+    room = server_room
+    first = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "[beta:comm-alpha] one"},
+        {"role": "assistant", "content": "two"},
+    ]
+    room._record_comm_turn("beta", "chat", first, FakeAgent)
+    stamped = room.webui_runtime().comm_log("beta")["messages"]
+    room._record_comm_turn("beta", "chat", first + [
+        {"role": "user", "content": "[beta:comm-alpha] three"},
+        {"role": "assistant", "content": "four"},
+    ], FakeAgent)
+
+    msgs = room.webui_runtime().comm_log("beta")["messages"]
+    assert [m["content"] for m in msgs] == ["sys", "[beta:comm-alpha] one", "two",
+                                            "[beta:comm-alpha] three", "four"]
+    # the older rows kept the ts they were first stored with
+    before = [m["ts"] for m in stamped if m["role"] != "system"]
+    after = [m["ts"] for m in msgs if m["role"] != "system"]
+    assert after[: len(before)] == before
+    assert after[-1] >= after[0]  # and the timeline stays ordered
 
 
 def test_comm_log_http_route_returns_full_payload(server_room):

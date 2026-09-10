@@ -148,12 +148,33 @@ def test_completed_ask_recorded_for_persistence():
     resolve_ask(content["id"], "a")
     thread.join(5)
     (rec,) = records
-    assert rec == {
-        "id": content["id"],
-        "questions": [{"question": "q?", "options": [{"label": "a"}], "allow_custom": True}],
-        "answers": "a",
-        "status": "answered",
-    }
+    assert rec["id"] == content["id"]
+    assert rec["questions"] == [
+        {"question": "q?", "options": [{"label": "a"}], "allow_custom": True}
+    ]
+    assert rec["answers"] == "a"
+    assert rec["status"] == "answered"
+    # placed by the friend view: the call that raised it + when it was answered
+    assert rec["call_id"] is None  # called directly here, not through the agent
+    assert isinstance(rec["ts"], float)
+
+
+def test_ask_record_carries_its_tool_call_id():
+    """The friend view anchors the answered card at the tool call that raised
+    it. That only works if the record remembers the id — without it the
+    renderer had to guess positionally and dumped the rest at the end."""
+    records: list = []
+    events: list = []
+    sink = FnSink(lambda t, c: events.append((t, c)))
+    tool = make_ask_tool(sink, on_answer=records.append)
+    thread = threading.Thread(
+        target=lambda: tool.fn({"question": "q?"}, "call-42"), daemon=True
+    )
+    thread.start()
+    content = first_ask(events)
+    resolve_ask(content["id"], "ok")
+    thread.join(5)
+    assert records[0]["call_id"] == "call-42"
 
 
 def test_timeout_recorded_with_timeout_status(monkeypatch):

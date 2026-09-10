@@ -149,12 +149,14 @@ def make_ask_tool(
     """Build the inquire BoundTool bound to one turn's sink.
 
     `on_answer(record)` is called once per completed ask with
-    {id, questions, answers, status: answered|timeout|aborted} for
-    persistence. `should_abort` lets a stopped turn wake the blocked tool
-    instead of holding the session for the full ASK_TIMEOUT_S (15 min).
+    {id, call_id, ts, questions, answers, status: answered|timeout|aborted} for
+    persistence — `call_id` lets the friend view anchor the answer card at the
+    tool call that raised it, and `ts` slots it into the transcript timeline.
+    `should_abort` lets a stopped turn wake the blocked tool instead of holding
+    the session for the full ASK_TIMEOUT_S (15 min).
     """
 
-    def ask(args: dict) -> str:
+    def ask(args: dict, call_id: str | None = None) -> str:
         questions = _normalize_questions(args)
         if not questions:
             return "ERROR: Missing required argument: question"
@@ -186,11 +188,18 @@ def make_ask_tool(
         finally:
             _pending.discard(ask_id)
         status = "answered" if answered else ("aborted" if aborted else "timeout")
-        record = {"id": ask_id, "questions": questions, "answers": value if answered else None, "status": status}
+        record = {
+            "id": ask_id,
+            "call_id": call_id,  # friend view: anchor this card at the tool call
+            "ts": time.time(),   # ...and slot it into the transcript timeline
+            "questions": questions,
+            "answers": value if answered else None,
+            "status": status,
+        }
         if on_answer is not None:
             on_answer(record)
         if not answered:
             return "ERROR: 回合已被停止，用户未回答" if aborted else "ERROR: 用户未回答"
         return _format_answer(value)
 
-    return BoundTool(schema=ASK_SCHEMA, fn=ask)
+    return BoundTool(schema=ASK_SCHEMA, fn=ask, with_call_id=True)

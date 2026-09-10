@@ -60,6 +60,50 @@ def _is_consent(body: dict) -> bool:
     return bool(body.get("action")) and bool(body.get("path"))
 
 
+def _comparable(msgs: list[dict]) -> list[dict]:
+    """Messages in comparison form: the store-only `ts` key dropped."""
+    return [{k: v for k, v in m.items() if k != "ts"} for m in msgs]
+
+
+def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = None) -> list[dict]:
+    """Transcript body (system prompt excluded) after a chat turn.
+
+    `fresh` is normally the clone's cumulative history: it already ends with
+    what is stored, so the stored copy is dropped and `fresh` continues it. A
+    clone rebuilt after its peer dropped off the roster starts EMPTY, though —
+    and replacing there threw every earlier turn away (2026-09-10 real-machine
+    finding). The overlap is measured, so that case appends instead.
+
+    Messages arriving now are stamped with `ts`: the friend view merges the
+    transcript with the timestamped ask/event/mail rows by that stamp.
+    """
+    now = time.time() if ts is None else ts
+    stored = [m for m in prev if m.get("role") != "system"]
+    carried = [m for m in fresh if m.get("role") != "system"]
+    stored_c, carried_c = _comparable(stored), _comparable(carried)
+    # Align the stored transcript with the clone's history (it grows at the end):
+    # a row the clone still carries keeps the ts it was first stamped with.
+    merged, si = [], 0
+    for row, comp in zip(carried, carried_c):
+        if si < len(stored_c) and comp == stored_c[si]:
+            merged.append({**row, "ts": stored[si].get("ts", now)})
+            si += 1
+        else:
+            merged.append({**row, "ts": now})
+    if si == len(stored_c):
+        return merged  # the clone carries everything still: it IS the transcript
+    # The clone forgot rows (peer dropped off the roster / history trimmed):
+    # carry them forward instead of overwriting the user's conversation.
+    remaining = list(carried_c)
+    keep = []
+    for row, comp in zip(stored, stored_c):
+        if comp in remaining:
+            remaining.remove(comp)  # the clone still has this row: fresh carries it
+        else:
+            keep.append(row)
+    return keep + [{**m, "ts": now} for m in carried]
+
+
 MAX_LIVE_EVENTS = 400  # per-peer live turn tape cap (friend-view spectating)
 _LIVE_EVENT_KINDS = {"text", "reasoning", "reasoning_start", "reasoning_end",
                      "tool", "tool_result", "status", "error"}
@@ -258,11 +302,15 @@ class RoomBase:
             try:
                 sid = "comm-" + peer
                 prev = store.load(sid) or {}
+                ts = time.time()
                 if env_type == "chat":
-                    msgs = list(messages)
+                    # Cumulative clone history: the overlap decides whether it
+                    # replaces the stored copy or only extends it (see merge).
+                    head = [messages[0]] if messages and messages[0].get("role") == "system" else []
+                    msgs = head + merge_comm_history(prev.get("messages") or [], messages, ts)
                 else:
                     msgs = [m for m in prev.get("messages") or [] if m.get("role") != "system"]
-                    msgs += [m for m in messages if m.get("role") != "system"]
+                    msgs += [{**m, "ts": ts} for m in messages if m.get("role") != "system"]
                     msgs.insert(0, messages[0])
                 subs = list(prev.get("subagents") or [])
                 new_subs = getattr(agent, "subagents", None)
@@ -287,7 +335,7 @@ class RoomBase:
         with self._comm_lock(sid):
             prev = store.load(sid) or {}
             msgs = list(prev.get("messages") or [])
-            msgs.append(msg)
+            msgs.append({**msg, "ts": msg.get("ts") or time.time()})
             del msgs[:-MAX_TRANSCRIPT_MESSAGES]
             store.save(
                 sid,
@@ -906,6 +954,7 @@ class RoomRuntime(WebUIRuntime):
                 asks.append(
                     {
                         "id": card.id,
+                        "ts": time.time(),  # friend view slots it into the timeline
                         "questions": questions,
                         "answers": value if isinstance(value, list) else [value],
                         "status": "answered",
