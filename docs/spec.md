@@ -402,3 +402,21 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 缺依赖时给**一键安装**（`python -m pip install segno`，独立控制台 + 1s 轮询，装完自动重绘；
 `sys.frozen` 的打包版不给按钮、提示更新）。`release.yml` 加 `--collect-all segno`：
 发布包不再可能缺这个纯 Python 小依赖。
+
+## 21. 增补（2026-09-11）：GUI 的"记忆"不再被测试改坏；发起房间页也会记
+
+现场：「为啥我每次点进加入房间就是新昵称和 tok_new？我记得有持久化的。」——记忆确实存在
+（`HKCU\Software\Offblink\FungiGUI` 的 `last_token` / `last_nick` / `last_ip`），但被两类东西毁掉：
+
+- **测试写进了用户的真 QSettings**：`tests/test_gui.py` 的 join 用例把自己的夹具值落盘（`tok-new`、
+  `新昵称`、`pc-alpha`、`192.168.1.20` —— 注册表里逮到的就是这些），跑完再 `remove()` 那三个 key
+  「别漏进用户设置」。**每跑一次全量测试，用户的 token/昵称/IP 就被删一次**。
+  修法：`tests/conftest.py::_hermetic_gui_settings`（session 级）把两个页面指到 test-only 的 app 名
+  （`FungiGUI-test`），跑完 clear；手工 remove 全部删掉（同 config.json 事故，同一类结构性防线）。
+  注意：`QSettings.setDefaultFormat(IniFormat)` 在 Windows 上**不影响** `QSettings(org, app)`（实测仍走注册表），
+  所以走"换 app 名"而不是"换格式"。
+- **发起房间页根本没有持久化**：token 每次构造都 `secrets.token_urlsafe(12)` 现生成、`_leave()` 又换一个，
+  昵称/主机名也不记。现在三者都从 QSettings 还原（`last_token` / `last_nick` / `last_host_name`），
+  开房、热更新 token、实时改名时写回；**离开房间不再换 token**（下一个房间继续用，好友不必重输）。
+
+顺带修了两条被午夜打翻的时间标签用例（正午锚点 + 星期几由时间戳推导，别写死）。
