@@ -304,8 +304,15 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   `WidgetWithChildrenShortcut` 上下文——只在该框聚焦时生效，不做窗口级劫持（HostPage 的
   Ctrl+C 是窗口级旧例，新加的一律不跟）。保存按钮 tooltip 注明该键位。
 - **已有同款先例**：发起房间页 Token 的 `editingFinished`（§12）——单行框回车即热更新。
-- **验证**：`tests/test_gui.py` 用 `QTest.keyClick` 打真实按键（含 Ctrl 修饰键路径）；真机另跑
-  过一遍带活动窗口的验证——无头 offscreen 下 QShortcut 根本不激活，只有真机验得到。
+- **开房/加入之后，那几格仍能「回车即更新」（2026-09-10 用户二次点名）**：`HostPage._apply_identity`
+  （主机名/昵称；Token 早有热更）与 `JoinPage._enter`（加入页四格）在房间运行中提交**能改的那部分**：
+  昵称 → `RoomBase.set_display()`（服务端直接 `hub.join` 刷 roster；客户端 `client.display` + re-join，
+  `roster.join` 本就刷新 display，所以对面 5s 轮询 `/peers` 立刻看到新名字），Token → `RoomClient.set_token()`
+  （赋值 + 心跳校验，失败还原）——房主换了 Token 后加入方靠它续上，否则请求全线 403。
+  **wire 名与房主 IP 拒绝并还原字段**（地址、roster key、`data/` 文件名、对面 comm clone 都以它们为准，
+  换它们等于换房间/换身份），InfoBar 说明原因，不静默失败。
+  坑：`join_btn` 加入成功后**一直保持禁用**（职责已交给「离开房间」），所以实时提交的守卫只能看
+  `room is None`，不能看按钮状态——否则整条实时路径静默失效（真机探针当场抓到）。
 
 ## 18. 增补（2026-09-10）：好友视图一张时间轴（把乱序根治掉）
 

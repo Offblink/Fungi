@@ -380,18 +380,20 @@ class HostPage(QWidget):
         self.name_edit.setFixedWidth(360)
         self.name_edit.setText(default_host_name())
         self.name_edit.setPlaceholderText("本机主机名（房间内的 wire 身份）")
+        self.name_edit.setToolTip("开房前：回车＝发起房间；开房后该身份固定（地址/文件名/对面信使都以它为准），改名需先离开房间")
         root.addWidget(_row("主机名", self.name_edit))
 
         self.nick_edit = LineEdit()
         self.nick_edit.setFixedWidth(360)
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，留空用主机名）")
+        self.nick_edit.setToolTip("开房前：回车＝发起房间；开房后：回车即时改名（对面立刻看到新昵称）")
         root.addWidget(_row("昵称", self.nick_edit))
 
-        # Enter launches the room from either field: both are read only at
-        # _start, so there is no lighter commit to hang off them (the token
-        # field's live hot-swap already rides editingFinished).
-        self.name_edit.returnPressed.connect(self._start)
-        self.nick_edit.returnPressed.connect(self._start)
+        # Enter in either field: launch when idle (both are read only at
+        # _start), commit what a running room can take once it is up — the
+        # nickname renames live, the wire name cannot move under it.
+        self.name_edit.returnPressed.connect(self._apply_identity)
+        self.nick_edit.returnPressed.connect(self._apply_identity)
 
         # token is an input, not a status readout: customize it before
         # launching, or edit it live while the room runs (hot-swap)
@@ -486,6 +488,47 @@ class HostPage(QWidget):
             )
         else:
             InfoBar.info("IP 未变化", ip, duration=2000, parent=self.window_ref)
+
+    def _apply_identity(self) -> None:
+        """Enter in 主机名/昵称: start when idle, otherwise commit live.
+
+        The nickname is presentation-only, so it hot-updates (the roster
+        re-join refreshes what peers see). The wire name cannot move under a
+        running room: addresses, the roster key, data/ file names and every
+        peer's comm clone are keyed on it — say so instead of doing nothing.
+        """
+        if self.room is None:
+            self._start()
+            return
+        host = self.name_edit.text().strip()
+        wire, display = _resolve_wire_name(host, self.nick_edit.text().strip())
+        if wire != self.room.host:
+            self.name_edit.setText(self.room.host)
+            self.nick_edit.setText(self.room.display)
+            InfoBar.warning(
+                "主机名未更改",
+                f"wire 身份（地址、文件名、对面信使都以「{self.room.host}」为准）"
+                "在房间运行期间固定：想换名字请先离开房间",
+                duration=6000,
+                parent=self.window_ref,
+            )
+            return
+        if display == self.room.display:
+            InfoBar.info(
+                "昵称未变化",
+                f"当前昵称：{self.room.display or self.room.host}",
+                duration=2000,
+                parent=self.window_ref,
+            )
+            return
+        applied = self.room.set_display(display)
+        self.nick_edit.setText(applied)
+        InfoBar.success(
+            "昵称已更新",
+            f"对面看到的是「{applied or self.room.host}」，即时生效",
+            duration=4000,
+            parent=self.window_ref,
+        )
 
     def _token_enter(self) -> None:
         """Enter in the Token field: launch when idle, otherwise hot-swap."""
@@ -601,6 +644,10 @@ class JoinPage(QWidget):
         self.setObjectName("joinPage")
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
         self.room = None
+        # What the live room was joined with: the fields are compared against
+        # these so Enter can tell "you changed something" from "same as joined".
+        self._joined_ip = ""
+        self._joined_token = ""
         self.join_done.connect(self._finish_join)
         self.discover_done.connect(self._fill_ip)
 
@@ -628,12 +675,14 @@ class JoinPage(QWidget):
         self.token_edit = LineEdit()
         self.token_edit.setFixedWidth(360)
         self.token_edit.setPlaceholderText("房主发给你的 Token")
+        self.token_edit.setToolTip("加入前：回车＝加入房间；加入后房主换了 Token，在这里按回车即可更新（会先校验）")
         self.token_edit.setFixedWidth(360)
         root.addWidget(_row("Token", self.token_edit))
 
         self.nick_edit = LineEdit()
         self.nick_edit.setFixedWidth(360)
         self.nick_edit.setPlaceholderText("你的昵称（中文/emoji 均可，仅用于展示）")
+        self.nick_edit.setToolTip("加入前：回车＝加入房间；加入后：回车即时改名（对面立刻看到新昵称）")
         self.nick_edit.setFixedWidth(360)
         root.addWidget(_row("昵称", self.nick_edit))
 
@@ -641,12 +690,14 @@ class JoinPage(QWidget):
         self.name_edit.setFixedWidth(360)
         self.name_edit.setText(default_host_name())
         self.name_edit.setPlaceholderText("本机主机名（wire 身份，一般不用改）")
+        self.name_edit.setToolTip("加入后该身份固定（对面按它记你），改名需先离开房间")
         root.addWidget(_row("主机名", self.name_edit))
 
-        # Enter joins from any field: the button is otherwise the only commit
-        # path, and a fresh join leaves three of these empty on purpose.
+        # Enter in any field: join when idle, commit what a running room can
+        # take once joined (昵称 live, Token verified hot-swap) — the hub
+        # address and the wire name define the room, so they need a fresh join.
         for edit in (self.ip_edit, self.token_edit, self.nick_edit, self.name_edit):
-            edit.returnPressed.connect(self._join)
+            edit.returnPressed.connect(self._enter)
 
         btn_row = QHBoxLayout()
         self.join_btn = PrimaryPushButton(FluentIcon.CONNECT, "加入房间")
@@ -739,6 +790,63 @@ class JoinPage(QWidget):
         threading.Thread(target=scan, name="room-discovery", daemon=True).start()
         self._pending = (token, nick, host)
 
+    def _enter(self) -> None:
+        """Enter in a join field: join when idle, otherwise commit live.
+
+        While joined, only two things can change under the room: the nickname
+        (roster re-join) and the Token (the host may rotate it; adopt + verify
+        by heartbeat). The hub address and the wire name are the room and the
+        identity themselves — changing them means leaving and joining again.
+        """
+        if self.room is None:
+            self._join()
+            return
+        # No join_btn guard here: the button stays disabled for the whole
+        # session once joined (its job moved to 离开房间), so gating on it would
+        # make every live update a no-op. A scan in flight cannot coincide with
+        # a live room — _join owns that window and guards itself.
+        notes: list[str] = []
+        blocked: list[str] = []
+
+        host_in = self.name_edit.text().strip()
+        if host_in and host_in != self.room.host:
+            self.name_edit.setText(self.room.host)
+            blocked.append(f"主机名（对面按「{self.room.host}」记你）在房间运行期间固定")
+
+        nick = self.nick_edit.text().strip()
+        if nick != self.room.display:
+            applied = self.room.set_display(nick)
+            self.nick_edit.setText(applied)
+            self.settings.setValue("last_nick", applied)
+            notes.append(f"昵称已更新为「{applied or self.room.host}」")
+
+        token = self.token_edit.text().strip()
+        if token and token != self._joined_token:
+            swap = getattr(self.room, "set_token", None)
+            if swap is None:  # role without a client connection to re-auth
+                blocked.append("Token 要等重新加入才能改")
+            elif swap(token):
+                self._joined_token = token
+                self.settings.setValue("last_token", token)
+                notes.append("Token 已更新并校验通过")
+            else:
+                self.token_edit.setText(self._joined_token)
+                blocked.append("Token 未通过校验（房主那边没生效？），已还原")
+
+        ip_in = self.ip_edit.text().strip()
+        if ip_in and ip_in != self._joined_ip:
+            self.ip_edit.setText(self._joined_ip)
+            blocked.append("换房主 IP 等于换房间：先「离开房间」再重新加入")
+
+        if blocked:
+            InfoBar.warning(
+                "有字段不能即时改", "；".join(blocked), duration=6000, parent=self.window_ref
+            )
+        if notes:
+            InfoBar.success("已更新", "；".join(notes), duration=4000, parent=self.window_ref)
+        elif not blocked:
+            InfoBar.info("没有改动", "当前设置与房间一致", duration=2000, parent=self.window_ref)
+
     def _refresh_ip(self) -> None:
         """Re-run subnet discovery and auto-fill the room IP (networks change)."""
         token = self.token_edit.text().strip()
@@ -784,6 +892,8 @@ class JoinPage(QWidget):
             return
         self.room.stop()  # sends leave to the hub
         self.room = None
+        self._joined_ip = ""
+        self._joined_token = ""
         self.leave_btn.setVisible(False)
         self.webui_row.setVisible(False)
         self.join_btn.setEnabled(True)
@@ -814,6 +924,8 @@ class JoinPage(QWidget):
         self.leave_btn.setVisible(True)
         self.webui_row.setVisible(True)
         self.window_ref.update_tray()
+        self._joined_ip = ip  # what Enter compares the fields against
+        self._joined_token = token
         self.settings.setValue("last_ip", ip)
         self.settings.setValue("last_token", token)
         self.settings.setValue("last_nick", nick)

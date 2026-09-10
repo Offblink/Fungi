@@ -36,7 +36,7 @@ from .events import Sink
 from .hub.app import Hub, safe_name
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
-from .protocol import Envelope, parse_addr, valid_host_name
+from .protocol import Envelope, clean_display, parse_addr, valid_host_name
 from .server import _BG_ABORTS, _PENDING_SPAWNS, WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
@@ -229,6 +229,31 @@ class RoomBase:
 
     def _peers(self) -> list[str]:
         raise NotImplementedError
+
+    def set_display(self, display: str) -> str:
+        """Rename this host's presentation nickname, live.
+
+        Only the nickname is renameable while the room runs: the wire name is
+        baked into addresses, the roster key, data/ file names and every peer's
+        comm clone, so it is fixed until the room is left and started again.
+        A rename is enough on its own — `roster.join` refreshes the display the
+        peers see, and every later message picks it up (`comm_send_human` reads
+        `self.display` per send, the courier prompt re-reads it per turn).
+        Returns the nickname the hub ended up storing.
+        """
+        wanted = clean_display(display)
+        hub = getattr(self, "hub", None)
+        if hub is not None:  # server role: its own roster is local
+            hub.join(self.host, "127.0.0.1", wanted)
+            self.display = hub.roster.display(self.host) or wanted
+            return self.display
+        client = getattr(self, "client", None)
+        if client is not None:  # client role: re-join over HTTP refreshes it
+            client.display = wanted
+            with contextlib.suppress(Exception):  # a hiccup must not lose the name locally
+                client.join()
+        self.display = wanted
+        return self.display
 
     def add_comm_clone(self, peer: str, transport) -> None:
         with self._guard:
@@ -786,6 +811,24 @@ class RoomClient(RoomBase):
 
     def _peers(self) -> list[str]:
         return sorted(self._peers_known)
+
+    def set_token(self, token: str) -> bool:
+        """Adopt a rotated room token, verified before it sticks.
+
+        The host can rotate its hub token while the room runs (every request
+        re-reads it); a joined client that keeps the old one starts failing
+        403. Nothing else caches the token, so one assignment plus a heartbeat
+        is the whole swap — and a typo is rejected here instead of breaking the
+        room silently.
+        """
+        previous = self.client.token
+        self.client.token = token
+        try:
+            self.client.heartbeat()
+        except HubError:
+            self.client.token = previous
+            return False
+        return True
 
     def _comm_transport(self, peer: str) -> RemoteTransport:
         return RemoteTransport(self.client, inbox=self.poller.inbox_for(f"{self.host}:comm-{peer}"))

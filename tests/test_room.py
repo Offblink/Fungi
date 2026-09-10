@@ -1165,3 +1165,36 @@ def test_stop_discards_pending_reports_and_aborts_running_spawn(tmp_path):
         server.shutdown()
         server.server_close()
         room.stop()
+
+
+def test_server_display_rename_is_live(server_room):
+    """开房后改昵称：roster 里立刻是新名字（对面 5s 轮询 /peers 就看到）。"""
+    room = server_room
+    assert room.set_display("  花 酱  ") == "花 酱"  # hub collapses whitespace
+    assert room.display == "花 酱"
+    assert room.hub.roster.display(room.host) == "花 酱"
+
+
+def test_client_display_rename_reaches_the_hub_roster(client_room):
+    """客户端改昵称走 re-join：hub 上的 roster 立即刷新（roster.join 会更新 display）。"""
+    hub, room = client_room
+    assert hub.roster.display("beta") in ("", "beta")
+    assert room.set_display("阿宝") == "阿宝"
+    assert hub.roster.display("beta") == "阿宝"
+    # peers listing carries it too
+    assert {"name": "beta", "display": "阿宝"} in hub.roster.entries("alphaserver")
+
+
+def test_client_token_hot_swap_is_verified(client_room):
+    """房主换了 Token：客户端热更并校验；错的 Token 必须还原，不能让房间静默 403。"""
+    hub, room = client_room
+    assert room.client.token == "tok"
+
+    hub.token = "tok2"  # host rotated: the old token now earns 403
+    assert room.set_token("tok2") is True
+    assert room.client.token == "tok2"
+    assert room.client.heartbeat()["ok"] is True  # the room works again
+
+    assert room.set_token("nope") is False
+    assert room.client.token == "tok2"  # rolled back: the verified one stays
+    assert room.client.heartbeat()["ok"] is True

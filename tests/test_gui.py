@@ -782,3 +782,104 @@ def test_token_focus_out_never_launches_the_room(window, monkeypatch):
     page.token_edit.setText("probe-token-2")
     page._apply_token()  # what editingFinished runs
     assert page.room is None
+
+
+def _running_room(host="pc-alpha", display="花酱"):
+    """A live room stub: records what Enter asks it to change."""
+    class Room:
+        calls: list = []
+
+        def __init__(self):
+            self.host = host
+            self.display = display
+            self.hub = type("Hub", (), {"token": "tok"})()
+
+        def set_display(self, name):
+            Room.calls.append(("display", name))
+            self.display = name
+            return name
+
+        def set_token(self, token):
+            Room.calls.append(("token", token))
+            self.token = token
+            return getattr(self, "_accept", True)
+
+        def stop(self):
+            pass
+
+        def open_webui(self, open_browser=True):  # noqa: ARG002
+            return "http://localhost:1"
+
+    Room.calls = []
+    return Room()
+
+
+def test_enter_in_host_nickname_renames_the_running_room(window, monkeypatch):
+    """用户要的：开房后昵称那格按回车＝即时改名（像 Token 热更一样）。"""
+    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
+    page = window.host_page
+    room = _running_room()
+    page.room = room
+    page._token = "tok"
+    page.name_edit.setText("pc-alpha")
+    page.nick_edit.setText("新昵称")
+    QTest.keyClick(page.nick_edit, Qt.Key_Return)
+    assert room.calls == [("display", "新昵称")]
+    assert room.display == "新昵称"
+    assert page.nick_edit.text() == "新昵称"
+    page.room = None
+
+
+def test_enter_in_host_wire_name_is_refused_while_running(window, monkeypatch):
+    """wire 身份开房后固定：回车不许静默失败，也不许改成别的名字。"""
+    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not relaunch"))
+    page = window.host_page
+    room = _running_room()
+    page.room = room
+    page.name_edit.setText("pc-beta")
+    page.nick_edit.setText("花酱")
+    QTest.keyClick(page.name_edit, Qt.Key_Return)
+    assert room.calls == []  # nothing applied
+    assert page.name_edit.text() == "pc-alpha"  # reverted to the live identity
+    assert room.host == "pc-alpha"
+    page.room = None
+
+
+def test_join_page_enter_applies_nickname_and_verifies_token(window, monkeypatch):
+    """加入页同理：昵称即时改；Token 热更走校验；房主 IP / 主机名要重新加入。"""
+    page = window.join_page
+    room = _running_room(host="pc-beta", display="旧昵称")
+    page.room = room
+    page._joined_ip = "192.168.1.20"
+    page._joined_token = "tok-old"
+    page.ip_edit.setText("192.168.1.99")      # a different hub = a different room
+    page.name_edit.setText("pc-other")        # wire identity is fixed
+    page.nick_edit.setText("新昵称")
+    page.token_edit.setText("tok-new")
+    QTest.keyClick(page.token_edit, Qt.Key_Return)
+    assert ("display", "新昵称") in room.calls
+    assert ("token", "tok-new") in room.calls
+    assert room.token == "tok-new"
+    assert page.nick_edit.text() == "新昵称"
+    assert page.ip_edit.text() == "192.168.1.20"    # reverted: needs a fresh join
+    assert page.name_edit.text() == "pc-beta"       # reverted: identity is fixed
+    assert page._joined_token == "tok-new"          # future compares use the new one
+    page.room = None
+
+
+def test_join_page_rejected_token_is_rolled_back(window):
+    """房主没换 Token（校验失败）→ 还原字段，别把房间带进 403。"""
+    page = window.join_page
+    room = _running_room(host="pc-beta", display="")
+    room._accept = False
+    page.room = room
+    page._joined_token = "tok-old"
+    page._joined_ip = "192.168.1.20"
+    page.ip_edit.setText("192.168.1.20")
+    page.name_edit.setText("pc-beta")
+    page.nick_edit.setText("")
+    page.token_edit.setText("tok-wrong")
+    QTest.keyClick(page.token_edit, Qt.Key_Return)
+    assert page.token_edit.text() == "tok-old"
+    assert page._joined_token == "tok-old"
+    page.room = None
