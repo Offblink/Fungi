@@ -195,4 +195,4 @@ html[data-theme="dark"] .ic-sun{display:block}
 #friend-file{background:var(--bg);color:var(--dim);border:1px solid var(--border);border-radius:50%;width:44px;height:44px;font-size:19px;cursor:pointer;flex-shrink:0;line-height:1;transition:transform 150ms var(--ease-spring),border-color 150ms}
 #friend-file:active{transform:scale(0.88)}
 .friend-unread{margin-left:auto;background:var(--accent);color:var(--on-accent);border-radius:99px;font-size:10.5px;font-weight:700;min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 8px var(--accent-glow);flex-shrink:0}
-.human-label{font-size:0.7rem;font-weight:600;color:rgba(255,255,255,0.85);margin-bottom:0.15rem}
+.human-label{font-size:0.7rem;font-weight:600;color:inherit;opacity:0.8;margin-bottom:0.15rem}

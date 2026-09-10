@@ -15,17 +15,13 @@ function setCurrentSession(id) {
 
 /* ---------- helpers ---------- */
 const escapeHtml = FC.escapeHtml;
-function addDiv(cls, html, id) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  if (id) d.id = id;
-  if (html) d.innerHTML = html;
-  const stick = isNearBottom(msgs); // measure BEFORE the node changes layout
-  msgs.appendChild(d);
-  if (stick) msgs.scrollTop = msgs.scrollHeight;
-  updateScrollBtn();
-  return d;
-}
+/* #messages has exactly one owner at a time. Every write below goes through a
+   pane writer: S for the session transcript, F for the friend thread. A writer
+   whose view does not own the pane paints nothing (FC.initPane). */
+const pane = FC.initPane({
+  msgs: () => msgs, tray: () => tray, isNearBottom, onPaint: updateScrollBtn,
+});
+const S = pane.of('session'), F = pane.of('friend');
 function isNearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
 function updateScrollBtn() {
   const b = document.getElementById('scroll-bottom');
@@ -64,7 +60,7 @@ async function reloadSessionFromServer() {
     registerArchived(s.subagents);
     const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
     renderMessages(s);
-    if (stick) { msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
+    if (stick && S.stick()) updateScrollBtn();
     loadSessions();
   } catch (e) {}
 }
@@ -103,29 +99,30 @@ async function switchSession(id) {
     const s = await r.json();
     setCurrentSession(s.id);
     rawMessages = s.messages || [];
-    msgs.innerHTML = '';
-    tray.innerHTML = '';
+    S.clear();
     registerArchived(s.subagents);
     renderMessages(s);
-    msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); // a freshly opened session starts at the latest message
+    S.stick(); updateScrollBtn(); // a freshly opened session starts at the latest message
     renderSessionList(); loadSessions();
     reattachIfRunning(s.id);
   } catch (e) { console.error('switchSession:', e); }
 }
 
 function renderMessages(s) {
-  // #messages has exactly one owner: the open friend view. A session turn
-  // finishing, a stream recovering from a drop, or a session reload used to
-  // paint here while a friend conversation was on screen — the friend thread
-  // was replaced by the session (and the friend poll would not repaint it,
-  // because its payload had not changed). 2026-09-10 real-machine finding.
-  if (friendView) return;
+  // #messages has exactly one owner, and it is not us: the open friend view
+  // owns it until it is left. A session turn finishing, a stream recovering
+  // from a drop, or a session reload used to paint here while a friend
+  // conversation was on screen — the friend thread was replaced by the session
+  // (and the friend poll would not repaint it, because its payload had not
+  // changed). The pane writers enforce this now; the early return keeps the
+  // work from happening at all. 2026-09-10 real-machine finding.
+  if (!pane.is('session')) return;
   _liveCount = 0; // full re-render: transcript replay is CSS-static, live nodes re-baseline
   // Full re-render must actually replace: renderTranscript only appends, so
   // without this clear every reload (done/ESC/retry) stacked a second copy of
   // the whole transcript below the live nodes. Clearing here makes the
   // reload path byte-for-byte the same render a page refresh does.
-  msgs.innerHTML = '';
+  S.clearMsgs();
   renderTranscript(rawMessages, s.asks || []);
   if (turn && turn.sessionId === currentSessionId) {
     // The transcript just rendered comes from the disk copy, which (turn-
@@ -147,12 +144,12 @@ function markTs(el, ts) {
   if (el && typeof ts === 'number') el.dataset.ts = String(ts);
   return el;
 }
-function insertByTs(el, ts) {
-  if (!el) return el;
+function insertByTs(p, el, ts) {
+  if (!el || !p.active()) return el;
   if (typeof ts !== 'number') return el; // no stamp: keep it where it landed
-  for (const kid of [...msgs.children]) {
+  for (const kid of [...p.el().children]) {
     const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
-    if (kts !== null && kts > ts) { msgs.insertBefore(el, kid); return el; }
+    if (kts !== null && kts > ts) { p.before(el, kid); return el; }
   }
   return el;
 }
@@ -168,7 +165,8 @@ function askTextOfCall(tc) {
 
 /* Session-style rendering shared by local sessions and friend transcripts:
    markdown text, reasoning details, tool blocks, answered ask cards. */
-function renderTranscript(messages, asks, friendThread) {
+function renderTranscript(messages, asks, friendThread, mailBodies) {
+  const p = friendThread ? F : S; // the side classes and the pane agree by construction
   let toolBlocks = {};
   const askByCall = new Map();  // ask record -> the tool call that raised it
   const askQueue = [];          // records without a call id, in stored order
@@ -182,32 +180,41 @@ function renderTranscript(messages, asks, friendThread) {
   for (const m of messages || []) {
     if (m.role === 'user') {
       const c = String(m.content || '');
-      if (c.startsWith('[background report]')) markTs(addDiv('sys-note', escapeHtml(c)), m.ts);
+      const echo = friendThread ? FC.humanEcho(c) : null;
+      if (echo) {
+        if (mailBodies && mailBodies.has(echo.text)) continue; // the mailbox copy is already on screen
+        const bubble = markTs(p.add('user' + userSide, marked.parse(echo.text)), m.ts);
+        const lab = document.createElement('div');
+        lab.className = 'human-label';
+        lab.textContent = '来自 ' + echo.who + ' 的用户';
+        bubble.prepend(lab);
+      }
+      else if (c.startsWith('[background report]')) markTs(p.add('sys-note', escapeHtml(c)), m.ts);
       else if (m.sender === 'human' && !m.mine) {
-        const bubble = markTs(addDiv('user' + userSide, marked.parse(c)), m.ts);
+        const bubble = markTs(p.add('user' + userSide, marked.parse(c)), m.ts);
         const lab = document.createElement('div');
         lab.className = 'human-label';
         lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
         bubble.prepend(lab);
       }
-      else markTs(addDiv('user' + userSide, marked.parse(c)), m.ts);
+      else markTs(p.add('user' + userSide, marked.parse(c)), m.ts);
     }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
         det.className = 'msg reasoning';
         det.innerHTML = '<summary>Thinking\u2026</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(m.reasoning) + '</div>';
-        msgs.appendChild(markTs(det, m.ts));
+        p.append(markTs(det, m.ts));
       }
-      if (m.content) {
-        const c = String(m.content);
-        if (c.startsWith('(LLM error:') || c.startsWith('(Hit max tool rounds'))
-          markTs(addDiv('error', '&#x26A0; ' + escapeHtml(c)), m.ts);
-        else markTs(addDiv('assistant' + agentSide, marked.parse(m.content)), m.ts);
+      const text = FC.stripSilent(m.content);
+      if (text) {
+        if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
+          markTs(p.add('error', '&#x26A0; ' + escapeHtml(text)), m.ts);
+        else markTs(p.add('assistant' + agentSide, marked.parse(text)), m.ts);
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
         const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 80 });
-        msgs.appendChild(markTs(d, m.ts));
+        p.append(markTs(d, m.ts));
         if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId]);
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') { // ask_user: pre-rename transcripts
           // Anchored by the tool call that raised it; a record without a call
@@ -220,14 +227,14 @@ function renderTranscript(messages, asks, friendThread) {
             const idx = text ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === text) : -1;
             rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
           }
-          if (rec) msgs.appendChild(markTs(buildAnsweredAskCard(rec), rec.ts));
+          if (rec) p.append(markTs(buildAnsweredAskCard(rec), rec.ts));
         }
         toolBlocks[tc.id] = d;
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
       if (block) FC.fillToolResult(block, m.content || '');
-      else markTs(addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
+      else markTs(p.add('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
     }
   }
   // Leftovers: their tool call is gone from the transcript, so they belong to a
@@ -235,13 +242,13 @@ function renderTranscript(messages, asks, friendThread) {
   // timestamped one (card asks) slots into the timeline like any other row.
   askQueue.forEach(rec => {
     const node = markTs(buildAnsweredAskCard(rec), rec.ts);
-    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
-    else msgs.prepend(node);
+    if (typeof rec.ts === 'number') insertByTs(p, node, rec.ts);
+    else p.prepend(node);
   });
   askByCall.forEach(rec => {  // answers whose call predates the transcript
     const node = markTs(buildAnsweredAskCard(rec), rec.ts);
-    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
-    else msgs.prepend(node);
+    if (typeof rec.ts === 'number') insertByTs(p, node, rec.ts);
+    else p.prepend(node);
   });
 }
 async function newSession() {
@@ -258,7 +265,7 @@ async function newSession() {
     const r = await fetch('/new', { method: 'POST' });
     if (!r.ok) throw new Error(r.status);
     const { id } = await r.json();
-    setCurrentSession(id); rawMessages = []; msgs.innerHTML = ''; tray.innerHTML = '';
+    setCurrentSession(id); rawMessages = []; S.clear();
     sessionDirty = false;
     await loadSessions();
   } catch (e) { console.error('newSession:', e); }
@@ -266,7 +273,7 @@ async function newSession() {
 async function deleteSession(id) {
   try {
     await fetch('/session?id=' + encodeURIComponent(id), { method: 'DELETE' });
-    if (id === currentSessionId) { setCurrentSession(null); msgs.innerHTML = ''; tray.innerHTML = ''; }
+    if (id === currentSessionId) { setCurrentSession(null); S.clear(); }
     document.getElementById('session-filter').value = '';
     await loadSessions();
   } catch (e) {}
@@ -371,7 +378,7 @@ function agentBubble(id) {
   b.title = (a.tool === 'background' ? 'Bg' : (a.layer === 3 ? 'L3' : 'L2')) + ': ' + a.goal;
   b.innerHTML = (a.tool === 'background' ? 'Bg' : 'L' + a.layer) + '<span class="agent-status-dot"></span>';
   b.addEventListener('click', () => openAgentModal(id));
-  tray.appendChild(b);
+  S.inTray(b);
   window.fungiMotion?.float?.(b);
   return b;
 }
@@ -546,7 +553,7 @@ async function recoverAfterDrop(sid) {
   if (!sid) return;
   // Reconcile the session pane only when it is the pane on screen: a friend
   // conversation must survive a chat stream dying behind it.
-  if (!friendView) await reloadSessionFromServer();
+  if (pane.is('session')) await reloadSessionFromServer();
   if (turn || processing) return; // user already started something else
   await loadSessions();           // fresh s.running for the reattach check
   reattachIfRunning(sid);
@@ -605,7 +612,7 @@ async function pumpStream(url, body, method = 'POST') {
 function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
-  const visible = currentSessionId === t.sessionId && !friendView;
+  const visible = currentSessionId === t.sessionId && pane.is('session');
   const stick = isNearBottom(msgs); // measure before the event mutates the DOM
   switch (obj.type) {
     case 'text': {
@@ -680,7 +687,7 @@ function handleTurnEvent(obj) {
       // A finished session turn may only repaint its own pane: with a friend
       // conversation open, refresh the session list and leave #messages alone
       // (renderMessages enforces this too — this keeps the fetch out as well).
-      const viewing = currentSessionId === t.sessionId && !friendView;
+      const viewing = currentSessionId === t.sessionId && pane.is('session');
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
@@ -696,7 +703,7 @@ function handleTurnEvent(obj) {
       break;
     }
   }
-  if (visible && currentSessionId === t.sessionId) { if (stick) msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
+  if (visible && currentSessionId === t.sessionId) { if (stick) S.stick(); updateScrollBtn(); }
 }
 
 function updateLastText() {
@@ -704,7 +711,7 @@ function updateLastText() {
   const idx = t.entries.map(x => x.kind).lastIndexOf('text');
   if (idx < 0) return renderTurnLive();
   const el = document.getElementById('live-text-' + idx);
-  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(t.entries[idx].content); if (stick) msgs.scrollTop = msgs.scrollHeight; }
+  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(FC.stripSilent(t.entries[idx].content)); if (stick) S.stick(); }
   else renderTurnLive();
 }
 
@@ -718,15 +725,15 @@ function updateLastReasoning() {
 }
 
 function renderTurnLive() {
-  if (!turn || turn.sessionId !== currentSessionId || friendView) return;
+  if (!turn || turn.sessionId !== currentSessionId || !pane.is('session')) return;
   const saved = saveAskCardState();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
-  msgs.querySelectorAll('.live-node').forEach(n => n.remove());
+  S.el().querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText && !turn.userRendered) {
     const u = document.createElement('div');
     u.className = 'msg user live-node';
     u.innerHTML = marked.parse(turn.userText);
-    msgs.appendChild(u);
+    S.append(u);
   }
   turn.entries.forEach((e, i) => {
     if (e.kind === 'reasoning') {
@@ -734,33 +741,35 @@ function renderTurnLive() {
       det.className = 'msg reasoning live-node'; det.id = 'live-details-' + i; det.open = !e.closed;
       det.innerHTML = '<summary>Thinking\u2026</summary><div id="live-reasoning-' + i + '"></div>';
       det.querySelector('#live-reasoning-' + i).textContent = e.content;
-      msgs.appendChild(det);
+      S.append(det);
     } else if (e.kind === 'text') {
+      const text = FC.stripSilent(e.content);
+      if (!text) return; // the abstention marker alone leaves no bubble
       const ad = document.createElement('div');
       ad.className = 'msg assistant live-node'; ad.id = 'live-text-' + i;
-      ad.innerHTML = marked.parse(e.content);
-      msgs.appendChild(ad);
+      ad.innerHTML = marked.parse(text);
+      S.append(ad);
     } else if (e.kind === 'tool') {
       const d = FC.buildToolCard({ id: e.id, name: e.name, args: e.args, result: e.result }, { argsMax: 80 });
       d.classList.add('live-node');
-      msgs.appendChild(d);
+      S.append(d);
       if (e.name === 'spawn' || e.name === 'background') FC.attachSpawnClick(d, e.id, callId => specByCall[callId] || archivedByCall[callId]);
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');
-      msgs.appendChild(card);
+      S.append(card);
     } else if (e.kind === 'error') {
       const d = document.createElement('div');
       d.className = 'msg error live-node';
       d.innerHTML = '&#x26A0; ' + escapeHtml(e.content);
-      msgs.appendChild(d);
+      S.append(d);
     }
   });
-  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  S.stick();
   // Motion: animate only nodes that appeared since the previous streaming
   // re-render — every text chunk rebuilds .live-node, re-animating all of
   // them would flicker (docs/webui-ux.md contract).
-  var _live = msgs.querySelectorAll('.live-node');
+  var _live = S.el().querySelectorAll('.live-node');
   if (window.fungiMotion && !window.fungiMotion.reduced) {
     for (var _li = _liveCount; _li < _live.length; _li++) {
       var _n = _live[_li];
@@ -906,9 +915,17 @@ function displayOf(host) {
   return host; // no display -> wire name
 }
 
+/* The only place that changes which view owns #messages, so the pane flag and
+   `friendView` cannot drift apart: a friend host takes the pane, null gives it
+   back to the session. */
+function setView(host) {
+  friendView = host;
+  pane.take(host ? 'friend' : 'session');
+}
+
 function leaveFriendView() {
   const wasViewing = friendView !== null;
-  friendView = null;
+  setView(null);
   lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
@@ -917,9 +934,8 @@ function leaveFriendView() {
   document.getElementById('friend-bar').classList.remove('visible');
   renderFriendList();
   if (wasViewing) {
-    // openFriendChat wiped the message area without touching session state:
-    // drop the friend rows, then re-render the session that was on screen.
-    msgs.innerHTML = ''; tray.innerHTML = '';
+    // setView wiped the message area without touching session state: re-render
+    // the session that was on screen.
     if (currentSessionId) reloadSessionFromServer();
   }
 }
@@ -932,7 +948,7 @@ async function loadPeers() {
     allPeers = d.peers || [];
     document.getElementById('friends-count').textContent = allPeers.length ? '(' + allPeers.length + ')' : '';
     renderFriendList();
-    if (friendView) refreshFriendChat();
+    if (pane.is('friend')) refreshFriendChat();
   } catch (e) {}
 }
 
@@ -963,11 +979,9 @@ async function openFriendChat(host) {
      every entry with the JS stack that triggered it. */
   try { (window.__navlog = window.__navlog || [])
     .push({ t: new Date().toISOString(), host, stack: new Error().stack }); } catch (e) {}
-  friendView = host;
+  setView(host);
   lastFriendPayload = null;
   lastTransferCount = -1;
-  msgs.innerHTML = '';
-  tray.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('friend-input-area').hidden = false;
   document.getElementById('friend-title').textContent = ' \u2014 @' + displayOf(host);
@@ -995,7 +1009,7 @@ function initConsentSlider() {
   const apply = clientX => {
     const rect = s.getBoundingClientRect();
     const mode = (clientX - rect.left) < rect.width / 2 ? 'allow' : 'ask';
-    if (mode === s._mode || !friendView) return;
+    if (mode === s._mode || !pane.is('friend')) return;
     setConsentSlider(mode);
     fetch('/consent-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ host: friendView, mode }) }).catch(() => {});
@@ -1038,7 +1052,7 @@ function liveEvText(ev) {
   if (c && typeof c === 'object') return c.text || c.content || c.name || '';
   return '';
 }
-function renderLiveEvents(live) {
+function renderLiveEvents(live, p) {
   // In-flight comm clone turn: merge adjacent text/reasoning deltas into
   // runs so streaming reads as paragraphs, not one fragment per row.
   const runs = [];
@@ -1054,27 +1068,29 @@ function renderLiveEvents(live) {
   }
   for (const r of runs) {
     if (r.kind === 'text') {
-      addDiv('friend-live friend-mine', marked.parse(r.text));
+      const text = FC.stripSilent(r.text);
+      if (text) p.add('friend-live friend-mine', marked.parse(text));
     } else if (r.kind === 'reasoning') {
       const det = document.createElement('details');
       det.className = 'msg reasoning';
       det.innerHTML = '<summary>Thinking\u2026</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(r.text) + '</div>';
-      msgs.appendChild(det);
+      p.append(det);
     } else if (r.kind === 'tool') {
       const c = (r.ev && r.ev.content) || {};
-      addDiv('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+      p.add('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
         + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
     } else if (r.kind === 'tool_result') {
       const t = String(liveEvText(r.ev) || '');
-      addDiv('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+      p.add('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
     } else if (r.kind === 'status') {
-      addDiv('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
+      p.add('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
     } else if (r.kind === 'error') {
-      addDiv('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
+      p.add('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
     }
   }
 }
 function renderFriendChat(d) {
+  const p = F;
   const messages = d.messages || [];
   const events = d.events || [];
   const live = d.live || [];
@@ -1085,23 +1101,23 @@ function renderFriendChat(d) {
     // made it look like the conversation had been lost.
     return;
   }
-  msgs.innerHTML = '';
-  tray.innerHTML = '';
+  p.clear();
   registerArchived(d.subagents || []);
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
-  renderTranscript(messages, d.asks || [], true);
+  const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
+  renderTranscript(messages, d.asks || [], true, mailBodies);
   var fileNodes = [];
   events.forEach(row => {
     let node = null;
     if (row.kind === 'transfer')
-      node = addDiv('friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+      node = p.add('friend-event file', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     else if (row.kind === 'task')
-      node = addDiv('friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = p.add('friend-event task', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      node = addDiv('friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = p.add('friend-event result', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
     if (node) {
       markTs(node, row.ts);      // envelopes carry the hub's timestamp
-      insertByTs(node, row.ts);
+      insertByTs(p, node, row.ts);
       if (row.kind === 'transfer') fileNodes.push(node);
     }
   });
@@ -1122,17 +1138,17 @@ function renderFriendChat(d) {
       : (String(m.from || '').endsWith(':human')
         ? '来自 ' + displayOf(m.peer) + ' 的用户'
         : displayOf(m.peer) + ' 的 Agent');
-    const bubble = addDiv('user' + (mine ? ' friend-mine' : ' friend-peer'), html);
+    const bubble = p.add('user' + (mine ? ' friend-mine' : ' friend-peer'), html);
     const lab = document.createElement('div');
     lab.className = 'human-label';
     lab.textContent = who;
     bubble.prepend(lab);
     markTs(bubble, m.ts);   // mail rows carry the mailbox timestamp
-    insertByTs(bubble, m.ts);
+    insertByTs(p, bubble, m.ts);
   });
-  renderLiveEvents(live);
+  renderLiveEvents(live, p);
   placeAskCards(); // re-seat pending asks after the transcript repaint
-  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  if (stick) p.stick();
   updateScrollBtn();
 }
 
@@ -1165,14 +1181,14 @@ MailUnread.start();
 /* ---------- friend view composer: human direct sends ---------- */
 const friendInput = document.getElementById('friend-input');
 async function commSend(payload) {
-  if (!friendView) return;
+  if (!pane.is('friend')) return;
   const btn = document.getElementById('friend-send');
   btn.disabled = true;
   try {
     const r = await fetch('/comm-send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ host: friendView }, payload)) });
     const d = await r.json();
-    if (d.error) addDiv('friend-event', '&#x26A0 ' + escapeHtml(d.error));
+    if (d.error) F.add('friend-event', '&#x26A0 ' + escapeHtml(d.error));
   } catch (e) {} finally { btn.disabled = false; }
   setTimeout(refreshFriendChat, 300); // pull the new message/file event in quickly
 }

@@ -439,11 +439,141 @@
     return { start, stop, poll, byPeer, markPeerRead };
   }
 
+  /* ---------- #messages ownership ----------
+     One container, one owner at a time. Every render path used to write into
+     the same #messages/#tray and trust separate entry guards to keep the other
+     view out; a guard someone forgot painted the session transcript over an
+     open friend conversation, and the friend poll would not repaint it (its
+     payload had not changed) — the thread only came back on a page refresh
+     (2026-09-10 real-machine finding).
+
+     Now the writes go through a view-bound writer: `pane.of('friend').add(...)`
+     writes only while the friend view owns the pane, and is a no-op otherwise
+     (the node is built but never attached). Ownership is one flag instead of a
+     convention spread across the render sites, and `pane.owner()` can be
+     asserted directly.
+
+     ctx: { msgs() -> el, tray() -> el, isNearBottom(el) -> bool, onPaint?() } */
+  function initPane(ctx) {
+    let owner = 'session';
+    const refused = []; // view:paint pairs dropped for not owning the pane
+    const painted = () => { if (ctx.onPaint) ctx.onPaint(); };
+    // The mobile page has no persistent tray (its bubbles live in a bottom
+    // sheet it manages itself), so the tray side is optional.
+    const clearTray = () => {
+      const t = ctx.tray && ctx.tray();
+      if (t) t.innerHTML = '';
+    };
+    function of(view) {
+      const active = () => owner === view;
+      const attach = (node, ref) => {
+        if (!active()) { refused.push(view + ':' + (node.nodeName || '?') + '.' + (node.className || '')); return node; }
+        const el = ctx.msgs();
+        if (ref) el.insertBefore(node, ref); else el.appendChild(node);
+        painted();
+        return node;
+      };
+      return {
+        view,
+        active,
+        /* The live container. Reads (children, querySelectorAll) are safe from
+           any view; a write through it is not — use the methods below. */
+        el: () => ctx.msgs(),
+        clear() {
+          if (!active()) { refused.push(view + ':clear'); return false; }
+          ctx.msgs().innerHTML = '';
+          clearTray();
+          painted();
+          return true;
+        },
+        /* Messages only: a transcript repaint must not wipe the live subagent
+           bubbles sitting in the tray. */
+        clearMsgs() {
+          if (!active()) { refused.push(view + ':clear-msgs'); return false; }
+          ctx.msgs().innerHTML = '';
+          painted();
+          return true;
+        },
+        /* Build a .msg node and append it, keeping the reader pinned to the
+           bottom the way a chat should. A refused write still hands the node
+           back (detached), so callers can decorate what they get. pinOnAdd
+           false = the caller pins once at the end of its own render. */
+        add(cls, html, id) {
+          const d = document.createElement('div');
+          d.className = 'msg ' + cls;
+          if (id) d.id = id;
+          if (html) d.innerHTML = html;
+          const pin = ctx.pinOnAdd !== false && active() && ctx.isNearBottom(ctx.msgs());
+          attach(d);
+          if (pin) { const el = ctx.msgs(); el.scrollTop = el.scrollHeight; }
+          return d;
+        },
+        append: node => attach(node),
+        before: (node, ref) => attach(node, ref),
+        prepend(node) {
+          if (!active()) { refused.push(view + ':prepend'); return node; }
+          ctx.msgs().prepend(node);
+          painted();
+          return node;
+        },
+        /* Keep the bottom pinned after a repaint that replaced the pane. */
+        stick() {
+          if (!active()) return false;
+          const el = ctx.msgs();
+          el.scrollTop = el.scrollHeight;
+          return true;
+        },
+        inTray(node) {
+          const t = ctx.tray && ctx.tray();
+          if (!active() || !t) { refused.push(view + ':tray'); return node; }
+          t.appendChild(node);
+          return node;
+        },
+      };
+    }
+    return {
+      owner: () => owner,
+      is: view => owner === view,
+      /* Hand the pane to a view and wipe it: whoever takes over starts empty. */
+      take(view) {
+        owner = view;
+        ctx.msgs().innerHTML = '';
+        clearTray();
+        painted();
+      },
+      of,
+      refused,
+    };
+  }
+
+  /* A human message shows up twice: the mailbox (authoritative — both sides, the
+     sender's nickname, a hub timestamp) and the courier's transcript of the turn
+     it woke (`[来自 <host> 的用户] text`, built by clone/base.py render_input).
+     The transcript copy carries the WIRE name, so with a nickname set the same
+     line looked like two messages signed by two different people (2026-09-10
+     user report). The mailbox copy is the one to keep; this recognises the echo. */
+  function humanEcho(content) {
+    const m = /^\[来自 (.+?) 的用户\]\s?([\s\S]*)$/.exec(String(content || ''));
+    return m ? { who: m[1], text: m[2].trim() } : null;
+  }
+
+  /* The courier's abstention marker is a delivery control token, not text to
+     read: `<<SILENT>>` ends a comm turn silently (clone/comm.py). When one is
+     left in a transcript — an older file, or the model adding it after real
+     words — the browser throws the unknown tag away and the reader sees `<>`
+     (2026-09-10 user report). Strip it wherever a body is rendered. */
+  const SILENT_MARKER = '<<SILENT>>';
+  function stripSilent(text) {
+    const s = String(text == null ? '' : text);
+    return s.includes(SILENT_MARKER) ? s.split(SILENT_MARKER).join('').trim() : s;
+  }
+
   window.FungiCommon = {
     initHttp, url, fetchJSON, postJSON,
     escapeHtml, fmtDate, getSessionTitle,
     initConfirmModal, showConfirm, closeConfirm,
     buildToolCard, fillToolResult, attachSpawnClick,
     initAsks, initPendingAsks, initMailUnread,
+    initPane, stripSilent, humanEcho,
   };
 })();

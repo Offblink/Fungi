@@ -291,4 +291,4 @@ html.motion-on .agent-bubble{animation:none}
 #friend-browse:hover{background:var(--bg);color:var(--text);border-color:var(--accent)}
 #friend-browse:active{transform:scale(0.9)}
 .friend-unread{margin-left:auto;background:var(--accent);color:var(--on-accent);border-radius:99px;font-size:10.5px;font-weight:700;min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 8px var(--accent-glow);flex-shrink:0}
-.human-label{font-size:0.72rem;font-weight:600;color:rgba(255,255,255,0.85);margin-bottom:0.2rem;letter-spacing:0.02em}
+.human-label{font-size:0.72rem;font-weight:600;color:inherit;opacity:0.8;margin-bottom:0.2rem;letter-spacing:0.02em}

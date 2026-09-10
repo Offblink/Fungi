@@ -28,14 +28,16 @@ function setCurrentSession(id) {
   try { if (id) localStorage.setItem('fungi-session-m', id); else localStorage.removeItem('fungi-session-m'); } catch (e) {}
 }
 const escapeHtml = FC.escapeHtml;
-function addDiv(cls, html, id) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  if (id) d.id = id;
-  if (html) d.innerHTML = html;
-  msgs.appendChild(d);
-  return d;
-}
+/* #messages 一次只有一个主人（桌面同款，见 common.js 的 initPane）：所有重绘都经
+   pane 写入，非主人的写入落空。S=会话，F=好友。手机端不在每次 append 时钉底，
+   由各渲染收尾自己 stick（pinOnAdd:false）。 */
+const pane = FC.initPane({
+  msgs: () => msgs,
+  tray: () => null,   // 手机端没有托盘（子代理气泡走 bottom sheet，自管自己的元素）
+  isNearBottom,
+  pinOnAdd: false,
+});
+const S = pane.of('session'), F = pane.of('friend');
 function isNearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
 function updateScrollBtn() {
   const b = document.getElementById('scroll-bottom');
@@ -73,7 +75,7 @@ async function reloadSessionFromServer() {
     rawMessages = s.messages || [];
     const stick = isNearBottom(msgs);
     renderMessages(s);
-    if (stick) { msgs.scrollTop = msgs.scrollHeight; updateScrollBtn(); }
+    if (stick && S.stick()) updateScrollBtn();
     loadSessions();
   } catch (e) {}
 }
@@ -99,7 +101,7 @@ async function closeCurrentSession() {
   loadSessions();
 }
 async function switchSession(id) {
-  if (id === currentSessionId && !friendView) { closeDrawer(); return; }
+  if (id === currentSessionId && pane.is('session')) { closeDrawer(); return; }
   leaveFriendView();
   await closeCurrentSession();
   sessionDirty = false;
@@ -109,10 +111,10 @@ async function switchSession(id) {
     const s = await r.json();
     setCurrentSession(s.id);
     rawMessages = s.messages || [];
-    msgs.innerHTML = '';
+    S.clearMsgs();
     renderMessages(s);
     document.getElementById('session-title').textContent = s.title || getSessionTitle(rawMessages) || 'Fungi';
-    msgs.scrollTop = msgs.scrollHeight; updateScrollBtn();
+    S.stick(); updateScrollBtn();
     renderSessionList(); loadSessions();
     reattachIfRunning(s.id);
   } catch (e) { window.__swErr = String((e && e.stack) || e); if (e.message !== 'unauthorized') console.error('switchSession:', e); }
@@ -132,7 +134,7 @@ async function newSession() {
     const r = await fetchJSON('/new', { method: 'POST' });
     if (!r.ok) throw new Error(r.status);
     const { id } = await r.json();
-    setCurrentSession(id); rawMessages = []; msgs.innerHTML = '';
+    setCurrentSession(id); rawMessages = []; S.clearMsgs();
     document.getElementById('session-title').textContent = 'Fungi';
     sessionDirty = false;
     await loadSessions();
@@ -143,7 +145,7 @@ async function deleteSession(id) {
   try {
     await fetch(api('/session?id=' + encodeURIComponent(id)), { method: 'DELETE' });
     if (id === currentSessionId) {
-      setCurrentSession(null); msgs.innerHTML = '';
+      setCurrentSession(null); S.clearMsgs();
       document.getElementById('session-title').textContent = 'Fungi';
     }
     document.getElementById('session-filter').value = '';
@@ -223,12 +225,12 @@ const fmtDate = d => FC.fmtDate(d, 'zh-CN');
 function renderMessages(s) {
   // #messages 一次只有一个主人：好友视图开着时任何会话侧重绘都不许落笔
   // （桌面同款，2026-09-10 真机 bug：回合 done 把好友对话整屏换成会话）。
-  if (friendView) return;
+  if (!pane.is('session')) return; // 好友视图握着 #messages
   _liveCount = 0;
   // Full re-render must replace: renderTranscript only appends (b8e3b65 contract).
-  msgs.innerHTML = '';
+  S.clearMsgs();
   registerArchived(s.subagents); // spawn cards from past sessions stay clickable
-  renderTranscript(rawMessages, s.asks || []);
+  renderTranscript(rawMessages, s.asks || [], S);
   if (turn && turn.sessionId === currentSessionId) {
     if (turn.userText && rawMessages.some(m => m.role === 'user' && m.content === turn.userText)) {
       turn.userRendered = true; // disk copy already has it; live bubble would double it
@@ -243,12 +245,12 @@ function markTs(el, ts) {
   if (el && typeof ts === 'number') el.dataset.ts = String(ts);
   return el;
 }
-function insertByTs(el, ts) {
-  if (!el) return el;
+function insertByTs(p, el, ts) {
+  if (!el || !p.active()) return el;
   if (typeof ts !== 'number') return el;
-  for (const kid of [...msgs.children]) {
+  for (const kid of [...p.el().children]) {
     const kts = kid.dataset && kid.dataset.ts ? parseFloat(kid.dataset.ts) : null;
-    if (kts !== null && kts > ts) { msgs.insertBefore(el, kid); return el; }
+    if (kts !== null && kts > ts) { p.before(el, kid); return el; }
   }
   return el;
 }
@@ -260,7 +262,7 @@ function askTextOfCall(tc) {
     return String((first && first.question) || args.question || '').trim();
   } catch (e) { return ''; }
 }
-function renderTranscript(messages, asks) {
+function renderTranscript(messages, asks, p, mailBodies) {
   let toolBlocks = {};
   const askByCall = new Map();  // ask 记录 -> 引发它的工具调用
   const askQueue = [];          // 没有 call_id 的记录，按存储顺序
@@ -271,32 +273,41 @@ function renderTranscript(messages, asks) {
   for (const m of messages || []) {
     if (m.role === 'user') {
       const c = String(m.content || '');
-      if (c.startsWith('[background report]')) markTs(addDiv('sys-note', escapeHtml(c)), m.ts);
+      const echo = FC.humanEcho(c);
+      if (echo) {
+        if (mailBodies && mailBodies.has(echo.text)) continue; // the mailbox copy is already on screen
+        const bubble = markTs(p.add('user', marked.parse(echo.text)), m.ts);
+        const lab = document.createElement('div');
+        lab.className = 'human-label';
+        lab.textContent = '来自 ' + echo.who + ' 的用户';
+        bubble.prepend(lab);
+      }
+      else if (c.startsWith('[background report]')) markTs(p.add('sys-note', escapeHtml(c)), m.ts);
       else if (m.sender === 'human' && !m.mine) {
-        const bubble = markTs(addDiv('user', marked.parse(c)), m.ts);
+        const bubble = markTs(p.add('user', marked.parse(c)), m.ts);
         const lab = document.createElement('div');
         lab.className = 'human-label';
         lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
         bubble.prepend(lab);
       }
-      else markTs(addDiv('user', marked.parse(c)), m.ts);
+      else markTs(p.add('user', marked.parse(c)), m.ts);
     }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
         const det = document.createElement('details');
         det.className = 'msg reasoning';
         det.innerHTML = '<summary>Thinking\u2026</summary><div>' + escapeHtml(m.reasoning) + '</div>';
-        msgs.appendChild(markTs(det, m.ts));
+        p.append(markTs(det, m.ts));
       }
-      if (m.content) {
-        const c = String(m.content);
-        if (c.startsWith('(LLM error:') || c.startsWith('(Hit max tool rounds'))
-          markTs(addDiv('error', '&#x26A0; ' + escapeHtml(c)), m.ts);
-        else markTs(addDiv('assistant', marked.parse(m.content)), m.ts);
+      const text = FC.stripSilent(m.content);
+      if (text) {
+        if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
+          markTs(p.add('error', '&#x26A0; ' + escapeHtml(text)), m.ts);
+        else markTs(p.add('assistant', marked.parse(text)), m.ts);
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
         const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 60 });
-        msgs.appendChild(markTs(d, m.ts));
+        p.append(markTs(d, m.ts));
         if (tc.function?.name === 'spawn' || tc.function?.name === 'background') FC.attachSpawnClick(d, tc.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
         if (tc.function?.name === 'inquire' || tc.function?.name === 'confirm' || tc.function?.name === 'ask_user') {
           let rec = askByCall.get(tc.id);
@@ -306,14 +317,14 @@ function renderTranscript(messages, asks) {
             const idx = text ? askQueue.findIndex(r => String(((r.questions || [])[0] || {}).question || '').trim() === text) : -1;
             rec = idx >= 0 ? askQueue.splice(idx, 1)[0] : (askQueue.length ? askQueue.shift() : null);
           }
-          if (rec) msgs.appendChild(markTs(buildAnsweredAskCard(rec), rec.ts));
+          if (rec) p.append(markTs(buildAnsweredAskCard(rec), rec.ts));
         }
         toolBlocks[tc.id] = d;
       });
     } else if (m.role === 'tool') {
       const block = toolBlocks[m.tool_call_id];
       if (block) FC.fillToolResult(block, m.content || '');
-      else markTs(addDiv('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
+      else markTs(p.add('tool', '<pre>' + escapeHtml(m.content || '') + '</pre>'), m.ts);
     }
   }
   // 剩下的：工具调用已不在转录里 → 属于比画面更早的回合（旧记录没有 ts）；
@@ -321,8 +332,8 @@ function renderTranscript(messages, asks) {
   const leftover = [...askQueue, ...askByCall.values()];
   leftover.forEach(rec => {
     const node = markTs(buildAnsweredAskCard(rec), rec.ts);
-    if (typeof rec.ts === 'number') insertByTs(node, rec.ts);
-    else msgs.prepend(node);
+    if (typeof rec.ts === 'number') insertByTs(p, node, rec.ts);
+    else p.prepend(node);
   });
 }
 
@@ -439,7 +450,7 @@ function reattachIfRunning(sid) {
 async function recoverAfterDrop(sid) {
   if (!sid) return;
   // 好友视图开着时不抢 #messages：会话侧的补画留给离开好友视图时做。
-  if (!friendView) await reloadSessionFromServer();
+  if (pane.is('session')) await reloadSessionFromServer();
   if (turn || processing) return; // user already started something else
   await loadSessions();           // fresh s.running for the reattach check
   reattachIfRunning(sid);
@@ -493,7 +504,7 @@ async function pumpStream(url, body, method = 'POST') {
 function handleTurnEvent(obj) {
   const t = turn;
   if (!t) return;
-  const visible = currentSessionId === t.sessionId && !friendView;
+  const visible = currentSessionId === t.sessionId && pane.is('session');
   const stick = isNearBottom(msgs); // measure before the event mutates the DOM
   switch (obj.type) {
     case 'text': {
@@ -570,7 +581,7 @@ function handleTurnEvent(obj) {
       break;
     case 'done': {
       // 好友视图开着时只刷会话列表，不重绘 #messages（见 renderMessages 的所有权）。
-      const viewing = currentSessionId === t.sessionId && !friendView;
+      const viewing = currentSessionId === t.sessionId && pane.is('session');
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
@@ -587,7 +598,7 @@ function handleTurnEvent(obj) {
       break;
     }
   }
-  if (visible && currentSessionId === t.sessionId && stick) msgs.scrollTop = msgs.scrollHeight;
+  if (visible && currentSessionId === t.sessionId && stick) S.stick();
 }
 
 function updateLastText() {
@@ -595,7 +606,7 @@ function updateLastText() {
   const idx = t.entries.map(x => x.kind).lastIndexOf('text');
   if (idx < 0) return renderTurnLive();
   const el = document.getElementById('live-text-' + idx);
-  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(t.entries[idx].content) + '<span class="live-cursor"></span>'; if (stick) msgs.scrollTop = msgs.scrollHeight; }
+  if (el) { const stick = isNearBottom(msgs); el.innerHTML = marked.parse(FC.stripSilent(t.entries[idx].content)) + '<span class="live-cursor"></span>'; if (stick) S.stick(); }
   else renderTurnLive();
 }
 function updateLastReasoning() {
@@ -607,15 +618,15 @@ function updateLastReasoning() {
   else renderTurnLive();
 }
 function renderTurnLive() {
-  if (!turn || turn.sessionId !== currentSessionId || friendView) return;
+  if (!turn || turn.sessionId !== currentSessionId || !pane.is('session')) return;
   const saved = saveAskCardState();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
-  msgs.querySelectorAll('.live-node').forEach(n => n.remove());
+  S.el().querySelectorAll('.live-node').forEach(n => n.remove());
   if (turn.userText && !turn.userRendered) {
     const u = document.createElement('div');
     u.className = 'msg user live-node';
     u.innerHTML = marked.parse(turn.userText);
-    msgs.appendChild(u);
+    S.append(u);
   }
   turn.entries.forEach((e, i) => {
     if (e.kind === 'reasoning') {
@@ -623,32 +634,34 @@ function renderTurnLive() {
       det.className = 'msg reasoning live-node'; det.id = 'live-details-' + i; det.open = !e.closed;
       det.innerHTML = '<summary>Thinking\u2026</summary><div id="live-reasoning-' + i + '"></div>';
       det.querySelector('#live-reasoning-' + i).textContent = e.content;
-      msgs.appendChild(det);
+      S.append(det);
     } else if (e.kind === 'text') {
+      const text = FC.stripSilent(e.content);
+      if (!text) return; // the abstention marker alone leaves no bubble
       const ad = document.createElement('div');
       ad.className = 'msg assistant live-node'; ad.id = 'live-text-' + i;
-      ad.innerHTML = marked.parse(e.content) + '<span class="live-cursor"></span>';
-      msgs.appendChild(ad);
+      ad.innerHTML = marked.parse(text) + '<span class="live-cursor"></span>';
+      S.append(ad);
     } else if (e.kind === 'tool') {
       const d = FC.buildToolCard({ id: e.id, name: e.name, args: e.args, result: e.result }, { argsMax: 60 });
       d.classList.add('live-node');
-      msgs.appendChild(d);
+      S.append(d);
       if (e.name === 'spawn' || e.name === 'background') FC.attachSpawnClick(d, e.id, callId => specByCall[callId] || archivedByCall[callId], '点按查看子代理详情');
     } else if (e.kind === 'ask') {
       const card = e.active ? buildActiveAskCard(e, saved) : buildAnsweredAskCard(e);
       card.classList.add('live-node');
-      msgs.appendChild(card);
+      S.append(card);
     } else if (e.kind === 'error') {
       const d = document.createElement('div');
       d.className = 'msg error live-node';
       d.innerHTML = '&#x26A0; ' + escapeHtml(e.content);
-      msgs.appendChild(d);
+      S.append(d);
     }
   });
-  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  if (stick) S.stick();
   // Animate only nodes that appeared since the previous streaming re-render —
   // re-animating all live nodes per chunk would flicker (desktop contract).
-  const live = msgs.querySelectorAll('.live-node');
+  const live = S.el().querySelectorAll('.live-node');
   for (let li = _liveCount; li < live.length; li++) {
     const n = live[li];
     msgIn(n, n.classList.contains('user') ? 'user' : n.classList.contains('assistant') ? 'assistant' : 'other');
@@ -708,9 +721,15 @@ function displayOf(host) {
   return host;
 }
 
+/* 唯一更换 #messages 主人的地方：pane 标志与 friendView 不会各说各话。 */
+function setView(host) {
+  friendView = host;
+  pane.take(host ? 'friend' : 'session');
+}
+
 function leaveFriendView() {
   const wasViewing = friendView !== null;
-  friendView = null;
+  setView(null);
   lastFriendPayload = null;
   clearTimeout(friendLiveTimer);
   document.getElementById('input-area').style.display = '';
@@ -719,9 +738,8 @@ function leaveFriendView() {
   document.getElementById('btn-back').hidden = true;
   renderFriendList();
   if (wasViewing) {
-    // openFriendChat wiped the message area without touching session state:
-    // re-render the session that was on screen.
-    msgs.innerHTML = '';
+    // setView wiped the message area without touching session state: re-render
+    // the session that was on screen.
     if (currentSessionId) reloadSessionFromServer();
   }
 }
@@ -735,7 +753,7 @@ async function loadPeers() {
     document.getElementById('friends-count').textContent = allPeers.length ? '(' + allPeers.length + ')' : '';
     document.getElementById('friends-empty').style.display = allPeers.length ? 'none' : '';
     renderFriendList();
-    if (friendView) refreshFriendChat();
+    if (pane.is('friend')) refreshFriendChat();
   } catch (e) {}
 }
 
@@ -759,9 +777,8 @@ async function openFriendChat(host) {
   try { (window.__navlog = window.__navlog || [])
     .push({ t: new Date().toISOString(), host, stack: new Error().stack }); } catch (e) {}
   leaveFriendView();
-  friendView = host;
+  setView(host);
   lastFriendPayload = null;
-  msgs.innerHTML = '';
   document.getElementById('input-area').style.display = 'none';
   document.getElementById('friend-input-area').classList.remove('hidden');
   document.getElementById('btn-back').hidden = false;
@@ -781,7 +798,7 @@ function setConsentSeg(mode) {
 }
 document.querySelectorAll('#consent-seg button').forEach(b => {
   b.addEventListener('click', () => {
-    if (!friendView) return;
+    if (!pane.is('friend')) return;
     setConsentSeg(b.dataset.v);
     fetch(api('/consent-mode'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ host: friendView, mode: b.dataset.v }) }).catch(() => {});
@@ -821,7 +838,7 @@ function liveEvText(ev) {
   if (c && typeof c === 'object') return c.text || c.content || c.name || '';
   return '';
 }
-function renderLiveEvents(live) {
+function renderLiveEvents(live, p) {
   // In-flight comm clone turn: merge adjacent text/reasoning deltas into
   // runs so streaming reads as paragraphs, not one fragment per row.
   const runs = [];
@@ -837,27 +854,29 @@ function renderLiveEvents(live) {
   }
   for (const r of runs) {
     if (r.kind === 'text') {
-      addDiv('friend-live', escapeHtml(r.text));
+      const text = FC.stripSilent(r.text);
+      if (text) p.add('friend-live', escapeHtml(text));
     } else if (r.kind === 'reasoning') {
       const det = document.createElement('details');
       det.className = 'msg reasoning';
       det.innerHTML = '<summary>Thinking…</summary><div style="white-space:pre-wrap;max-height:200px;overflow-y:auto">' + escapeHtml(r.text) + '</div>';
-      msgs.appendChild(det);
+      p.append(det);
     } else if (r.kind === 'tool') {
       const c = (r.ev && r.ev.content) || {};
-      addDiv('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
+      p.add('tool', '<div class="tool-label">&#x1F527; ' + escapeHtml(c.name || 'tool')
         + (c.args ? ' <code style="font-size:0.82rem;opacity:0.7">' + escapeHtml(String(c.args).slice(0, 80)) + '</code>' : '') + '</div>');
     } else if (r.kind === 'tool_result') {
       const t = String(liveEvText(r.ev) || '');
-      addDiv('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
+      p.add('friend-live', '<pre>' + escapeHtml(t.slice(0, 400)) + (t.length > 400 ? '...' : '') + '</pre>');
     } else if (r.kind === 'status') {
-      addDiv('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
+      p.add('friend-event', '⏳ ' + escapeHtml(r.text || 'running…'));
     } else if (r.kind === 'error') {
-      addDiv('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
+      p.add('friend-event', '⚠ ' + escapeHtml(r.text || 'error'));
     }
   }
 }
 function renderFriendChat(d) {
+  const p = F;
   const messages = d.messages || [];
   const events = d.events || [];
   const live = d.live || [];
@@ -865,18 +884,19 @@ function renderFriendChat(d) {
   if (!messages.length && !events.length && !mails.length && !live.length) {
     return; // 先判空后清屏：空载荷不得擦掉已有画面
   }
-  msgs.innerHTML = '';
+  p.clearMsgs();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
-  renderTranscript(messages, d.asks || []);
+  const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
+  renderTranscript(messages, d.asks || [], p, mailBodies);
   events.forEach(row => {
     let node = null;
     if (row.kind === 'transfer')
-      node = addDiv('friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
+      node = p.add('friend-event', '&#x1F4C4 ' + escapeHtml(row.text || 'file transfer'));
     else if (row.kind === 'task')
-      node = addDiv('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
+      node = p.add('friend-event', '&#x1F4E5 delegated to ' + escapeHtml(row.dst || '?') + ': ' + escapeHtml((row.text || '').slice(0, 200)));
     else if (row.kind === 'result')
-      node = addDiv('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
-    if (node) { markTs(node, row.ts); insertByTs(node, row.ts); }  // 信封自带 hub 时间戳
+      node = p.add('friend-event', '&#x2714 ' + escapeHtml(row.src || '?') + ' replied: ' + escapeHtml((row.text || '').slice(0, 200)));
+    if (node) { markTs(node, row.ts); insertByTs(p, node, row.ts); }  // 信封自带 hub 时间戳
   });
   MailUnread.markPeerRead(friendView); // seeing the thread IS reading it
   mails.forEach(m => {
@@ -888,17 +908,17 @@ function renderFriendChat(d) {
       : (String(m.from || '').endsWith(':human')
         ? '来自 ' + displayOf(m.peer) + ' 的用户'
         : displayOf(m.peer) + ' 的 Agent');
-    const bubble = addDiv('user', html);
+    const bubble = p.add('user', html);
     const lab = document.createElement('div');
     lab.className = 'human-label';
     lab.textContent = who;
     bubble.prepend(lab);
     markTs(bubble, m.ts);   // 邮件行自带邮箱时间戳
-    insertByTs(bubble, m.ts);
+    insertByTs(p, bubble, m.ts);
   });
-  renderLiveEvents(live);
+  renderLiveEvents(live, p);
   placeAskCards(); // re-seat pending asks after the transcript repaint
-  if (stick) msgs.scrollTop = msgs.scrollHeight;
+  if (stick) p.stick();
   updateScrollBtn();
 }
 
@@ -1224,13 +1244,13 @@ MailUnread.start();
 /* ---------- friend view composer: human direct sends ---------- */
 const friendInput = document.getElementById('friend-input');
 async function commSend(payload) {
-  if (!friendView) return;
+  if (!pane.is('friend')) return;
   const btn = document.getElementById('friend-send');
   btn.disabled = true;
   try {
     const d = await (await fetchJSON('/comm-send', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ host: friendView }, payload)) })).json();
-    if (d.error) addDiv('friend-event', '&#x26A0 ' + escapeHtml(d.error));
+    if (d.error) F.add('friend-event', '&#x26A0 ' + escapeHtml(d.error));
   } catch (e) {} finally { btn.disabled = false; }
   setTimeout(refreshFriendChat, 300); // pull the new message/file event in quickly
 }
