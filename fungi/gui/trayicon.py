@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
 )
 from qfluentwidgets import (
     Action,
+    MenuAnimationType,
     SystemTrayMenu,
 )
 
@@ -35,7 +36,11 @@ class _Tray(QSystemTrayIcon):
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
             self._window.show_and_raise()
         elif reason == QSystemTrayIcon.Context:
-            self._menu.exec_(QCursor.pos())
+            # PULL_UP, same as the room-mode tray (fungi/tray.py): the cursor is
+            # at the screen bottom, so the default DROP_DOWN anchors the menu's
+            # TOP edge there and slides it down over the taskbar. Pull-up anchors
+            # the bottom edge at the cursor and rises from the icon.
+            self._menu.exec_(QCursor.pos(), True, MenuAnimationType.PULL_UP)
 
     def notify(self, title: str, body: str) -> None:
         self.showMessage(title, body, QSystemTrayIcon.Information, 8000)

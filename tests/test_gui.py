@@ -398,6 +398,27 @@ def test_close_parks_room_to_tray(window):
     page.room = None
 
 
+def test_tray_menu_pulls_up_from_the_icon(window, monkeypatch):
+    """托盘菜单要朝上开：光标就在任务栏上，DROP_DOWN 把菜单顶边锚在光标处、从上面滑下来
+    （实测菜单底边会越过屏幕底部）。房间模式的托盘一直用 PULL_UP，GUI 的托盘漏了。
+    """
+    from PyQt5.QtWidgets import QSystemTrayIcon
+    from qfluentwidgets import MenuAnimationType
+
+    page = window.host_page
+    page.room = FakeRoom()  # the tray lives exactly while a room runs
+    window._tray = None
+    window.update_tray()
+    tray = window._tray
+    seen = {}
+    monkeypatch.setattr(tray._menu, "exec_", lambda *a, **k: seen.update(args=a))
+
+    tray._on_activated(QSystemTrayIcon.Context)
+    assert seen["args"][2] == MenuAnimationType.PULL_UP, seen
+    tray.hide()
+    page.room = None
+
+
 def test_quit_from_tray_stops_rooms(window):
     page = window.host_page
     room = FakeRoom()
