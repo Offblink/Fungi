@@ -1,8 +1,6 @@
 """Diary feature: private append-only pages, prompt injection, and the
 privacy guarantee that diary tool calls never surface as UI events."""
 
-import json
-
 from fungi import diary
 from fungi.agent import PRIVATE_TOOLS
 
