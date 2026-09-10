@@ -749,3 +749,36 @@ def test_ctrl_enter_accepts_day_dialog():
     dlg.save_sc.activated.emit()
     assert dlg.result() == QDialog.Accepted
     assert dlg.items() == ["出去玩", "去咖啡店"]
+
+
+def test_enter_in_token_field_launches_the_room(window, monkeypatch):
+    """发起房间页 Token 里按回车 = 发起房间（未开房时没有活动 token 可热更）。
+
+    用户 2026-09-10 点名：这一格此前回车是静默空转。
+    """
+    started = []
+
+    def fake_start(_host, _display, token, _port):
+        started.append(token)
+        return object()
+
+    monkeypatch.setattr(gui, "start_server_room", fake_start)
+    page = window.host_page
+    page.room = None
+    page._set_started(False)
+    page.name_edit.setText("pc-alpha")
+    page.token_edit.setText("probe-token-1")
+    QTest.keyClick(page.token_edit, Qt.Key_Return)
+    assert started == ["probe-token-1"]
+    assert page.room is not None and not page.start_btn.isEnabled()
+    page.room = None
+
+
+def test_token_focus_out_never_launches_the_room(window, monkeypatch):
+    """移开焦点只提交 token：切页面/点别处不许把房间开起来。"""
+    monkeypatch.setattr(gui, "start_server_room", lambda *_: pytest.fail("must not start"))
+    page = window.host_page
+    page.room = None
+    page.token_edit.setText("probe-token-2")
+    page._apply_token()  # what editingFinished runs
+    assert page.room is None

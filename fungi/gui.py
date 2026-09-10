@@ -400,11 +400,16 @@ class HostPage(QWidget):
         self.token_edit.setPlaceholderText("留空则发起房间时自动生成")
         self.token_edit.setToolTip(
             "可自定义（字母/数字/-/_，1-64 位）。\n"
-            "发起前修改：开房即用该 Token；\n"
+            "发起前修改：开房即用该 Token（未开房时按回车＝直接发起）；\n"
             "运行中修改：按回车（或移开焦点）即时热更新，"
             "已加入的好友需用新 Token 重新加入"
         )
         self.token_edit.editingFinished.connect(self._apply_token)
+        # Enter in the token field: launch when the room is not up yet (there is
+        # no live token to swap before launch), hot-swap once it runs. Focus-out
+        # keeps meaning only "commit the token" — tabbing through must never
+        # start a room.
+        self.token_edit.returnPressed.connect(self._token_enter)
         self.token_edit.setText(secrets.token_urlsafe(12))
         self.token_btn = _copy_button()
         self.token_btn.clicked.connect(lambda: _copy(self.token_edit.text(), window, "房间 Token"))
@@ -481,6 +486,13 @@ class HostPage(QWidget):
             )
         else:
             InfoBar.info("IP 未变化", ip, duration=2000, parent=self.window_ref)
+
+    def _token_enter(self) -> None:
+        """Enter in the Token field: launch when idle, otherwise hot-swap."""
+        if self.room is None:
+            self._start()
+        else:
+            self._apply_token()
 
     def _apply_token(self) -> None:
         """Commit a token edit. Before launch: no-op (validated at _start).
