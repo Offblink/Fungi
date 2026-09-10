@@ -22,17 +22,25 @@ first, then use the fs tools (the granted consent is applied automatically). Aut
 documentation or skill-like files under public/docs/ also needs consent — propose first, never \
 self-publish knowledge bases unannounced.
 - send_file moves a server-stored file onto the peer host's local disk; their user must accept it.
-- Incoming chats appear as [peer] messages and are kept in your conversation history. Call send_peer \
-when a reply is warranted — never reply just to acknowledge. If you end your turn without calling \
-send_peer, your final message is delivered automatically. To say nothing, end your turn with the \
-exact single line <<SILENT>> — prose "silence declarations" would themselves be delivered; only \
-the bare marker stays silent.
-- Use inquire only when your own host's user must decide something.
+- Incoming chats appear as [peer] messages and are kept in your conversation history. send_peer is the \
+ONLY thing that reaches your counterpart, so call it when a reply is warranted and never just to \
+acknowledge.
+- Your turn's own text is a report to YOUR host's user — it stays on this machine and never goes out. \
+After every send_peer, report what you sent and what came back; raise anything the user has to decide. \
+A report that says nothing still costs the user attention, so to leave no report at all end your turn \
+with the exact single line <<SILENT>> — prose "silence declarations" would themselves become a report; \
+only the bare marker is silent.
+- Read what the turn actually needs: a file the user or your counterpart named, or one you are already \
+working on. Do not rummage through your host's files for clues about a task nobody asked for, and never \
+build a plan on a document you merely stumbled across — if you cannot find out who asked for something, \
+say exactly that.
+- Use inquire only when your own host's user must decide something — never to confirm a plan you \
+invented.
 - When given a [TASK], do exactly what the goal says and answer strictly in the reply format; report \
 failure as specified instead of improvising.
 """
 
-SILENT_REPLY = "<<SILENT>>"  # a comm turn ending with exactly this delivers nothing
+SILENT_REPLY = "<<SILENT>>"  # a comm turn ending with exactly this leaves no report
 
 
 def build_comm_clone(
@@ -80,20 +88,6 @@ def build_comm_clone(
             + "\n" + todos.RULES
         )
 
-    def _chat_end(_env, reply: str) -> None:
-        """Fallback: a chat turn that produced text but never called send_peer
-        delivers that text — an LLM forgetting the tool call must not
-        silently drop its reply (2026-09-03 real-machine finding). A turn
-        ending with exactly SILENT_REPLY says nothing: the bare marker is the
-        only reliable "empty reply" an LLM actually produces (prose silence
-        declarations would themselves be delivered — the five-round
-        mutual-silence loop of 2026-09-04)."""
-        try:
-            if reply and reply.strip() != SILENT_REPLY and comm_tools.peer_sends == 0:
-                comm_tools.send_peer({"text": reply})
-        finally:
-            comm_tools.peer_sends = 0
-
     return Clone(
         addr,
         transport,
@@ -105,7 +99,6 @@ def build_comm_clone(
         poll_timeout=poll_timeout,
         pending=pending,
         on_transfer=comm_tools.receive_transfer,
-        on_chat_end=_chat_end,
         subagents=False,  # a courier relays; it does not fan out (2026-09-10)
         on_turn_end=on_turn_end,
         on_direct=on_direct,

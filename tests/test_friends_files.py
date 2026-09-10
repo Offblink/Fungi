@@ -72,10 +72,14 @@ def test_peers_endpoint_excludes_self(room):
     assert out["peers"] == [{"name": "beta", "display": ""}]  # display records, not bare names
 
 
-# ── chat fallback (real-machine 2026-09-03 finding: reply text was dropped) ──
+# ── the turn's text is a report to this host's user, not a message ──
 
 
-def test_chat_reply_without_send_peer_is_delivered(room):
+def test_the_turn_text_is_a_report_and_never_reaches_the_peer(room):
+    """2026-09-10 user instruction (supersedes the 2026-09-03 fallback): what
+    the counterpart hears comes from send_peer only. A turn's own text is the
+    report to this host's user — shipping it as a message is what put private
+    reports on the wire and had both couriers answering them for rounds."""
     _hub, clients = _joined_room(room)
     fake = ScriptedLLM([LLMResult(content="files: public/a.txt, public/b.txt")])
     clone = build_comm_clone(
@@ -88,11 +92,13 @@ def test_chat_reply_without_send_peer_is_delivered(room):
     messages, _cursor = clients["beta"].poll_env("beta")
     clone.run_turn(messages[0])
     replies, _cursor = clients["alpha"].poll_env("alpha")
-    chats = [e for e in replies if e.type == "chat" and "files:" in str(e.body.get("text"))]
-    assert chats, "fallback did not deliver the reply that never called send_peer"
+    chats = [e for e in replies if e.type == "chat"]
+    assert not chats, f"a report escaped to the peer: {[c.body for c in chats]}"
+    # …while the report itself is kept for this host's user (friend view)
+    assert clone.history[-1]["content"] == "files: public/a.txt, public/b.txt"
 
 
-def test_explicit_send_peer_not_duplicated_by_fallback(room):
+def test_one_send_peer_sends_exactly_one_message(room):
     _hub, clients = _joined_room(room)
     fake = ScriptedLLM(
         [

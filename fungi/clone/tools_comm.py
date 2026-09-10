@@ -34,7 +34,6 @@ class CommTools:
         self.ask_timeout_s = ask_timeout_s
         self.inbox_dir = Path(inbox_dir) if inbox_dir else PROJECT_ROOT / "inbox"
         self.consent_id: str | None = None  # last granted consent (envelope id)
-        self.peer_sends = 0  # send_peer calls in the current turn (chat fallback)
 
     # ── helpers ──
 
@@ -72,7 +71,6 @@ class CommTools:
             src=self.addr, dst=f"{self.peer}:comm-{self.host}", type="chat", body={"text": text}
         )
         out = self.transport.send(env)
-        self.peer_sends += 1
         return "SENT" if out.get("ok", True) else f"ERROR: {out.get('status', 'send failed')}"
 
     def send_file(self, args: dict) -> str:

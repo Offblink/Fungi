@@ -148,7 +148,6 @@ class Clone:
         poll_timeout: float = 5.0,
         on_ask=None,
         on_transfer=None,
-        on_chat_end=None,
         on_turn_end=None,
         subagents: bool = True,
         on_direct=None,
@@ -186,9 +185,6 @@ class Clone:
         # is queued. Returning True means "delivered directly to the user"
         # (friend-view transcript / consent card) — the LLM never wakes.
         self.on_direct = on_direct
-        # chat turns: called with (env, final_text) after the turn — comm
-        # clones use it to auto-send an undelivered reply (no send_peer call).
-        self.on_chat_end = on_chat_end
         # called with (env_type, messages, agent) after every chat/task turn —
         # the room records per-peer transcripts for the friend view.
         self.on_turn_end = on_turn_end
@@ -332,16 +328,14 @@ class Clone:
             self.on_turn_end(env.type, messages, agent)
         reply = (result.content or "").strip()
         if env.type == "chat":
-            # spec 6.x: the Orchestrator decides whether to reply — via an
-            # explicit send_peer call; if the turn produced text but never
-            # called send_peer, on_chat_end delivers it as a fallback (an LLM
-            # that forgets the tool call must not silently drop its reply).
+            # The counterpart hears from this clone only through send_peer; the
+            # turn's own text is the report to this host's user, and it stays in
+            # the transcript (see comm._chat_end for what doubled as a message
+            # before 2026-09-10). A report of <<SILENT>> is stripped downstream.
             self.history.append({"role": "user", "content": self.render_input(env)})
             if reply:
                 self.history.append({"role": "assistant", "content": reply})
             del self.history[:-MAX_CHAT_HISTORY]
-            if self.on_chat_end is not None:
-                self.on_chat_end(env, reply)
             return
         self.transport.send(
             Envelope(

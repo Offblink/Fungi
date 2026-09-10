@@ -8,6 +8,7 @@ The transcript write path must merge, never replace, and stay lock-protected.
 """
 
 import itertools
+import json
 import threading
 import time
 from pathlib import Path
@@ -372,21 +373,36 @@ def test_courier_on_human_mail_wakes_the_receiving_courier(tmp_path, monkeypatch
 
 def test_courier_wake_answers_the_human_end_to_end(tmp_path, monkeypatch):
     """Acceptance for the user-facing bug: with the courier ON, a human text
-    message must come back answered. The reply rides the normal chat path
-    (send_peer / the _chat_end fallback), so the answer must show up in the
-    SENDER's friend-view transcript."""
+    message must come back answered. The answer rides send_peer — the only
+    channel that reaches the counterpart (comm's turn text is a report to this
+    host's user) — so it must show up in the SENDER's friend-view transcript,
+    and the report itself must stay home."""
     server, client, _llm = _two_rooms(tmp_path, monkeypatch, courier=True)
 
     class _CourierLLM:
-        """Answers once, then goes silent so the two couriers do not ping-pong
-        (the real prompt says: never reply just to acknowledge)."""
+        """Answers through send_peer, then goes silent so the two couriers do
+        not ping-pong (the real prompt says: never reply just to acknowledge)."""
 
         def __init__(self):
             self.calls = 0
 
         def __call__(self, _messages, _tool_defs):
             self.calls += 1
-            return LLMResult(content="收到，我在" if self.calls == 1 else "<<SILENT>>")
+            if self.calls == 1:
+                return LLMResult(
+                    content="已回复：收到，我在",
+                    tool_calls=[
+                        {
+                            "id": "s1",
+                            "type": "function",
+                            "function": {
+                                "name": "send_peer",
+                                "arguments": json.dumps({"text": "收到，我在"}),
+                            },
+                        }
+                    ],
+                )
+            return LLMResult(content="<<SILENT>>")
 
     try:
         assert _wait(lambda: server._clones.get("beta") is not None)
@@ -400,6 +416,9 @@ def test_courier_wake_answers_the_human_end_to_end(tmp_path, monkeypatch):
             ),
             timeout_s=20.0,
         )
+        # …and the courier's own report never crossed the wire.
+        rows = (server._comm_store.load("comm-beta") or {}).get("messages") or []
+        assert not any("已回复：收到，我在" in str(m.get("content")) for m in rows), rows
     finally:
         client.stop()
         server.stop()
