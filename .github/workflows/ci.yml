@@ -24,16 +24,21 @@ jobs:
           python-version: "3.13"
 
       - name: Install test dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest pillow
-          # the ruff pin lives in pyproject [dev] — read it instead of repeating it here
-          python -c "import pathlib,re;print(re.search(r'ruff==[0-9.]+',pathlib.Path('pyproject.toml').read_text('utf-8')).group(0))" > pin.txt
-          python -m pip install -r pin.txt
+          # ruff + playwright versions live in pyproject's dev extra (one place)
+          $pins = Select-String -Path pyproject.toml -Pattern '(ruff|playwright)==[0-9.]+' -AllMatches |
+            ForEach-Object { $_.Matches } | ForEach-Object { $_.Value } | Select-Object -Unique
+          $pins | Set-Content -Path pins.txt
+          python -m pip install -r pins.txt
+          # The web UI tests (tests/test_webui_friend.py) drive a real browser:
+          # two rooms, the room's own WebUI server, and what the page paints.
+          python -m playwright install chromium
 
       # GUI/tray tests call pytest.importorskip on qfluentwidgets/PyQt5, which is
       # not installed here — they skip gracefully; everything else is stdlib.
-      # The web tests need playwright + a browser and skip the same way.
       - name: Lint
         run: python -m ruff check
 
