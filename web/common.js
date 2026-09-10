@@ -682,7 +682,13 @@
         if (text) {
           if (text.startsWith('(LLM error:') || text.startsWith('(Hit max tool rounds'))
             markTs(p.add('error' + agentSide, '&#x26A0; ' + escapeHtml(text)), m.ts);
-          else markTs(p.add('assistant' + agentSide, marked.parse(text)), m.ts);
+          else {
+            // Friend thread: our courier's turn text is a report to *us* — it
+            // never went to the peer (comm._chat_end), so the stylesheet marks
+            // it as one (a ::before label, so it stays out of the row's text).
+            const cls = 'assistant' + agentSide + (opts.report ? ' report' : '');
+            markTs(p.add(cls, marked.parse(text)), m.ts);
+          }
         }
         if (m.tool_calls) m.tool_calls.forEach(tc => {
           const d = buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: opts.argsMax || 80 });

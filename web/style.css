@@ -304,3 +304,5 @@ html.motion-on .agent-bubble{animation:none}
 #friend-browse:active{transform:scale(0.9)}
 .friend-unread{margin-left:auto;background:var(--accent);color:var(--on-accent);border-radius:99px;font-size:10.5px;font-weight:700;min-width:17px;height:17px;display:inline-flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 0 8px var(--accent-glow);flex-shrink:0}
 .human-label{font-size:0.72rem;font-weight:600;color:inherit;opacity:0.8;margin-bottom:0.2rem;letter-spacing:0.02em}
+/* 好友视图：我方信使的回合收尾文本是给主人的汇报（从不上网），不是发给对面的话 */
+.msg.assistant.report::before{content:"信使汇报";display:block;font-size:0.68rem;font-weight:600;color:var(--accent2);opacity:0.75;margin-bottom:0.2rem;letter-spacing:0.04em}

@@ -644,6 +644,46 @@ def test_the_session_view_labels_its_rows_too(page, rooms):
     assert labels and all(lbl.startswith("今天 ") for lbl in labels), labels
 
 
+def test_our_couriers_text_reads_as_a_report(page, rooms):
+    """2026-09-10 用户指令：收尾文本是给自家主人的汇报（`send_peer` 才上网）。
+    好友视图里它不能看起来像"我们发给了对面"，会话视图（Agent 对主人说话）里则没有这个标签。"""
+    server, _client = rooms
+    _seed_transcript(
+        server,
+        "beta",
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "在吗", "ts": T0},
+            {"role": "assistant", "content": "已回他：在的，晚上六点老地方见。", "ts": T0 + 1},
+        ],
+    )
+    _open_friend(page)
+    page.wait_for_function("() => msgs.querySelector('.msg.assistant.report') !== null")
+    probe = page.evaluate(
+        """() => {
+  const row = msgs.querySelector('.msg.assistant.report');
+  if (!row) return null;
+  return {cls: row.className, label: getComputedStyle(row, '::before').content,
+          text: (row.textContent || '').trim()};
+}"""
+    )
+    assert probe and "friend-mine" in probe["cls"], probe  # 我方那一侧
+    assert probe["label"] == '"信使汇报"', probe
+    assert probe["text"] == "已回他：在的，晚上六点老地方见。", probe  # 标签不进正文
+
+    _seed_session(
+        server,
+        "20260101-000001",
+        [
+            {"role": "user", "content": "hi", "ts": T0},
+            {"role": "assistant", "content": "yo", "ts": T0 + 1},
+        ],
+    )
+    page.evaluate("async () => { await switchSession('20260101-000001'); }")
+    page.wait_for_function("() => pane.owner() === 'session'")
+    assert page.evaluate("() => msgs.querySelector('.msg.assistant.report') === null")
+
+
 # ── sides: a turn's detail rows belong to the side that produced them ──
 
 SIDE_PROBE = """
