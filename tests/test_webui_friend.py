@@ -573,11 +573,13 @@ def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
     on the sender's side, and without moving anything (the first cut grew the
     row on hover and shoved the whole page)."""
     server, _client = rooms
+    day3 = _noon(3)
+    weekday = WEEKDAYS_CN[datetime.datetime.fromtimestamp(day3).weekday()]
     rows = [
         ("今天", _noon(0)),
         ("昨天", _noon(1)),
         ("前天", _noon(2)),
-        ("星期一", _noon(3)),
+        (weekday, day3),  # 由时间戳推出来的星期几：写死会在跨天之后对不上
         ("年月日", _noon(9)),
     ]
     _seed_transcript(
@@ -591,7 +593,6 @@ def test_hovering_a_message_shows_when_it_was_sent(page, rooms):
     page.wait_for_function("() => msgs.children.length >= 6")
 
     probe = page.evaluate(WHEN_PROBE)
-    weekday = WEEKDAYS_CN[datetime.datetime.fromtimestamp(rows[3][1]).weekday()]
     long_ago = datetime.datetime.fromtimestamp(rows[4][1]).strftime("%Y-%m-%d")
     # The module-scoped room keeps the mails earlier tests delivered, so read
     # the rows we seeded by their own text instead of by position.
@@ -633,15 +634,16 @@ def test_the_session_view_labels_its_rows_too(page, rooms):
         "20260101-000000",
         [
             {"role": "system", "content": "sys"},
-            {"role": "user", "content": "两小时前问的", "ts": time.time() - 7200},
-            {"role": "assistant", "content": "刚答的", "ts": time.time()},
+            {"role": "user", "content": "两小时前问的", "ts": _noon(0, hour=11)},
+            {"role": "assistant", "content": "刚答的", "ts": _noon(0, hour=12)},
         ],
     )
     page.evaluate("async () => { await switchSession('20260101-000000'); }")
     page.wait_for_function("() => pane.owner() === 'session'")
 
+    # 正午锚点：靠"几小时前"会在午夜前后翻成"昨天"
     labels = [r["when"] for r in page.evaluate(WHEN_PROBE)["rows"]]
-    assert labels and all(lbl.startswith("今天 ") for lbl in labels), labels
+    assert labels == ["今天 11:00", "今天 12:00"], labels
 
 
 def test_our_couriers_text_reads_as_a_report(page, rooms):
