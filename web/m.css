@@ -51,6 +51,9 @@ html,body{font-family:var(--font);font-size:16px;line-height:1.6;color:var(--tex
 .ask-option{text-align:left;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.6rem 0.85rem;font-family:var(--font);font-size:0.85rem;color:var(--text);cursor:pointer;transition:all 150ms}
 .ask-option.selected{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow);background:color-mix(in srgb,var(--accent) 8%,var(--surface2))}
 .ask-desc{color:var(--text2);font-size:0.76rem}
+/* same flash as desktop: a required question left empty with no input to flag */
+.ask-block.ask-missing .ask-q{color:var(--error-text)}
+.ask-block.ask-missing .ask-options{outline:1px solid var(--error-text);outline-offset:3px;border-radius:var(--radius-sm)}
 .ask-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--text);font-family:var(--font);font-size:0.85rem;padding:0.55rem 0.7rem;outline:none;margin:0.3rem 0}
 .ask-input:focus{border-color:var(--accent)}
 .ask-actions,.ask-consent-actions{display:flex;gap:0.5rem;margin-top:0.5rem;flex-wrap:wrap}

@@ -131,6 +131,10 @@ html,body{font-family:var(--font);font-size:var(--fs-md);line-height:1.6;color:v
 .ask-card.answered .ask-block{padding:0.7rem 0}
 .ask-card.answered .ask-option.selected{cursor:default}
 .ask-card.answered .ask-options{gap:0.4rem;opacity:0.85}
+/* a required question left empty where allow_custom:false left no input to
+   flag — outline (not border) so the flash never shifts the layout */
+.ask-block.ask-missing .ask-q{color:var(--error-text)}
+.ask-block.ask-missing .ask-options{outline:1px solid var(--error-text);outline-offset:3px;border-radius:var(--radius-sm)}
 .ask-q{font-weight:600;color:var(--text);margin-bottom:0.6rem}
 .ask-options{display:flex;flex-direction:column;gap:0.5rem}
 .ask-option{text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);padding:0.55rem 0.9rem;cursor:pointer;font-family:var(--font);font-size:0.84rem;color:var(--text);transition:all var(--t-fast)}

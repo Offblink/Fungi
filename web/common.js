@@ -11,7 +11,7 @@
   /* Build marker: bump per web/ change so any WebUI instance can self-identify
      (console + window.__FUNGI_WEB_VER) — stale cache vs new server is otherwise
      indistinguishable from the outside. */
-  window.__FUNGI_WEB_VER = 'web-badge-tray';
+  window.__FUNGI_WEB_VER = 'web-ask-toggle';
   try { console.info('[fungi-web]', window.__FUNGI_WEB_VER); } catch (e) {}
   /* ---------- http ---------- */
   /* One fetch wrapper. Mobile inits a token prefix + 403 hook; desktop inits
@@ -168,6 +168,50 @@
           : '');
     }
 
+    /* Clicking the selected option clears it: an answer may be typed text alone
+       (see collectVals), so every choice has to be undoable — a second click on
+       the picked item must not be a no-op. */
+    function bindOptionToggles(card) {
+      card.querySelectorAll('.ask-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const was = btn.classList.contains('selected');
+          card.querySelectorAll('.ask-option[data-q="' + btn.dataset.q + '"]').forEach(b => b.classList.remove('selected'));
+          if (!was) btn.classList.add('selected');
+        });
+      });
+    }
+
+    /* "Required" normally lands in the input's placeholder; a question that
+       allow_custom:false left option-only has no input to focus, so highlight
+       its block for a beat instead. */
+    function flagMissing(block) {
+      if (!block) return;
+      block.classList.add('ask-missing');
+      setTimeout(() => block.classList.remove('ask-missing'), 1600);
+    }
+
+    /* Read every answer off a card, or null after flagging the first
+       unanswered question. Selected option + typed note compose ("Label:
+       note"); either alone stands as-is. No silent wiping in either
+       direction. */
+    function collectVals(card, questions) {
+      const vals = [];
+      for (let qi = 0; qi < questions.length; qi++) {
+        const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
+        const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
+        const label = sel ? sel.querySelector('b').textContent : '';
+        const note = inp ? inp.value.trim() : '';
+        const v = label && note ? label + ': ' + note : (label || note);
+        if (!v) {
+          if (inp) { inp.focus(); inp.placeholder = t.required; }
+          else flagMissing(card.querySelectorAll('.ask-block')[qi]);
+          return null;
+        }
+        vals.push(v);
+      }
+      return vals;
+    }
+
     function buildActiveAskCard(a, saved) {
       const card = document.createElement('div');
       card.className = 'msg ask-card live-node'; card.id = 'ask-card';
@@ -180,13 +224,7 @@
         });
         if (s.val) { const inp = card.querySelector('.ask-input[data-q="' + qi + '"]'); if (inp) inp.value = s.val; }
       });
-      card.querySelectorAll('.ask-option').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const qi = btn.dataset.q;
-          card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-          btn.classList.add('selected');
-        });
-      });
+      bindOptionToggles(card);
       card.querySelectorAll('.ask-input').forEach(inp => {
         inp.addEventListener('keydown', e => { if (e.key === 'Enter') collectAskAnswers(card); });
       });
@@ -218,18 +256,8 @@
 
     function collectAskAnswers(card) {
       const qs = card._askQuestions || [];
-      const vals = [];
-      for (let qi = 0; qi < qs.length; qi++) {
-        const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-        const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-        const label = sel ? sel.querySelector('b').textContent : '';
-        const note = inp ? inp.value.trim() : '';
-        // Selected option + typed note compose ("Label: note"); either alone
-        // stands as-is. No silent wiping in either direction.
-        const v = label && note ? label + ': ' + note : (label || note);
-        if (!v) { if (inp) { inp.focus(); inp.placeholder = t.required; } return; }
-        vals.push(v);
-      }
+      const vals = collectVals(card, qs);
+      if (!vals) return;
       const turn = opts.getTurn ? opts.getTurn() : null;
       const rec = (turn && turn.entries || []).find(x => x.kind === 'ask' && x.id === card._askId);
       if (rec) { rec.answers = vals; rec.active = false; }
@@ -239,7 +267,7 @@
       http.postJSON('/answer', { id: card._askId, value: vals }).catch(() => {});
     }
 
-    return { saveAskCardState, askQuestionHtml, buildActiveAskCard, buildAnsweredAskCard };
+    return { saveAskCardState, askQuestionHtml, buildActiveAskCard, buildAnsweredAskCard, bindOptionToggles, collectVals };
   }
 
   /* ---------- pending card asks (consent / cross-host asks, out-of-band) ----------
@@ -316,27 +344,10 @@
         card.innerHTML = '<div class="ask-from">\u{1F344} ' + from + '</div>'
           + a.questions.map((q, qi) => '<div class="ask-block">' + asks.askQuestionHtml(q, qi) + '</div>').join('')
           + '<div class="ask-actions"><button class="ask-send">' + escapeHtml(ctx.labels.submit) + '</button></div>';
-        card.querySelectorAll('.ask-option').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const qi = btn.dataset.q;
-            card.querySelectorAll('.ask-option[data-q="' + qi + '"]').forEach(b => b.classList.remove('selected'));
-            btn.classList.add('selected');
-          });
-        });
+        asks.bindOptionToggles(card);
         card.querySelector('.ask-send').addEventListener('click', () => {
-          const qs = a.questions || [];
-          const vals = [];
-          for (let qi = 0; qi < qs.length; qi++) {
-            const sel = card.querySelector('.ask-option.selected[data-q="' + qi + '"]');
-            const inp = card.querySelector('.ask-input[data-q="' + qi + '"]');
-            const label = sel ? sel.querySelector('b').textContent : '';
-            const note = inp ? inp.value.trim() : '';
-            // Same compose rule as live ask cards: option + typed note both
-            // survive ("Label: note"); no silent wiping in either direction.
-            const v = label && note ? label + ': ' + note : (label || note);
-            if (!v) { if (inp) { inp.focus(); inp.placeholder = ctx.labels.required; } return; }
-            vals.push(v);
-          }
+          const vals = asks.collectVals(card, a.questions || []);
+          if (!vals) return;
           answerPendingAsk(a, card, vals.length === 1 ? vals[0] : vals);
         });
       }
