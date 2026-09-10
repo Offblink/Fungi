@@ -56,8 +56,8 @@ from qfluentwidgets import (
     LineEdit,
     PrimaryPushButton,
     PushButton,
-    SubtitleLabel,
     StrongBodyLabel,
+    SubtitleLabel,
     SwitchButton,
     SystemTrayMenu,
     TextEdit,
@@ -68,7 +68,7 @@ from qfluentwidgets import (
 # The global qfluentwidgets install is the PyQt5 build (PySide6-Fluent-Widgets is
 # not installed and its import name would clobber this one), so the GUI rides
 # PyQt5; the fluent components are the same library Face uses (same look).
-from . import update
+from . import todos, update
 from .config import (
     DEFAULT_API_KEY,
     PROJECT_ROOT,
@@ -77,7 +77,6 @@ from .config import (
 )
 from .protocol import valid_host_name
 from .tools.video import _HEALABLE, _module_available, _video_ready
-from . import todos
 from .tray import make_icon
 
 GUI_PORT = 8899  # scan anchor (Face convention); actual port found by scanning up
@@ -1061,9 +1060,9 @@ class ConfigPage(QWidget):
         self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
         root.addWidget(_row("模型", self.model_edit))
 
-        self.save_btn = PrimaryPushButton(FluentIcon.SAVE, "保存配置")
-        self.save_btn.clicked.connect(self._save)
-        root.addWidget(self.save_btn)
+        # 没有保存按钮：三个输入框回车即写盘（见文件末尾 returnPressed 接线），
+        # 用鼠标点走不算（editingFinished 故意不接）。
+        root.addSpacing(4)
 
         # 信使：消息信使（自动回复，可注入记忆）+ 文件信使（consent 卡片，零 Agent）
         root.addSpacing(10)
@@ -1282,7 +1281,10 @@ class ConfigPage(QWidget):
         )
         endpoint = self.endpoint_edit.text().strip() or cfg.endpoint
         model = self.model_edit.text().strip() or cfg.model
-        self.status.setText(f"当前状态：{state} · 模型 {model} · 接口 {endpoint}")
+        self.status.setText(
+            f"当前状态：{state} · 模型 {model} · 接口 {endpoint}"
+            "\n改完按回车即保存（三个输入框各自生效）"
+        )
 
     def _save(self) -> None:
         cfg = load_config()
@@ -1508,8 +1510,9 @@ class CourierPage(QWidget):
             btn = QPushButton(str(day.day))
             btn.setFixedSize(44, 44)
             btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(lambda _=False, d=day.isoformat(): self._open_day(d))
-            self._buttons[day.isoformat()] = btn
+            iso = day.isoformat()
+            btn.clicked.connect(lambda _=False, d=iso: self._open_day(d))
+            self._buttons[iso] = btn
             cal.addWidget(btn, 1 + i // 7, i % 7)
         root.addLayout(cal)
         cal_hint = BodyLabel("点击某天录入（一行一条）；有安排的日期会亮橙色。")
@@ -1530,8 +1533,7 @@ class CourierPage(QWidget):
         for iso, btn in self._buttons.items():
             if iso == today:
                 btn.setStyleSheet(
-                    "QPushButton{background:%s;color:white;border-radius:22px;font-weight:bold}"
-                    % _ACCENT_GUI
+                    f"QPushButton{{background:{_ACCENT_GUI};color:white;border-radius:22px;font-weight:bold}}"
                 )
             elif iso in data:
                 # accent tint beats a bullet glyph: it survives any theme and
@@ -1547,7 +1549,7 @@ class CourierPage(QWidget):
                 )
         overdue = [d for d in data if d < today]
         self.status.setText(
-            "过去 30 天内有 %d 天仍挂着未清待办：%s" % (len(overdue), "、".join(overdue))
+            f"过去 30 天内有 {len(overdue)} 天仍挂着未清待办：{'、'.join(overdue)}"
             if overdue
             else ""
         )
