@@ -136,21 +136,24 @@ function renderMessages(s) {
 
 /* Session-style rendering shared by local sessions and friend transcripts:
    markdown text, reasoning details, tool blocks, answered ask cards. */
-function renderTranscript(messages, asks) {
+function renderTranscript(messages, asks, friendThread) {
   let toolBlocks = {};
   const askQueue = (asks || []).slice(); // replayed in order at their inquire call site (legacy ask_user too)
+  // Friend thread: the peer's rows sit left, our courier's right (see style.css)
+  const userSide = friendThread ? ' friend-peer' : '';
+  const agentSide = friendThread ? ' friend-mine' : '';
   for (const m of messages || []) {
     if (m.role === 'user') {
       const c = String(m.content || '');
       if (c.startsWith('[background report]')) addDiv('sys-note', escapeHtml(c));
       else if (m.sender === 'human' && !m.mine) {
-        const bubble = addDiv('user', marked.parse(c));
+        const bubble = addDiv('user' + userSide, marked.parse(c));
         const lab = document.createElement('div');
         lab.className = 'human-label';
         lab.textContent = '来自 ' + (m.sender_name || '?') + ' 的用户';
         bubble.prepend(lab);
       }
-      else addDiv('user', marked.parse(c));
+      else addDiv('user' + userSide, marked.parse(c));
     }
     else if (m.role === 'assistant') {
       if (m.reasoning) {
@@ -163,7 +166,7 @@ function renderTranscript(messages, asks) {
         const c = String(m.content);
         if (c.startsWith('(LLM error:') || c.startsWith('(Hit max tool rounds'))
           addDiv('error', '&#x26A0; ' + escapeHtml(c));
-        else addDiv('assistant', marked.parse(m.content));
+        else addDiv('assistant' + agentSide, marked.parse(m.content));
       }
       if (m.tool_calls) m.tool_calls.forEach(tc => {
         const d = FC.buildToolCard({ id: tc.id, name: tc.function?.name, args: tc.function?.arguments || '' }, { argsMax: 80 });
@@ -974,7 +977,7 @@ function renderLiveEvents(live) {
   }
   for (const r of runs) {
     if (r.kind === 'text') {
-      addDiv('friend-live', marked.parse(r.text));
+      addDiv('friend-live friend-mine', marked.parse(r.text));
     } else if (r.kind === 'reasoning') {
       const det = document.createElement('details');
       det.className = 'msg reasoning';
@@ -1005,7 +1008,7 @@ function renderFriendChat(d) {
     return;
   }
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
-  renderTranscript(messages, d.asks || []);
+  renderTranscript(messages, d.asks || [], true);
   var fileNodes = [];
   events.forEach(row => {
     if (row.kind === 'transfer')
@@ -1032,7 +1035,7 @@ function renderFriendChat(d) {
       : (String(m.from || '').endsWith(':human')
         ? '来自 ' + displayOf(m.peer) + ' 的用户'
         : displayOf(m.peer) + ' 的 Agent');
-    const bubble = addDiv('user', html);
+    const bubble = addDiv('user' + (mine ? ' friend-mine' : ' friend-peer'), html);
     const lab = document.createElement('div');
     lab.className = 'human-label';
     lab.textContent = who;
