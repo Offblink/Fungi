@@ -134,3 +134,70 @@ def test_a_corrupt_file_is_kept_as_evidence():
     kept = path.with_name("torn.json.corrupt")
     assert kept.read_text(encoding="utf-8").startswith('{"id": "torn"')  # bytes kept, not dropped
     assert session.list_sessions() == []  # quarantined: no longer listed as a session
+
+
+def test_a_listing_during_a_save_never_loses_the_session(tmp_path):
+    """Windows refuses the atomic rename while a reader holds the file open
+    (Python opens without FILE_SHARE_DELETE), and a listing that globbed while a
+    rename landed could miss the file — which is how a session vanished from
+    /sessions mid-turn (test_room's running-flag test failed exactly this way).
+    Our readers and writers are serialized per file."""
+    import threading
+    import time
+
+    store = session.SessionStore(tmp_path / "sessions")
+    store.save("s1", "t", [{"role": "user", "content": "x"}])
+
+    stop = threading.Event()
+    failures: list[str] = []
+    missing = 0
+
+    def writer():
+        n = 0
+        while not stop.is_set():
+            n += 1
+            try:
+                store.save("s1", "t", [{"role": "user", "content": f"x{n}"}])
+            except Exception as exc:
+                failures.append(repr(exc))
+            time.sleep(0.001)
+
+    thread = threading.Thread(target=writer, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 0.6
+    try:
+        while time.monotonic() < deadline:
+            if "s1" not in [row["id"] for row in store.list_sessions()]:
+                missing += 1
+    finally:
+        stop.set()
+        thread.join()
+
+    assert failures == []
+    assert missing == 0
+
+
+def test_a_save_waits_out_an_outside_reader(monkeypatch, tmp_path):
+    """An outside holder (editor, scanner, second Fungi) has the file open with
+    no share-delete, so the rename is refused — wait briefly instead of losing
+    the save."""
+    store = session.SessionStore(tmp_path / "sessions")
+    store.save("s1", "old", [{"role": "user", "content": "old"}])
+
+    holder = (tmp_path / "sessions" / "s1.json").open("rb")
+    try:
+        import threading
+
+        def release():
+            import time
+
+            time.sleep(0.05)
+            holder.close()
+
+        threading.Thread(target=release, daemon=True).start()
+        store.save("s1", "new", [{"role": "user", "content": "new"}])
+    finally:
+        if not holder.closed:
+            holder.close()
+
+    assert store.load("s1")["title"] == "new"

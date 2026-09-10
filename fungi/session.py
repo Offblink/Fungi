@@ -5,6 +5,8 @@ File shape: {id, title, created, updated, messages: [{role, content, ...}]}
 
 import contextlib
 import json
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,29 @@ SESSIONS_DIR = PROJECT_ROOT / "data" / "sessions"  # one location for every mode
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    """Per-file lock around every read and write of one session file.
+
+    Two Windows facts make this necessary. A reader holds the file open for the
+    length of the read, and Python opens files without FILE_SHARE_DELETE, so an
+    atomic rename onto a file being read is *refused* (measured: 123 refusals in
+    6s of concurrent save+list). And a listing that globs while a rename lands
+    can miss the file entirely, which is how a running session vanished from
+    `/sessions`. Serializing our own readers and writers removes both.
+    """
+    key = str(path)
+    with _LOCKS_GUARD:
+        lock = _LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _LOCKS[key] = lock
+        return lock
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -30,7 +55,16 @@ def _write_atomic(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     try:
         tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)  # same directory, same volume: atomic
+        for attempt in range(5):
+            try:
+                tmp.replace(path)  # same directory, same volume: atomic
+                return
+            except PermissionError:
+                # Someone outside this process holds the target open (an editor,
+                # a virus scanner, a second Fungi). Wait for it to let go.
+                if attempt == 4:
+                    raise
+                time.sleep(0.02)
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink()
@@ -69,7 +103,8 @@ class SessionStore:
             reverse=True,
         ):
             try:
-                data = json.loads(path.read_text(encoding="utf-8-sig"))
+                with _lock_for(path):
+                    data = json.loads(path.read_text(encoding="utf-8-sig"))
             except (OSError, json.JSONDecodeError):
                 continue
             result.append(
@@ -93,40 +128,43 @@ class SessionStore:
     ) -> None:
         self.ensure_dir()
         path = self.dir / f"{session_id}.json"
-        created = _now()
-        if path.is_file():
-            with contextlib.suppress(OSError, json.JSONDecodeError):
-                created = json.loads(path.read_text(encoding="utf-8-sig")).get("created", created)
-        payload = {
-            "id": session_id,
-            "title": title,
-            "created": created,
-            "updated": _now(),
-            "messages": messages,
-            "subagents": subagents or [],
-            "asks": asks or [],
-        }
-        _write_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
+        with _lock_for(path):
+            created = _now()
+            if path.is_file():
+                with contextlib.suppress(OSError, json.JSONDecodeError):
+                    created = json.loads(path.read_text(encoding="utf-8-sig")).get("created", created)
+            payload = {
+                "id": session_id,
+                "title": title,
+                "created": created,
+                "updated": _now(),
+                "messages": messages,
+                "subagents": subagents or [],
+                "asks": asks or [],
+            }
+            _write_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
 
     def load(self, session_id: str) -> dict[str, Any] | None:
         path = self.dir / f"{session_id}.json"
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8-sig"))
-        except OSError:
-            return None
-        except json.JSONDecodeError:
-            # Evidence over silence: keep the bytes aside as .corrupt so the
-            # damage is inspectable and reportable, instead of the view going
-            # blank again on every load of the same file.
-            with contextlib.suppress(OSError):
-                path.replace(path.with_name(path.name + ".corrupt"))
-            return None
+        with _lock_for(path):
+            if not path.is_file():
+                return None
+            try:
+                return json.loads(path.read_text(encoding="utf-8-sig"))
+            except OSError:
+                return None
+            except json.JSONDecodeError:
+                # Evidence over silence: keep the bytes aside as .corrupt so the
+                # damage is inspectable and reportable, instead of the view going
+                # blank again on every load of the same file.
+                with contextlib.suppress(OSError):
+                    path.replace(path.with_name(path.name + ".corrupt"))
+                return None
 
     def delete(self, session_id: str) -> None:
         path = self.dir / f"{session_id}.json"
-        path.unlink(missing_ok=True)
+        with _lock_for(path):
+            path.unlink(missing_ok=True)
 
 
 def _store() -> SessionStore:
