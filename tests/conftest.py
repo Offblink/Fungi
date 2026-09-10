@@ -122,3 +122,22 @@ def qapp():
     from PyQt5.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def _fast_room_clocks(monkeypatch):
+    """Rooms poll on production intervals; tests wait on those clocks for no
+    reason (a courier wake is a 3s mail poll, a roster diff is a 10s heartbeat).
+    Turn the clocks down so the only wait in a test is its own readiness check.
+
+    Every one of these is a module constant read at each loop turn, so the patch
+    reaches the running threads. Semantics are unchanged — only how often the
+    room looks.
+    """
+    from fungi import room as room_mod
+    from fungi.hub import app as hub_app
+
+    monkeypatch.setattr(room_mod, "MONITOR_INTERVAL_S", 0.05)
+    monkeypatch.setattr(room_mod, "HEARTBEAT_INTERVAL_S", 0.05)
+    monkeypatch.setattr(room_mod.RoomBase, "MAIL_POLL_S", 0.05)
+    monkeypatch.setattr(hub_app, "REAP_INTERVAL", 0.05)
