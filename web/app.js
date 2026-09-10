@@ -114,6 +114,12 @@ async function switchSession(id) {
 }
 
 function renderMessages(s) {
+  // #messages has exactly one owner: the open friend view. A session turn
+  // finishing, a stream recovering from a drop, or a session reload used to
+  // paint here while a friend conversation was on screen — the friend thread
+  // was replaced by the session (and the friend poll would not repaint it,
+  // because its payload had not changed). 2026-09-10 real-machine finding.
+  if (friendView) return;
   _liveCount = 0; // full re-render: transcript replay is CSS-static, live nodes re-baseline
   // Full re-render must actually replace: renderTranscript only appends, so
   // without this clear every reload (done/ESC/retry) stacked a second copy of
@@ -486,7 +492,9 @@ function reattachIfRunning(sid) {
    arriving to reload them. */
 async function recoverAfterDrop(sid) {
   if (!sid) return;
-  await reloadSessionFromServer();
+  // Reconcile the session pane only when it is the pane on screen: a friend
+  // conversation must survive a chat stream dying behind it.
+  if (!friendView) await reloadSessionFromServer();
   if (turn || processing) return; // user already started something else
   await loadSessions();           // fresh s.running for the reattach check
   reattachIfRunning(sid);
@@ -617,7 +625,10 @@ function handleTurnEvent(obj) {
       if (!t.sessionId) t.sessionId = obj.content;
       break;
     case 'done': {
-      const viewing = currentSessionId === t.sessionId;
+      // A finished session turn may only repaint its own pane: with a friend
+      // conversation open, refresh the session list and leave #messages alone
+      // (renderMessages enforces this too — this keeps the fetch out as well).
+      const viewing = currentSessionId === t.sessionId && !friendView;
       const failed = t.entries.length && t.entries[t.entries.length - 1].kind === 'error';
       turn = null; abortCtrl = null; stopRequested = false;
       if (stopTimer) { clearTimeout(stopTimer); stopTimer = null; }
@@ -961,7 +972,14 @@ async function refreshFriendChat() {
     const payload = JSON.stringify(d);
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
-    renderFriendChat(d);
+    try {
+      renderFriendChat(d);
+    } catch (e) {
+      // A paint that threw must not freeze the view: uncache the payload so
+      // the next poll retries instead of skipping it as "unchanged" forever.
+      lastFriendPayload = null;
+      console.error('renderFriendChat:', e);
+    }
   } catch (e) {}
 }
 
@@ -1008,15 +1026,19 @@ function renderLiveEvents(live) {
   }
 }
 function renderFriendChat(d) {
-  msgs.innerHTML = '';
-  tray.innerHTML = '';
-  registerArchived(d.subagents || []);
   const messages = d.messages || [];
   const events = d.events || [];
   const live = d.live || [];
-  if (!messages.length && !events.length && !(d.mails || []).length && !live.length) {
+  const mails = d.mails || [];
+  if (!messages.length && !events.length && !mails.length && !live.length) {
+    // Nothing to show (a room with no traffic yet, or a wiped transcript):
+    // decide before clearing — wiping the pane with an empty payload is what
+    // made it look like the conversation had been lost.
     return;
   }
+  msgs.innerHTML = '';
+  tray.innerHTML = '';
+  registerArchived(d.subagents || []);
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   renderTranscript(messages, d.asks || [], true);
   var fileNodes = [];
@@ -1035,7 +1057,7 @@ function renderFriendChat(d) {
   }
   lastTransferCount = fileNodes.length;
   MailUnread.markPeerRead(friendView); // seeing the thread IS reading it
-  (d.mails || []).forEach(m => {
+  mails.forEach(m => {
     const body = String(m.body || '');
     const subject = String(m.subject || '');
     const html = (subject && subject !== '(no subject)' && subject !== body

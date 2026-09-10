@@ -296,6 +296,7 @@ agent 气泡轨道漂移 + 进度环。
 - **移动端文件入口改为上传**：桌面「选择文件」调 `/pickfile`（服务端 tkinter 对话框选**电脑**文件），手机触发会在电脑上弹窗，语义不成立——移动端不调它，改用 `<input type="file">` + `POST /upload`，把**手机上的**文件传上本机 server 再取其落盘路径（`web/m.html` 聊天输入区与好友输入区各一个，逻辑在 `web/m.js`；`tests/test_webui_upload.py` 覆盖上传端点）。跨主机传文件仍走 hub transfer（agent 工具），不经过 WebUI。
 - **验证中抓到并修复的既有 bug**（2eeeac7）：磁带 60s grace-pop 按会话 id 无世代 pop——上一回合 done 后 60s 内同会话开新回合，新回合运行中磁带被弹掉，刷新重连拿到裸 done 静默丢失直播视图（桌面同样中招）。修复：pop 按磁带对象身份校验；grace 提为 `_TAPE_GRACE_S` 供测试。
 - **前端坑**：scroll-bottom 按钮必须放在 `#messages` 外层（全量重绘 innerHTML='' 会销毁它，桌面靠 `if (!b) return` 掩盖成功能缺失而非崩溃；移动端曾因此 TypeError 吞掉 reattach）。
+- **`#messages` 一次只有一个主人（2026-09-10 真机：好友对话"像被刷新掉了"）**：好友视图打开时，**任何会话侧的重绘都必须早退**——`renderMessages` 入口 `if (friendView) return;`（`reloadSessionFromServer`/`switchSession` 都经它落笔），`handleTurnEvent` 的 `done` 分支与 `recoverAfterDrop` 也只刷新会话列表不落笔。此前用「会话回合跑完」触发 `reloadSessionFromServer()` 会把好友对话整屏换成会话（复现：回合中途点进好友视图，done 到了以后 `#messages` 从 44 个 friend 节点变成 2 个会话节点），而 comm-log 载荷没变 → `lastFriendPayload` 让好友视图再也画不回来，只有刷新页面才恢复。配套三条硬约束：① `renderFriendChat` **先判空后清屏**（空载荷不得擦掉已有画面）② 载荷没变不重绘 ③ 重绘抛错必须 `lastFriendPayload = null` 解缓存，否则一次异常就把视图冻死到刷新为止（手机端 m.js 是同一套代码，同样三条）。
 - **验证**：280 tests 全绿（+7）；门控 harness + browser-act 实测 token 门禁（LAN 无 token 403 / 带 token 200 / loopback 免检）、抽屉合成触摸手势开合、流式回合、done 落点、中途刷新重连接续、agent 气泡+模态。真机手机扫码待用户实测（Windows 防火墙可能需放行 Python 入站）。
 
 ## 真机首扫反馈修复（2026-09-06 晚）
