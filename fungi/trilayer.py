@@ -215,7 +215,6 @@ class TriLayer:
         child_extra_tools: dict[str, BoundTool] | None = None,
         skill_save: bool = False,
         spawn_done: Callable[[dict], None] | None = None,
-        bg_report: Callable[[dict], None] | None = None,
     ) -> None:
         """child_tool_names/child_extra_tools: when set, spawned subagents use
         this surface instead of the native defaults — a clone's spawn inherits
@@ -236,13 +235,6 @@ class TriLayer:
         # session's pending-results registry — the resume turn injects the
         # report and re-activates the session. None (tests) = fire nowhere.
         self._spawn_done = spawn_done
-        # Same payload shape as spawn_done, but for the `background` tool. A
-        # separate channel on purpose: spawn falls back to a SYNCHRONOUS answer
-        # when no re-activation channel exists (comm clones), while background
-        # is always asynchronous — with no sink its report is written into the
-        # void and the courier waits forever for work that already finished
-        # (2026-09-10 real-machine finding).
-        self._bg_report = bg_report
         # spec_id -> {id, call_id, layer, goal, reply_format, status, events: [...]}
         self.subagents: dict[str, dict] = {}
         self.asks: list[dict] = []  # completed inquire records (for persistence)
@@ -341,9 +333,9 @@ class TriLayer:
                     )
                 with self._lock:
                     self._active -= 1
-                if status != "aborted" and self._bg_report is not None:
+                if status != "aborted" and self._spawn_done is not None:
                     with contextlib.suppress(Exception):
-                        self._bg_report(
+                        self._spawn_done(
                             {
                                 "id": record["id"],
                                 "goal": record["goal"],
@@ -405,21 +397,33 @@ class TriLayer:
         extra_tools: dict[str, BoundTool],
         tool_names: frozenset[str] | set[str] = frozenset(),
         model: str | None = None,
+        subagents: bool = True,
     ) -> Agent:
         """A clone turn agent: clone's prompt/tools + spawn; children inherit
-        the clone's file surface (see __init__ child_* params)."""
+        the clone's file surface (see __init__ child_* params).
+
+        `subagents=False` builds a courier-shaped agent: no spawn, no
+        background. A courier's spawn would be SYNCHRONOUS (a clone has no
+        re-activation channel, see `_spawn`) — an extra LLM hop that cannot run
+        in parallel — and its background reports had nowhere to land. Both only
+        widened the blast radius of an unattended, peer-driven agent
+        (user decision 2026-09-10)."""
+        dispatch = (
+            {"spawn": self.bound_spawn(1), "background": self.bound_background(1)}
+            if subagents
+            else {}
+        )
         agent = Agent(
             self.cfg,
             sink,
             system_prompt=system_prompt + skills.section(),
             tool_names=tool_names,
             extra_tools={
-                "spawn": self.bound_spawn(1),
-                "background": self.bound_background(1),
+                **dispatch,
                 **skills.bound(readonly=not self._skill_save),
                 **extra_tools,
             },
-            parallel_tools={"spawn", "background"},
+            parallel_tools={"spawn", "background"} if subagents else frozenset(),
             llm=self._llm,
             model=model or self.cfg.model_for(1),
             should_abort=self._should_abort,

@@ -245,7 +245,6 @@ class WebUIRuntime:
             sink,
             should_abort=_abort,
             spawn_done=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
-            bg_report=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
         )
         return layer.build_orchestrator(sink)
 

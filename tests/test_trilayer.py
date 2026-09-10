@@ -61,8 +61,8 @@ def make_trilayer() -> tuple[TriLayer, list, RoutingFakeLLM]:
     events: list = []
     sink = FnSink(lambda t, c: events.append((t, c)))
     fake = RoutingFakeLLM()
-    results: list = []  # async report capture: both channels land here
-    tl = TriLayer(CFG, sink, llm=fake, spawn_done=results.append, bg_report=results.append)
+    results: list = []  # spawn_done capture: background reports land here
+    tl = TriLayer(CFG, sink, llm=fake, spawn_done=results.append)
     tl._results = results
     return tl, events, fake
 
@@ -327,24 +327,15 @@ def test_every_tool_description_is_a_plain_string():
 
 def test_background_runs_command_directly_without_an_llm():
     """`background` executes the command on a worker thread - no subagent, no
-    extra LLM round-trips - and reports the output via bg_report.
-
-    It is a SEPARATE channel from spawn_done on purpose: `spawn` falls back to
-    a synchronous answer when no re-activation channel exists (comm clones),
-    while `background` is always asynchronous — routing its report through
-    spawn_done left clones with no sink at all, so the courier ended its turn
-    waiting for a report that never came (2026-09-10 real-machine finding).
-    """
+    extra LLM round-trips - and reports the output via spawn_done."""
 
     def counting_llm(_messages, _tools):
         raise AssertionError("background must not invoke the LLM")
 
     got: list = []
-    spawns: list = []
     tl = TriLayer(
         CFG, FnSink(lambda _t, _c: None), llm=counting_llm,
-        spawn_done=lambda rec: spawns.append(rec),
-        bg_report=lambda rec: got.append(rec),
+        spawn_done=lambda rec: got.append(rec),
     )
     out = tl.bound_background(1).fn({"command": "echo bg-direct"})
     assert out.startswith("dispatched (id=")
@@ -354,4 +345,3 @@ def test_background_runs_command_directly_without_an_llm():
         time.sleep(0.2)
     assert got and got[0]["status"] == "done"
     assert "bg-direct" in got[0]["answer"]
-    assert not spawns  # background must not ride the spawn channel

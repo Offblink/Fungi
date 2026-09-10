@@ -146,6 +146,7 @@ class Clone:
         on_transfer=None,
         on_chat_end=None,
         on_turn_end=None,
+        subagents: bool = True,
         on_direct=None,
         pending: PendingAsks | None = None,
         tool_names: frozenset[str] | set[str] = frozenset(tools.BASE_TOOL_NAMES),
@@ -187,6 +188,9 @@ class Clone:
         # called with (env_type, messages, agent) after every chat/task turn —
         # the room records per-peer transcripts for the friend view.
         self.on_turn_end = on_turn_end
+        # Courier clones run unattended for every peer message: no fan-out
+        # (see TriLayer.build_clone_agent's subagents switch).
+        self.subagents_enabled = subagents
         # `is not None` (not `or`): an empty PendingAsks is falsy via __len__
         self.pending = pending if pending is not None else PendingAsks()
         self.history: list[dict] = []  # chat exchanges kept locally (no-reply stays)
@@ -298,6 +302,7 @@ class Clone:
             extra_tools=self.tools,
             tool_names=self.tool_names,
             model=self.model,
+            subagents=self.subagents_enabled,
         )
 
     def run_turn(self, env: Envelope) -> None:

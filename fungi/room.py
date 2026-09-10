@@ -835,7 +835,6 @@ class RoomRuntime(WebUIRuntime):
             child_extra_tools=clone.child_extra_tools,
             skill_save=clone.skill_save,
             spawn_done=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
-            bg_report=lambda rec: _PENDING_SPAWNS.setdefault(sid, []).append(rec),
         )
         # inquire rides the turn sink so its card streams in the NDJSON flow;
         # resolution stays on the module-global registry (/answer in-process).

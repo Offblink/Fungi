@@ -102,6 +102,7 @@ def build_comm_clone(
         pending=pending,
         on_transfer=comm_tools.receive_transfer,
         on_chat_end=_chat_end,
+        subagents=False,  # a courier relays; it does not fan out (2026-09-10)
         on_turn_end=on_turn_end,
         on_direct=on_direct,
         # No native base tools: file work only via the guarded fs tools; the

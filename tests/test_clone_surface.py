@@ -53,9 +53,15 @@ def agent_names(agent) -> set[str]:
 def test_comm_clone_surface_is_guarded_only():
     clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
     names = agent_names(clone.build_agent())
-    assert {"send_peer", "confirm", "inquire", "spawn", *clone.tools} <= names
+    assert {"send_peer", "confirm", "inquire", *clone.tools} <= names
     # no unguarded native tool may leak onto a comm clone (spec 6.1)
     assert names.isdisjoint(tools.BASE_TOOL_NAMES)
+    # and no fan-out: a courier relays, it does not dispatch workers. Its spawn
+    # was synchronous (a clone has no re-activation channel, so it never
+    # parallelises) and its background reports had nowhere to land at all —
+    # both just widened the blast radius of an unattended, peer-driven agent
+    # (user decision 2026-09-10).
+    assert names.isdisjoint({"spawn", "background"})
 
 
 def test_local_clone_surface_has_native_tools_and_spawn():
