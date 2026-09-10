@@ -372,3 +372,33 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   自己留存的配置副本取回旧值并写回。**结构性防复发**：`tests/conftest.py::_never_write_the_user_config`
   把 `config.CONFIG_PATH` 指向 tmp 副本（放在子目录里，避免被把 tmp_path 当数据目录的用例 glob 到），
   从此任何测试都不可能碰到仓库里的 `config.json`。
+
+## 20. 增补（2026-09-10 深夜）：信使的双通道（汇报 ≠ 发给对面）+ 二维码依赖自愈
+
+### 现场（对方机器上的 `comm-OwO.json`，22 行）
+主人一句「你明天早上有空吗？」，两边信使**互相确认了 4 轮 8 行**，正文一轮比一轮长
+（49→329→525 / 199→704→553 字），最后靠模型自己 `<<SILENT>>` 才停下（那条 3245 字 reasoning
+全是在说服自己"别回了"）。根因不是渲染，而是**回合收尾文本的身份混了**：
+`clone/comm.py::_chat_end` 的兜底把"没有调用 send_peer 的收尾文本"直接投给对面，
+而模型把它写成了**给自家主人的汇报**（「**你**反问『啥远程控制？』」「另外有一点我想**单独跟你讲明白**」），
+于是私密汇报出网、对面逐条作答，两边互相放大。同一份转录里还暴露出：`public/` 里一份无意翻到的
+文档被当成"上次的活"，信使据此用 `inquire` 推给主人一道虚构选择题。
+
+### 新契约（用户指令，2026-09-10）
+- **`send_peer` 是唯一上网通道**：回合收尾文本＝给自家主人的汇报，只留在本机。实现上
+  `Clone.run_turn` 的 chat 分支只把文本记进历史，`on_chat_end` 钩子与 `CommTools.peer_sends`
+  一并删除（clean cutover，不留死插口）。
+- 汇报要说清"我发了什么、对面回了什么、有什么要主人定"；不想汇报就裸 `<<SILENT>>`
+  （存储侧 `_drop_silent` 仍会剥掉它，只留下 reasoning）。
+- prompt 另加两条约束：**别翻与本轮无关的文件**（不许把无意翻到的文档当成任务依据；
+  查不出来的就照实说）；**`inquire` 不得用来确认自己编出来的计划**。
+- 好友视图把这类行标成 **信使汇报**：`renderTranscript` 在 `opts.report` 下给 assistant 行加
+  `.report`，`style.css`/`m.css` 用 `::before{content:"信使汇报"}` 渲染（不进 `textContent`，
+  行文本语义不变；会话视图不带这个类）。
+
+### 二维码依赖（用户报告「缺少依赖 segno」）
+`MobilePage.refresh()` 原先在 `ImportError` 分支**提前 return**：连"手机端地址"都不填，
+页面等于废掉。现在**先算地址**（手机手输也能进，光标停在开头而不是滚到 token 尾巴）、提示可换行，
+缺依赖时给**一键安装**（`python -m pip install segno`，独立控制台 + 1s 轮询，装完自动重绘；
+`sys.frozen` 的打包版不给按钮、提示更新）。`release.yml` 加 `--collect-all segno`：
+发布包不再可能缺这个纯 Python 小依赖。
