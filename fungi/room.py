@@ -60,9 +60,31 @@ def _is_consent(body: dict) -> bool:
     return bool(body.get("action")) and bool(body.get("path"))
 
 
-def _comparable(msgs: list[dict]) -> list[dict]:
-    """Messages in comparison form: the store-only `ts` key dropped."""
-    return [{k: v for k, v in m.items() if k != "ts"} for m in msgs]
+def _comparable(msgs: list[dict]) -> list[tuple]:
+    """Rows reduced to what makes a transcript row *that* row.
+
+    Only identity: role, content, the tool call it answers and the calls it
+    made. The clone's history copy of a turn is not byte-identical to the
+    stored one — `run_turn` re-appends the assistant reply without the
+    reasoning the agent's copy carried — so comparing whole dictionaries read
+    an identical row as a brand-new one. That mis-alignment then took the
+    "clone forgot rows" path, which duplicated the courier's last reply in the
+    friend view and hoisted it above its own question (2026-09-10: the peer
+    sent two messages, the courier answered both, the newest transcript showed
+    the first reply twice).
+    """
+    out = []
+    for m in msgs:
+        calls = m.get("tool_calls") or []
+        out.append(
+            (
+                m.get("role"),
+                m.get("content"),
+                m.get("tool_call_id"),
+                tuple((c.get("id"), (c.get("function") or {}).get("name")) for c in calls),
+            )
+        )
+    return out
 
 
 def _drop_silent(msgs: list[dict]) -> list[dict]:
@@ -107,11 +129,13 @@ def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = N
     carried = _drop_silent([m for m in fresh if m.get("role") != "system"])
     stored_c, carried_c = _comparable(stored), _comparable(carried)
     # Align the stored transcript with the clone's history (it grows at the end):
-    # a row the clone still carries keeps the ts it was first stamped with.
+    # a row the clone still carries keeps the transcript's own copy — its ts,
+    # and the display payload the lean history copy no longer has.
     merged, si = [], 0
-    for row, comp in zip(carried, carried_c, strict=False):
-        if si < len(stored_c) and comp == stored_c[si]:
-            merged.append({**row, "ts": stored[si].get("ts", now)})
+    for row in carried:
+        if si < len(stored_c) and carried_c[si] == stored_c[si]:
+            merged.append({**row, **{k: v for k, v in stored[si].items() if k != "ts"},
+                           "ts": stored[si].get("ts", now)})
             si += 1
         else:
             merged.append({**row, "ts": now})

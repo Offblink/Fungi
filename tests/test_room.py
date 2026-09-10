@@ -129,6 +129,28 @@ def test_comm_history_merge_drops_the_abstention_marker():
     assert "<<SILENT>>" not in json.dumps(merged)
 
 
+def test_comm_history_merge_keeps_a_reply_with_its_question(server_room):
+    """The clone's history copy of a turn is leaner than the stored one (no
+    reasoning), which must not read as a new row: matching on whole
+    dictionaries duplicated the courier's first reply and hoisted it above its
+    own question (2026-09-10: two peer messages -> two courier turns)."""
+    stored = [
+        {"role": "user", "content": "在吗", "ts": 1.0},
+        {"role": "assistant", "content": "在的", "reasoning": "想想要不要回", "ts": 1.5},
+    ]
+    fresh = [  # the clone's cumulative history: the same two rows, leaner
+        {"role": "user", "content": "在吗"},
+        {"role": "assistant", "content": "在的"},
+        {"role": "user", "content": "晚上吃火锅？"},
+        {"role": "assistant", "content": "好"},
+    ]
+    merged = merge_comm_history(stored, fresh, ts=2.0)
+    assert [m["role"] for m in merged] == ["user", "assistant", "user", "assistant"]
+    assert [m["content"] for m in merged] == ["在吗", "在的", "晚上吃火锅？", "好"]
+    assert merged[1]["reasoning"] == "想想要不要回"  # 展示用 payload 不丢
+    assert [m["ts"] for m in merged] == [1.0, 1.5, 2.0, 2.0]
+
+
 def test_comm_history_merge_keeps_rows_the_clone_forgot(server_room):
     """A clone rebuilt after its peer dropped off the roster comes back with an
     empty history: the stored transcript must be carried forward, marker rows
