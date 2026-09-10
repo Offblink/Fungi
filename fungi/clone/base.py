@@ -36,6 +36,11 @@ class LocalTransport:
         self.inbox = relay.register_local(self_addr)
         self.host, _role, _peer = parse_addr(self_addr)
 
+    def mail(self) -> dict:
+        if self.hub is None:
+            return {"mails": []}
+        return self.hub.mail.list(self.host)
+
     def send(self, env: Envelope) -> dict:
         # via hub.send so ask/answer registry maintenance applies locally too
         if self.hub is not None:
@@ -101,6 +106,10 @@ class RemoteTransport:
         if self.inbox is not None:
             return self.inbox.after(after, timeout)
         return self.client.poll(after, timeout)
+
+    def mail(self) -> dict:
+        return self.client.mail()
+
 
     def fs(self, op: str, path: str, **kw) -> dict:
         return self.client.fs(op, path, **kw)

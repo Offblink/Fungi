@@ -144,6 +144,9 @@ class RoomBase:
         self._live_lock = threading.Lock()
         # Courier-off transfers awaiting the user's card answer:
         # envelope id -> (original transfer envelope, sender host).
+        # Courier mail wake (see _mail_watch_loop): started lazily with the
+        # first comm clone.
+        self._mail_thread: threading.Thread | None = None
         self._direct_transfers: dict[str, tuple] = {}
         # Per-sid write lock for comm transcripts: the clone worker (turn
         # end), the clone poll loop (courier-off direct) and WebUI HTTP
@@ -206,6 +209,10 @@ class RoomBase:
         # its inbox: cross-host chat/delegate/send_file all died silently
         # while tests passed (they call clone.start() themselves).
         clone.start()
+        # Courier mail wake: the hub consumes mail envelopes, so the message
+        # never reaches this clone — the poller is what keeps the courier able
+        # to answer it (see _mail_watch_loop).
+        self._ensure_mail_watch()
 
     def _live_sink(self, peer: str) -> Sink:
         """Sink wrapper that mirrors turn events into the peer's live tape
@@ -410,6 +417,72 @@ class RoomBase:
         with contextlib.suppress(Exception):
             self.local.transport.discard_transfer(str(body.get("id")))
         return {"ok": True, "saved": str(dest)}
+
+    # ── courier mail wake ──
+
+    MAIL_POLL_S = 3.0
+
+    def _ensure_mail_watch(self) -> None:
+        if self._mail_thread is not None:
+            return
+        self._mail_thread = threading.Thread(
+            target=self._mail_watch_loop, name="mail-watch", daemon=True
+        )
+        self._mail_thread.start()
+
+    def _mail_watch_loop(self) -> None:
+        """Human text messages (type mail) are consumed by the hub: they land
+        in the mailbox and the envelope never reaches the receiving clone, so
+        the courier cannot answer them (470b07c decoupling regression). Poll
+        the mailbox; unseen inbound mail + courier on -> synthesize a human
+        chat turn for the comm clone. Courier off: ids are noted only — the
+        friend view renders mail straight from the store."""
+        seen: set[str] | None = None  # None = the first pass only seeds the cursor
+        while not self._stop.is_set():
+            if seen is None:
+                # Seed at once (not after the first sleep): mail that arrives
+                # after this room is up must wake the courier, only history
+                # predating the room is skipped.
+                try:
+                    data = self.local.transport.mail()
+                except Exception:
+                    self._stop.wait(1.0)
+                    continue
+                seen = {str(m.get("id")) for m in data.get("mails") or []}
+            else:
+                self._mail_poll_once(seen)
+            self._stop.wait(self.MAIL_POLL_S)
+
+    def _mail_poll_once(self, seen: set[str]) -> None:
+        try:
+            data = self.local.transport.mail()
+        except Exception:
+            return
+        rows = [m for m in (data.get("mails") or []) if not m.get("mine")]
+        fresh = [m for m in rows if str(m.get("id")) not in seen]
+        for m in fresh:
+            seen.add(str(m.get("id")))
+        if not fresh or not load_config().courier:
+            return
+        for m in fresh:
+            sender = str(m.get("from") or "")
+            sender_host = sender.split(":")[0] if sender else str(m.get("peer") or "")
+            with self._guard:
+                clone = self._clones.get(str(m.get("peer") or sender_host))
+            if clone is None:
+                continue
+            clone.dispatch(
+                Envelope(
+                    src=sender or f"{sender_host}:human",
+                    dst=clone.addr,
+                    type="chat",
+                    body={
+                        "text": str(m.get("body") or ""),
+                        "from_human": True,
+                        "sender_name": sender_host,
+                    },
+                )
+            )
 
     # ── human direct sends (friend view composer) ──
     def comm_send_human(self, peer: str, text: str | None = None, file_path: str | None = None) -> dict:

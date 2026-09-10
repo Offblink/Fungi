@@ -14,9 +14,10 @@ from pathlib import Path
 
 from fungi import config as config_mod
 from fungi import room as room_mod
-from fungi.clone.base import Clone
+from fungi.clone.base import Clone, LocalTransport
 from fungi.events import NullSink
 from fungi.hub.mail import Mailbox
+from fungi.hub.relay import Relay
 from fungi.llm import LLMResult
 from fungi.protocol import Envelope
 from fungi.room import RoomClient, RoomServer
@@ -288,3 +289,130 @@ def test_comm_log_mails_are_filtered_to_the_peer(tmp_path):
     rt.room = room
     out = rt.comm_log("bob")
     assert [m["body"] for m in out["mails"]] == ["for bob"]
+
+# ── courier mail wake: a human text message must reach the receiving courier ──
+#
+# 470b07c decoupled text from the courier so delivery never needs an agent —
+# but it also stopped the receiving agent from ever hearing about the message:
+# the hub consumes mail envelopes, so the courier could not answer. The room
+# now polls the mailbox and wakes the comm clone when the courier switch is on.
+
+
+class _MailTransport:
+    def __init__(self, mails):
+        self.mails = mails
+
+    def mail(self):
+        return {"mails": list(self.mails)}
+
+
+class _RecordingClone:
+    addr = "alice:comm-bob"
+
+    def __init__(self):
+        self.envs = []
+
+    def dispatch(self, env):
+        self.envs.append(env)
+
+
+def _mail_room(tmp_path, mails):
+    room = _room(tmp_path)
+    room._local = type("L", (), {"transport": _MailTransport(mails)})()
+    clone = _RecordingClone()
+    room._clones = {"bob": clone}
+    return room, clone
+
+
+def test_courier_on_wakes_once_for_unseen_mail(tmp_path, monkeypatch):
+    monkeypatch.setattr(room_mod, "load_config", lambda: config_mod.Config(courier=True))
+    mails = [
+        {"id": "m1", "from": "bob:human", "peer": "bob", "body": "在吗", "mine": False},
+        {"id": "m2", "from": "alice:human", "peer": "bob", "body": "自己的", "mine": True},
+    ]
+    room, clone = _mail_room(tmp_path, mails)
+    seen = set()
+    room._mail_poll_once(seen)
+    assert len(clone.envs) == 1  # the outbound copy (mine) must not wake anyone
+    env = clone.envs[0]
+    assert (env.type, env.dst, env.body["text"]) == ("chat", "alice:comm-bob", "在吗")
+    assert env.body["from_human"] is True
+    assert env.body["sender_name"] == "bob"
+    room._mail_poll_once(seen)  # same mail again: no second wake
+    assert len(clone.envs) == 1
+
+
+def test_courier_off_mail_never_wakes_but_advances_the_cursor(tmp_path, monkeypatch):
+    monkeypatch.setattr(room_mod, "load_config", lambda: config_mod.Config(courier=False))
+    mails = [{"id": "m1", "from": "bob:human", "peer": "bob", "body": "在吗", "mine": False}]
+    room, clone = _mail_room(tmp_path, mails)
+    seen = set()
+    room._mail_poll_once(seen)
+    assert clone.envs == []
+    # The cursor advances even while off: flipping the switch on later must
+    # not replay the whole backlog as fresh turns.
+    assert seen == {"m1"}
+
+
+def test_courier_on_human_mail_wakes_the_receiving_courier(tmp_path, monkeypatch):
+    server, client, _llm_beta = _two_rooms(tmp_path, monkeypatch, courier=True)
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert _wait(lambda: client._clones.get("alpha") is not None)
+        assert server.comm_send_human("beta", text="在吗")["ok"]
+        # The receiving courier wakes on the mailbox and its turn records the
+        # human line into the comm transcript (friend view).
+        assert _wait(lambda: (client._comm_store.load("comm-alpha") or {}).get("messages"))
+        msgs = client._comm_store.load("comm-alpha")["messages"]
+        assert any("在吗" in str(m.get("content")) for m in msgs)
+        # the receiving courier sees it attributed to the SENDER host (alpha)
+        assert any("来自 alpha 的用户" in str(m.get("content")) for m in msgs)
+    finally:
+        client.stop()
+        server.stop()
+
+def test_courier_wake_answers_the_human_end_to_end(tmp_path, monkeypatch):
+    """Acceptance for the user-facing bug: with the courier ON, a human text
+    message must come back answered. The reply rides the normal chat path
+    (send_peer / the _chat_end fallback), so the answer must show up in the
+    SENDER's friend-view transcript."""
+    server, client, _llm = _two_rooms(tmp_path, monkeypatch, courier=True)
+
+    class _CourierLLM:
+        """Answers once, then goes silent so the two couriers do not ping-pong
+        (the real prompt says: never reply just to acknowledge)."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, _messages, _tool_defs):
+            self.calls += 1
+            return LLMResult(content="收到，我在" if self.calls == 1 else "<<SILENT>>")  # noqa: RUF001
+
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert _wait(lambda: client._clones.get("alpha") is not None)
+        client._clones["alpha"].llm = _CourierLLM()
+        assert server.comm_send_human("beta", text="在吗")["ok"]
+        assert _wait(
+            lambda: any(
+                "收到，我在" in str(m.get("content"))  # noqa: RUF001
+                for m in ((server._comm_store.load("comm-beta") or {}).get("messages") or [])
+            ),
+            timeout_s=20.0,
+        )
+    finally:
+        client.stop()
+        server.stop()
+
+def test_local_transport_mail_reads_this_host_mailbox(tmp_path):
+    """Server-role rooms read mail through LocalTransport, not the HTTP client:
+    that path must resolve its own host (a lost `self.host` assignment made it
+    raise, and the watch loop swallowed the exception silently)."""
+    mailbox = Mailbox(tmp_path / "mail")
+    mailbox.deliver("alpha", "beta:human", "", "hi", peer="beta")
+    hub = type("H", (), {"mail": mailbox})()
+    transport = LocalTransport(Relay("alpha"), "alpha:comm-beta", hub=hub)
+    out = transport.mail()
+    assert out["host"] == "alpha"
+    assert [m["body"] for m in out["mails"]] == ["hi"]
