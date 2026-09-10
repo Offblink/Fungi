@@ -68,12 +68,13 @@ def build_comm_clone(
                 + "\n"
             )
         if not memory and not calendar:
-            return base_prompt
+            return base_prompt + "\n" + todos.RULES
         return (
             base_prompt
             + "\n本机主人的长期备忘（用户在 GUI 里写给你的背景记忆，回答时可用它代为说明或转达）:\n"
             + memory + "\n"
             + calendar
+            + "\n" + todos.RULES
         )
 
     def _chat_end(_env, reply: str) -> None:

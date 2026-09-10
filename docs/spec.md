@@ -278,9 +278,15 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   `resolved_prompt()` 每轮求值（与 courier 开关同款 live 语义）。
 - **四周日历待办**：`fungi/todos.py`，存储 `data/todos.json`（date → [items]，gitignore）。
   注入窗口 = overdue 30 天尾 + 今天 + 未来 21 天，按日排列随 prompt 注入。
-- **todo 工具**：action add/list/remove，同一份存储。挂载两处：L1 Orchestrator
-  （trilayer，parallel_tools 含 todo）与**本机 Agent 的 clone 工具集**——房间模式 WebUI
+- **todo 工具**：action add/list/remove，同一份存储。挂载三处：L1 Orchestrator
+  （trilayer，parallel_tools 含 todo）、**本机 Agent 的 clone 工具集**——房间模式 WebUI
   回合走 `RoomRuntime.build_agent`（由 clone.tools 装配），不走 build_orchestrator，
-  漏挂本地 clone 会导致 WebUI 侧看不到该工具（真机教训）。信使与用户 thus 共写一份日历。
+  漏挂本地 clone 会导致 WebUI 侧看不到该工具（真机教训）——以及信使 comm clone。
+  信使与用户 thus 共写一份日历。
+- **日历条目属于用户（2026-09-10 真机教训）**：信使把主人 9/11 的约「remove 后 add 改写」
+  了一遍——对主人就是一次静默取消，而当时的本意只是「这条之外再加一条」。现在 `add`
+  只追加（同条不重复），`remove` 必须给出确切条目文本（整日清空只留在 GUI 日历）；
+  `todos.RULES` 随上述三处 prompt 注入，写明**新信息另加一条**而非改写旧条，落定的约要
+  主动记（含钟点）。
 - **GUI 信使页**：长期记忆编辑 + 4 周圆形日历（点日期弹窗录入，一行一条）；
   今天 accent 实心、有待办淡橙底色。信使开关仍在设置页。

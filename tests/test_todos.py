@@ -51,5 +51,41 @@ def test_todo_tool_add_list_remove(tmp_path, monkeypatch):
     assert "error" in todos.todo_tool({"action": "add", "date": "not-a-date", "text": "x"})
     assert "2026-09-12" in todos.todo_tool({"action": "list"})
     assert "removed" in todos.todo_tool({"action": "remove", "date": "2026-09-12", "text": "去看牙"})
-    assert "no items" in todos.todo_tool({"action": "remove", "date": "2026-09-12"})
+    assert "no items" in todos.todo_tool(
+        {"action": "remove", "date": "2026-09-12", "text": "去看牙"}
+    )
     assert todos.load(p) == {}
+
+
+def test_add_keeps_existing_items_and_never_duplicates(tmp_path, monkeypatch):
+    """New detail lands beside the old entry. 2026-09-10 real-machine finding:
+    the courier removed the host's 09-11 entry and re-added a reworded copy --
+    a silent cancellation, where the wish was one more item that day."""
+    p = tmp_path / "todos.json"
+    monkeypatch.setattr(todos, "TODOS_PATH", p)
+    orig = todos.load
+    monkeypatch.setattr(todos, "load", lambda path=None: orig(p))
+    todos.todo_tool({"action": "add", "date": "2026-09-11", "text": "傍晚18:00 出去玩（地点待定）"})
+    todos.todo_tool({"action": "add", "date": "2026-09-11", "text": "去咖啡店当集合点"})
+    assert todos.load(p)["2026-09-11"] == ["傍晚18:00 出去玩（地点待定）", "去咖啡店当集合点"]
+    assert "already" in todos.todo_tool(
+        {"action": "add", "date": "2026-09-11", "text": "去咖啡店当集合点"}
+    )
+    assert todos.load(p)["2026-09-11"] == ["傍晚18:00 出去玩（地点待定）", "去咖啡店当集合点"]
+
+
+def test_remove_needs_the_exact_item(tmp_path, monkeypatch):
+    """A bare date must never wipe a day: the GUI calendar is the only
+    whole-day editor."""
+    p = tmp_path / "todos.json"
+    monkeypatch.setattr(todos, "TODOS_PATH", p)
+    orig = todos.load
+    monkeypatch.setattr(todos, "load", lambda path=None: orig(p))
+    todos.todo_tool({"action": "add", "date": "2026-09-11", "text": "出去玩"})
+    todos.todo_tool({"action": "add", "date": "2026-09-11", "text": "去咖啡店"})
+    assert "error" in todos.todo_tool({"action": "remove", "date": "2026-09-11"})
+    assert todos.load(p)["2026-09-11"] == ["出去玩", "去咖啡店"]
+    assert "no such item" in todos.todo_tool(
+        {"action": "remove", "date": "2026-09-11", "text": "买菜"}
+    )
+    assert todos.load(p)["2026-09-11"] == ["出去玩", "去咖啡店"]

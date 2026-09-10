@@ -22,6 +22,28 @@ if TYPE_CHECKING:  # the import is deferred below (agent imports todos)
 TODOS_PATH = PROJECT_ROOT / "data" / "todos.json"
 _GUARD = threading.Lock()
 
+# Injected wherever the `todo` tool is mounted (L1, local clone, comm courier):
+# the store is the *user's* calendar, and that is not obvious from the schema
+# alone (2026-09-10 real-machine finding: the courier removed the host's 09-11
+# entry and re-added a reworded copy of it -- a silent cancellation to the user,
+# whose actual wish was one more item on the same day).
+RULES = """## The host user's calendar (the `todo` tool)
+
+The same store the GUI calendar page and the message courier read. It is the
+user's own list, not your scratchpad.
+
+- Entries stay until the user asks for them to go: never tidy the list up, never
+  clear a day, never drop an entry because it looks stale or already handled.
+- New detail on an existing plan is a NEW item (`add`); deleting the entry and
+  re-adding it with different wording is a cancellation as far as the user and
+  the message courier are concerned.
+- `remove` takes the exact item text, and only once there is a reason to believe
+  the user wants that entry gone -- someone merely mentioning a date is not one.
+- Record dated commitments as they settle, the user's or a peer's (a meeting, a
+  rendezvous point, an errand), and put the clock time in the item when the plan
+  has one.
+"""
+
 
 def load(path: Path | None = None) -> dict[str, list[str]]:
     """The whole map, normalized: date -> non-empty item list."""
@@ -83,10 +105,13 @@ TODO_SCHEMA = {
         "description": (
             "The host user's shared calendar to-dos (data/todos.json) — the same "
             "list the GUI calendar shows and the message courier answers from. "
-            "action 'add' records an item on a date; 'list' shows upcoming days "
-            "that have items; 'remove' deletes one item (or the whole day if "
-            "text is omitted). Use when the user mentions a dated commitment "
-            "(meetings, errands, reminders) so the courier can act on it later."
+            "action 'add' appends one item to a date and keeps everything already "
+            "there; 'list' shows upcoming days that have items; 'remove' deletes "
+            "one item by its exact text. The entries belong to the user and stay "
+            "until they ask for them to be gone: record new detail as a new item "
+            "instead of rewriting an old one, and never tidy the list up. Use "
+            "'add' when a dated commitment settles (meetings, errands, reminders, "
+            "rendezvous points) so the courier can act on it later."
         ),
         "parameters": {
             "type": "object",
@@ -98,7 +123,7 @@ TODO_SCHEMA = {
                 },
                 "text": {
                     "type": "string",
-                    "description": "For add: the item. For remove: the exact item to delete; omit to clear the whole day.",
+                    "description": "For add: the item, with its clock time when the plan has one. For remove: the exact item text (required).",
                 },
             },
             "required": ["action"],
@@ -116,21 +141,29 @@ def todo_tool(args: dict) -> str:
     if action == "add":
         if not _valid_date(date) or not text.strip():
             return "error: 'add' needs date (YYYY-MM-DD) and text"
+        item = text.strip()
         items = load().get(date, [])
-        set_day(date, [*items, text.strip()])
-        return f"added on {date}: {text.strip()}"
+        if item in items:  # same item twice: the user's list, not a log
+            return f"already on {date}: {item}"
+        set_day(date, [*items, item])
+        return f"added on {date}: {item}"
     if action == "remove":
         if not _valid_date(date):
             return "error: 'remove' needs date (YYYY-MM-DD)"
+        if not text.strip():
+            # A bare date used to wipe the whole day. One entry at a time keeps
+            # an accidental clear impossible and leaves the GUI as the only
+            # whole-day editor (2026-09-10 real-machine finding).
+            return (
+                "error: 'remove' needs text (the exact item). Entries belong to the"
+                " user: ask before deleting one, and never clear a day on your own."
+            )
         items = load().get(date, [])
         if not items:
             return f"no items on {date}"
-        if text.strip():
-            remaining = [i for i in items if i != text.strip()]
-            if len(remaining) == len(items):
-                return f"no such item on {date}"
-        else:
-            remaining = []
+        remaining = [i for i in items if i != text.strip()]
+        if len(remaining) == len(items):
+            return f"no such item on {date}"
         set_day(date, remaining)
         return f"removed from {date}"
     if action == "list":

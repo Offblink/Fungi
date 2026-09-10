@@ -61,9 +61,9 @@ def build_local_clone(
     # build_orchestrator) — the todo tool must live here to be visible.
     from .. import todos  # noqa: PLC0415 (deferred like the other extras)
     tools.update(todos.bound())
-    prompt = system_prompt or LOCAL_SYSTEM_PROMPT.format(
+    prompt = (system_prompt or LOCAL_SYSTEM_PROMPT.format(
         host=host, store_hint=STORE_LOCAL if local_store else STORE_REMOTE
-    )
+    )) + todos.RULES
     clone = Clone(
         addr,
         transport,

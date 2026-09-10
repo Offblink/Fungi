@@ -316,3 +316,6 @@ def test_courier_calendar_injected(monkeypatch):
     assert "日历待办" in prompt and "下午上课" in prompt and "面基" in prompt
     monkeypatch.setattr(todos_mod, "load", lambda path=None: {})
     assert "日历待办" not in clone.resolved_prompt()
+    # the calendar rules ride along even when there is nothing to show: they are
+    # what keeps the courier from rewriting the host's entries.
+    assert "user's calendar" in clone.resolved_prompt()

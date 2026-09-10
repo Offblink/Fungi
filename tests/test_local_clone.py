@@ -80,6 +80,7 @@ def test_local_clone_tool_surface():
     assert "local Agent" in clone.system_prompt
     assert "host alpha" in clone.system_prompt
     assert "send_file" in clone.system_prompt
+    assert "user's calendar" in clone.system_prompt
 
 
 def test_local_clone_includes_mcp_tools(monkeypatch):

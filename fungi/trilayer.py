@@ -359,7 +359,7 @@ class TriLayer:
 
     def build_orchestrator(self, sink: Sink) -> Agent:
         """The L1 agent, ready to run user turns."""
-        prompt = SYSTEM_PROMPT + L1_ADDENDUM + skills.section()
+        prompt = SYSTEM_PROMPT + L1_ADDENDUM + skills.section() + todos.RULES
         extra = {
             "spawn": self.bound_spawn(1),
             "background": self.bound_background(1),
