@@ -29,7 +29,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pytest pillow
 
-      # GUI/tray tests call pytest.importorskip on qfluentwidgets/PyQt6, which is
+      # GUI/tray tests call pytest.importorskip on qfluentwidgets/PyQt5, which is
       # not installed here — they skip gracefully; everything else is stdlib.
       - name: Run tests
         run: python -m pytest tests -q

@@ -81,7 +81,8 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.1 通讯 Agent
 
-- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`confirm(host, action, path, reason)`、`inquire(...)`、spawn、background（后台直跑命令，报告异步回传）。
+- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`confirm(host, action, path, reason)`、`inquire(...)`。
+- 2026-09-10 移除 `spawn` / `background`：通讯 Agent 由对端驱动、身边没有用户监督，而 clone 没有 spawn 的再激活通道（子代理只能同步多跑一跳，`background` 的报告也无处落地）——两者都只放大这个不受控 Agent 的爆炸半径（`trilayer.build_clone_agent(subagents=False)`）。
 - 路径守卫：`public/` 自由；`homes/<owner>/` 非属主需 consent（confirm 发往属主 host 的 本机 Agent）；`homes/<own>/` 与自身会话目录需自身用户 consent；`sessions/` 拒绝。
 - 自主交流：对位通讯 Agent 之间 chat/task 自由往来，无需用户参与；涉及 `public/` 之外的文件操作才触发 consent。
 
@@ -146,8 +147,9 @@ ask 是普通消息，不需要独立协调设施：
 
 ## 11. 增补（2026-09-04）：skill 系统
 
-- **存储**：每 host 本地 `data/skills/<name>.md`（frontmatter `name`/`description` + markdown 正文；
-  name 即文件名，kebab-case ≤64 字符，正文上限 32k）。每 host 一份，不随房间同步（v1）。
+- **存储**：每 host 本地 `data/skills/<name>/SKILL.md`（目录式：SKILL.md 载 frontmatter `description`
+  与 markdown 正文，旁置脚本等伴随文件经 `skills` 工具的 `path` 读取；旧版扁平 `<name>.md` 仍可读，
+  同名目录优先）。name 即目录名，kebab-case ≤64 字符，正文上限 32k。每 host 一份，不随房间同步（v1）。
 - **注入（每次初始化读列表）**：每个 agent 构建点（TriLayer `build_orchestrator` /
   `build_clone_agent` / `_run_task` 子代理）重新读盘，把「名称+描述」清单追加到 system
   prompt——本回合保存的 skill 下一回合即对全体 Agent 可见。WebUI 已存 session 的 system
@@ -228,7 +230,7 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   reconcile 再视情重连接续，live 卡片不再在下次渲染时凭空消失（桌面 app.js 同步）。
 
 
-## 12. 增补（2026-09-09）：文字留言 + 信使开关
+## 14. 增补（2026-09-09）：文字留言 + 信使开关
 
 - **amail**：通讯 Agent 工具（`host/subject/body`），发 `type="mail"` envelope；hub.send 对 mail
   直接落 `data/mail/<host>.jsonl`（server 权威、append-only、每箱 500 封滚旧），**不进 relay**——
@@ -251,7 +253,7 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   courier-off 直写、卡片 verdict 三个线程）。人类发的文件发送侧免确认，接收侧确认管线不变（卡片注明落盘位置）。投递成功后 hub 暂存副本经
   `DELETE /api/transfer`（`Transfers.discard_for`，仅收件方可删）清除，`data/transfers/` 只承担中转暂存。
 
-## 14. 增补（2026-09-10）：文字消息统一入留言邮箱 + 好友视图排序修复
+## 15. 增补（2026-09-10）：文字消息统一入留言邮箱 + 好友视图排序修复
 
 - **统一存储**：好友视图人类直发文字不再写 comm transcript（SessionStore），而是发
   `type="mail"` envelope（`from: <host>:human`）——hub `deliver_pair` 同时落收发两端邮箱：
@@ -267,7 +269,7 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   （common.js `initMailUnread` 轮询 /mail 按 peer 计数），点开好友视图即整线标读
   （前端逐封 POST /mail/read）。人类发送者标签与代码块对比度提高。
 
-## 15. 增补（2026-09-10）：信使的记忆、日历与 todo 工具
+## 16. 增补（2026-09-10）：信使的记忆、日历与 todo 工具
 
 - **信使概念收窄**：信使只指「代收代复留言」的消息信使。文件传输从不经过 LLM
   （transfer 信封 → consent 卡片 → inbox/<src>/，与 courier 开关无关），不再是信使的一部分。

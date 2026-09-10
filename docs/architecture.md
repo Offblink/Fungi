@@ -188,11 +188,11 @@ Qt 与后台线程交互经信号桥（洞见 `_Bridge` 同构，queued 连接�
 
 ## Phase 4: 本机集成（托盘/WebUI/通知）
 
-- tray.py + notify.py（PyQt6，信号桥模式）；WebUI 默认关、托盘唤起；web/app.js consent 卡片。
+- tray.py（PyQt5 + qfluentwidgets `SystemTrayMenu`，2026-09-05 托盘栈修订；通知即 `QSystemTrayIcon.showMessage`，未另建 notify.py）；WebUI 默认关、托盘唤起；web/app.js consent 卡片。
 - 验收：进程启动仅托盘驻留；模拟 ask → 系统通知弹出 → WebUI 打开 → 卡片回答 → Agent 解除阻塞（DONGJIAN_SELFTEST 式自测钩子）。
 
 ## Phase 5: E2E
 
 - localhost 三进程冒烟（单机 127.0.0.1 模拟三主机）：server + 2 clients，FakeLLM，跑通自主交流 + consent + delegate；曾以 scripts/smoke_fungi.py 落地，2026-09-07 已删除，链路由 pytest 契约测试覆盖。
 - 真实 LLM 冒烟（ZAI_API_KEY 配方）；真机 LAN 手动测试清单（README 编辑需用户明示）。
-- 验收：冒烟脚本绿；手动清单留待用户执行。
+- 验收：链路由 pytest 契约测试覆盖（scripts/smoke_fungi.py 已删除，仓库中已无该脚本）；真实 LLM 冒烟与手动清单留待用户执行。

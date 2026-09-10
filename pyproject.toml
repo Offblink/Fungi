@@ -5,6 +5,24 @@ description = "Fungi — LAN multi-host Orchestrator network built on the YESIR 
 requires-python = ">=3.13"
 dependencies = ["segno>=1.6", "pillow>=10.0"]
 
+[project.optional-dependencies]
+# Qt is needed by the GUI and the tray only (gui.py / tray.py import PyQt5 +
+# qfluentwidgets at module scope; __main__.py lazily in room mode). Every
+# headless path — CLI single-shot, hub/server, WebUI runtime, and CI (where the
+# Qt tests importorskip) — runs without it, so it stays an extra.
+gui = ["PyQt5>=5.15", "PyQt-Fluent-Widgets"]
+# Runtime of the `video` tool: tools/video.py gates on these via find_spec and
+# prints the pip line when one is missing; the imports themselves live in the
+# vendored vidsense/ package, which Fungi runs as a subprocess.
+video = [
+    "huggingface_hub",
+    "torch",
+    "transformers",
+    "faster-whisper",
+    "opencv-python",
+    "static-ffmpeg",
+]
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
