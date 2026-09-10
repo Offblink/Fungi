@@ -160,8 +160,11 @@ class HostPoller:
 
     def stop(self) -> None:
         self._stop.set()
+        # The loop is a daemon and its in-flight poll is an HTTP long-poll we
+        # cannot abort: it returns, sees the flag and exits. Joining it here
+        # only made the caller wait out that timeout.
         if self._thread is not None:
-            self._thread.join(timeout=10)
+            self._thread.join(timeout=0.2)
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -677,6 +680,11 @@ class RoomBase:
         if self._local is not None:
             self._local.stop()
             self._local = None
+        # These loops wake on the stop flag, so a short join is enough — it just
+        # keeps them from outliving the room they beat for.
+        for thread in (getattr(self, "_monitor", None), getattr(self, "_mail_thread", None)):
+            if thread is not None:
+                thread.join(timeout=0.2)
         if self._webui is not None:
             self._webui.shutdown()
             self._webui.server_close()
@@ -773,15 +781,27 @@ class RoomServer(RoomBase):
 
     def _monitor_loop(self) -> None:
         while not self._stop.wait(MONITOR_INTERVAL_S):
-            self.hub.roster.beat(self.host)  # nobody else beats the server's own entry
-            peers = set(self._peers())
-            with self._guard:
-                current = set(self._clones)
-            for peer in peers - current:
-                transport = LocalTransport(self.hub.relay, f"{self.host}:comm-{peer}", hub=self.hub)
-                self.add_comm_clone(peer, transport)
-            for peer in current - peers:
-                self.remove_comm_clone(peer)
+            try:
+                self._monitor_once()
+            except Exception as exc:
+                # A beat against a hub that is shutting down, or a clone being
+                # torn down, must not kill the monitor (and must not spray a
+                # thread traceback at exit): the stop flag is the only exit.
+                if self._stop.is_set():
+                    break
+                self.sink.emit("error", f"roster monitor: {exc}")
+
+    def _monitor_once(self) -> None:
+        """Beat our own roster entry and diff the peer set into comm clones."""
+        self.hub.roster.beat(self.host)  # nobody else beats the server's own entry
+        peers = set(self._peers())
+        with self._guard:
+            current = set(self._clones)
+        for peer in peers - current:
+            transport = LocalTransport(self.hub.relay, f"{self.host}:comm-{peer}", hub=self.hub)
+            self.add_comm_clone(peer, transport)
+        for peer in current - peers:
+            self.remove_comm_clone(peer)
 
     def _sessions_backend(self) -> StoreSessions:
         return StoreSessions(self.hub)
@@ -865,8 +885,11 @@ class RoomClient(RoomBase):
         while not self._stop.wait(HEARTBEAT_INTERVAL_S):
             try:
                 self._heartbeat_once()
-            except HubError:
-                continue  # transient; next beat retries
+            except Exception as exc:
+                if self._stop.is_set():
+                    break
+                if not isinstance(exc, HubError):
+                    self.sink.emit("error", f"heartbeat: {exc}")
 
     def _heartbeat_once(self) -> None:
         """One beat: refresh peers (add/remove comm clones), replay pending asks."""
@@ -901,6 +924,8 @@ class RoomClient(RoomBase):
 
     def stop(self) -> None:
         super().stop()
+        if self._hb is not None:
+            self._hb.join(timeout=0.2)
         self.poller.stop()
         with contextlib.suppress(HubError):
             self.client.leave()

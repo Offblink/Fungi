@@ -50,6 +50,10 @@ class LocalTransport:
     def poll(self, after: int, timeout: float) -> tuple[list[Envelope], int]:
         return self.inbox.after(after, timeout)
 
+    def wake(self) -> None:
+        """End a poll now (see Inbox.wake)."""
+        self.inbox.wake()
+
     def fs(self, op: str, path: str, **kw) -> dict:
         if self.hub is None:
             return {"error": "no hub attached"}
@@ -215,9 +219,16 @@ class Clone:
     def stop(self) -> None:
         self._stop.set()
         self._work.put(None)  # unblock the worker
+        wake = getattr(self.transport, "wake", None)
+        if wake is not None:
+            wake()  # in-process inbox: end the wait now instead of after the timeout
+        # Both threads are daemons, and a poll against a REMOTE inbox (HTTP
+        # long-poll) cannot be aborted from here — it ends on its own and then
+        # sees the flag. Waiting for it used to block the caller for the whole
+        # poll timeout per clone (the GUI's "leave room" froze for seconds).
         for t in (self._loop_thread, self._worker_thread):
             if t is not None:
-                t.join(timeout=5)
+                t.join(timeout=0.2)
 
     # ── threads ──
 

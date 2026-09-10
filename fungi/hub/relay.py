@@ -41,6 +41,16 @@ class Inbox:
             self._cond.notify_all()
             return QUEUED
 
+    def wake(self) -> None:
+        """Release whoever is parked in after().
+
+        The owner is going away, so a poll must end now instead of sitting out
+        its full timeout — that timeout is what made stopping a room (and the
+        GUI's "leave room") block for seconds per waiting clone.
+        """
+        with self._cond:
+            self._cond.notify_all()
+
     def after(self, cursor: int, timeout: float) -> tuple[list[Envelope], int]:
         """Wait up to timeout for messages newer than cursor; drains them."""
         with self._cond:
