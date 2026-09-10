@@ -1,6 +1,7 @@
 """Tests for session storage (schema compatibility with the PowerShell original)."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -100,3 +101,36 @@ def test_subagents_roundtrip():
     # sessions saved without the field read back as empty list
     session.save_session("sub2", "t", [])
     assert session.load_session("sub2")["subagents"] == []
+
+
+def test_a_save_that_dies_leaves_the_old_file_intact(monkeypatch, tmp_path):
+    """A torn save is what made a healthy conversation read back as nothing:
+    the new file may only appear once it is complete."""
+    session.save_session("s1", "old title", [{"role": "user", "content": "old"}])
+    real_write = Path.write_text
+
+    def dies_after_writing(self, *args, **kwargs):
+        real_write(self, *args, **kwargs)  # the bytes land, then the save dies
+        raise OSError("interrupted")
+
+    with monkeypatch.context() as mp:
+        mp.setattr(Path, "write_text", dies_after_writing)
+        with pytest.raises(OSError):
+            session.save_session("s1", "new title", [{"role": "user", "content": "new"}])
+
+    loaded = session.load_session("s1")
+    assert loaded["title"] == "old title"
+    assert loaded["messages"] == [{"role": "user", "content": "old"}]
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_a_corrupt_file_is_kept_as_evidence():
+    session.ensure_dir()
+    path = session.SESSIONS_DIR / "torn.json"
+    path.write_text('{"id": "torn", "messages": [{"role"', encoding="utf-8")
+
+    assert session.load_session("torn") is None
+    assert not path.exists()
+    kept = path.with_name("torn.json.corrupt")
+    assert kept.read_text(encoding="utf-8").startswith('{"id": "torn"')  # bytes kept, not dropped
+    assert session.list_sessions() == []  # quarantined: no longer listed as a session

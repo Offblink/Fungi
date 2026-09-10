@@ -18,6 +18,25 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _write_atomic(path: Path, text: str) -> None:
+    """Write beside the target, then rename it into place.
+
+    A save interrupted half-way (killed process, full disk, an exception in the
+    encoder) used to leave a truncated JSON document where the session was, and
+    `load` reads that back as nothing at all — indistinguishable from a wiped
+    conversation. A rename is atomic, so the old file survives until a complete
+    new one exists. (Rename, not fsync: this is about torn writes, not power.)
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)  # same directory, same volume: atomic
+    except BaseException:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+
+
 def new_session_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -87,7 +106,7 @@ class SessionStore:
             "subagents": subagents or [],
             "asks": asks or [],
         }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
 
     def load(self, session_id: str) -> dict[str, Any] | None:
         path = self.dir / f"{session_id}.json"
@@ -95,7 +114,14 @@ class SessionStore:
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
+        except OSError:
+            return None
+        except json.JSONDecodeError:
+            # Evidence over silence: keep the bytes aside as .corrupt so the
+            # damage is inspectable and reportable, instead of the view going
+            # blank again on every load of the same file.
+            with contextlib.suppress(OSError):
+                path.replace(path.with_name(path.name + ".corrupt"))
             return None
 
     def delete(self, session_id: str) -> None:
