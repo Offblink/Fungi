@@ -68,12 +68,10 @@ class ConfigPage(QWidget):
 
         self.endpoint_edit = LineEdit()
         self.endpoint_edit.setFixedWidth(360)
-        self.endpoint_edit.setPlaceholderText("接口地址（留空 = 保持不变）")
         root.addWidget(_row("接口地址", self.endpoint_edit))
 
         self.model_edit = LineEdit()
         self.model_edit.setFixedWidth(360)
-        self.model_edit.setPlaceholderText("模型名（留空 = 保持不变）")
         root.addWidget(_row("模型", self.model_edit))
 
         # 没有保存按钮：三个输入框回车即写盘（见文件末尾 returnPressed 接线），
@@ -168,6 +166,7 @@ class ConfigPage(QWidget):
         # screen). editingFinished would save on tab-out too — not wanted.
         for edit in (self.key_edit, self.endpoint_edit, self.model_edit):
             edit.returnPressed.connect(self._save)
+        self._load_fields()
         self._refresh_status()
 
         # 视频模型状态轮询：下载子进程退出后自动复检（不用 Signal 传参）
@@ -190,6 +189,8 @@ class ConfigPage(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         super().showEvent(event)
+        # 模型可能在别处（命令行/WebUI）改了：进页就照当前配置刷新三个框
+        self._load_fields()
         # 模型可能在别处（命令行）补装了；下载中则保持进度文案不动
         if self._dl_proc is None:
             self._check_video_models()
@@ -287,6 +288,32 @@ class ConfigPage(QWidget):
             )
 
 
+    @staticmethod
+    def _key_mask(key: str) -> str:
+        """Display form of the stored key: recognisable, not usable."""
+        if not key or key == DEFAULT_API_KEY:
+            return ""
+        return (key[:5] + "…" + key[-4:]) if len(key) > 12 else "…" + key[-4:]
+
+    def _load_fields(self) -> None:
+        """Show the stored values in the boxes (2026-09-10 user report: three
+        empty boxes meant "what is configured?" was only readable from the
+        status line). Endpoint and model carry the real values — they are not
+        secrets. The key is masked into the placeholder instead: the box shows
+        which key is in use, the secret itself stays on disk, and an empty box
+        keeps meaning "leave it alone" (typing into it never nests inside a
+        displayed value)."""
+        cfg = config_mod.load_config()
+        mask = self._key_mask(cfg.api_key)
+        self.key_edit.setPlaceholderText(
+            f"当前 {mask}（留空 = 保持不变）" if mask else "API Key（留空 = 保持不变）"
+        )
+        self.endpoint_edit.setPlaceholderText("留空 = 保持不变")
+        self.model_edit.setPlaceholderText("留空 = 保持不变")
+        self.endpoint_edit.setText(cfg.endpoint)
+        self.model_edit.setText(cfg.model)
+        self.key_edit.clear()  # 只有掩码在占位符里：真 key 从不上屏
+
     def _refresh_status(self) -> None:
         cfg = config_mod.load_config()
         key = self.key_edit.text().strip() or cfg.api_key
@@ -295,11 +322,9 @@ class ConfigPage(QWidget):
             if key and key != DEFAULT_API_KEY
             else "未配置（使用占位 key，无法对话）"
         )
-        endpoint = self.endpoint_edit.text().strip() or cfg.endpoint
-        model = self.model_edit.text().strip() or cfg.model
         self.status.setText(
-            f"当前状态：{state} · 模型 {model} · 接口 {endpoint}"
-            "\n改完按回车即保存（三个输入框各自生效）"
+            f"当前状态：{state}"
+            "\n改完按回车即保存（三个输入框各自生效；留空 = 保持不变）"
         )
 
     def _save(self) -> None:
@@ -311,9 +336,8 @@ class ConfigPage(QWidget):
         if self.model_edit.text().strip():
             cfg.model = self.model_edit.text().strip()
         config_mod.save_config(cfg)
-        self.key_edit.clear()
-        self.endpoint_edit.clear()
-        self.model_edit.clear()
+        # 保存后回到当前值（不是清空）：框里始终显示的就是正在用的配置
+        self._load_fields()
         self._refresh_status()
         InfoBar.success(
             "已保存", "模型配置已写入 config.json", duration=2500, parent=self.window_ref

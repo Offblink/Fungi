@@ -728,24 +728,51 @@ def test_enter_joins_room_and_ignores_a_press_mid_scan(window, monkeypatch):
 
 
 def test_enter_saves_config_from_any_field(window, monkeypatch):
-    """设置页三个输入框：回车 = 点「保存配置」（含保存后清空三格的行为）。"""
-    saved = []
-    cfg = gui.load_config()
-    monkeypatch.setattr("fungi.config.load_config", lambda path=None: cfg)
-    monkeypatch.setattr("fungi.config.save_config", lambda c, path=None: saved.append(c))
+    """设置页三个输入框：预填当前值（key 只露掩码），回车 = 保存，保存后回到当前值。"""
+    from fungi.config import Config
+
+    state = {
+        "cfg": Config(
+            api_key="sk-original-key",
+            endpoint="https://orig.example/v1/chat/completions",
+            model="orig-model",
+        )
+    }
+    monkeypatch.setattr("fungi.config.load_config", lambda path=None: state["cfg"])
+    monkeypatch.setattr("fungi.config.save_config", lambda c, path=None: state.update(cfg=c))
     page = window.cfg_page
-    page.key_edit.setText("sk-enter-key")
+    page._load_fields()
+    # 已在用的值摆在框里；key 本身不上屏，占位符里是可辨认的掩码
+    assert page.endpoint_edit.text() == "https://orig.example/v1/chat/completions"
+    assert page.model_edit.text() == "orig-model"
+    assert page.key_edit.text() == ""
+    assert "sk-or…-key" in page.key_edit.placeholderText()
+
+    page.key_edit.setText("sk-enter-key-1234")
     QTest.keyClick(page.key_edit, Qt.Key_Return)
-    assert saved[-1].api_key == "sk-enter-key"
-    assert page.key_edit.text() == ""  # 与按钮一致：保存后清空
+    assert state["cfg"].api_key == "sk-enter-key-1234"
+    assert page.key_edit.text() == ""  # key 不留在屏幕上
+    assert "sk-en…1234" in page.key_edit.placeholderText()
+
     page.endpoint_edit.setText("https://example.invalid/v1/chat/completions")
     QTest.keyClick(page.endpoint_edit, Qt.Key_Return)
-    assert saved[-1].endpoint == "https://example.invalid/v1/chat/completions"
+    assert state["cfg"].endpoint == "https://example.invalid/v1/chat/completions"
+    assert page.endpoint_edit.text() == "https://example.invalid/v1/chat/completions"
+
     page.model_edit.setText("deepseek-v4-flash-vision-exp")
     QTest.keyClick(page.model_edit, Qt.Key_Return)
-    assert saved[-1].model == "deepseek-v4-flash-vision-exp"
-    assert [page.key_edit.text(), page.endpoint_edit.text(), page.model_edit.text()] == ["", "", ""]
-    assert len(saved) == 3  # 三次回车 = 三次保存
+    assert state["cfg"].model == "deepseek-v4-flash-vision-exp"
+    assert page.model_edit.text() == "deepseek-v4-flash-vision-exp"
+
+    # 空框 = 保持不变（老语义没变）
+    page.endpoint_edit.clear()
+    state["cfg"].api_key = "sk-untouched"
+    page.key_edit.clear()
+    QTest.keyClick(page.endpoint_edit, Qt.Key_Return)
+    assert state["cfg"].endpoint == "https://example.invalid/v1/chat/completions"
+    assert state["cfg"].api_key == "sk-untouched"
+    assert page.endpoint_edit.text() == "https://example.invalid/v1/chat/completions"
+    page._load_fields()  # 放开 patch 前先让框回到真配置
 
 
 def test_ctrl_enter_saves_courier_memory(window, monkeypatch):
