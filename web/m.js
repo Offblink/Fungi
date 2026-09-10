@@ -646,6 +646,7 @@ const PendingAsks = FC.initPendingAsks({
   },
 });
 const placeAskCards = PendingAsks.place, pollPendingAsks = PendingAsks.poll;
+setInterval(pollPendingAsks, 3000);
 setInterval(resumeIfPending, 3000);
 resumeIfPending();
 
@@ -745,18 +746,16 @@ let friendLiveTimer = null;
 async function refreshFriendChat() {
   const host = friendView;
   if (!host) return;
+  // keep the open friend view near-real-time: the hub delivers instantly,
+  // only this poll gates the paint. Reschedule FIRST: every early return
+  // below (!r.ok, raced switch) must not kill the polling chain.
+  clearTimeout(friendLiveTimer);
+  friendLiveTimer = setTimeout(refreshFriendChat, 1500);
   try {
     const r = await fetchJSON('/comm-log?host=' + encodeURIComponent(host));
     if (!r.ok) return;
     const d = await r.json();
     if (friendView !== host) return; // raced a switch away: never paint here
-    // keep the open friend view near-real-time: the hub delivers instantly,
-    // only this poll gates the paint. Reschedule FIRST: the no-change early
-    // return below must not kill the polling chain.
-    clearTimeout(friendLiveTimer);
-    if (friendView === host) {
-      friendLiveTimer = setTimeout(refreshFriendChat, 1500);
-    }
     const payload = JSON.stringify(d);
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;

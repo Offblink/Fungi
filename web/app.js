@@ -500,21 +500,26 @@ async function pumpStream(url, body, method = 'POST') {
       opts.body = JSON.stringify(body);
     }
     const resp = await fetch(url, opts);
-    if (!resp.ok) { status.textContent = 'Error: ' + resp.status; turn = null; return; }
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let leftover = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      leftover += dec.decode(value, { stream: true });
-      const lines = leftover.split('\n');
-      leftover = lines.pop() || '';
-      for (const line of lines) {
-        if (!line) continue;
-        let obj;
-        try { obj = JSON.parse(line); } catch (e) { continue; }
-        handleTurnEvent(obj);
+    if (!resp.ok) {
+      // No early return: skipping the tail would leave the send button
+      // disabled forever and the next send dead (no stream, no recovery).
+      status.textContent = 'Error: ' + resp.status; turn = null;
+    } else {
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let leftover = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        leftover += dec.decode(value, { stream: true });
+        const lines = leftover.split('\n');
+        leftover = lines.pop() || '';
+        for (const line of lines) {
+          if (!line) continue;
+          let obj;
+          try { obj = JSON.parse(line); } catch (e) { continue; }
+          handleTurnEvent(obj);
+        }
       }
     }
   } catch (e) {
@@ -587,6 +592,13 @@ function handleTurnEvent(obj) {
       if (obj.content.call_id) specByCall[obj.content.call_id] = obj.content.id;
       agentBubble(obj.content.id);
       break;
+    case 'agent_status': setAgentStatus(obj.content.id, obj.content.status); break;
+    case 'agent_event': {
+      const aid = obj.content.id, ev = obj.content.event;
+      if (agents[aid]) agents[aid].history.push(ev);
+      agentEvent(aid, ev);
+      break;
+    }
     case 'ask':
       t.entries.filter(x => x.kind === 'ask').forEach(a => a.active = false);
       t.entries.push({ kind: 'ask', id: obj.content.id, questions: obj.content.questions || [], answers: null, active: true });
@@ -936,18 +948,16 @@ let friendLiveTimer = null;
 async function refreshFriendChat() {
   const host = friendView;
   if (!host) return;
+  // keep the open friend view near-real-time: the hub delivers instantly,
+  // only this poll gates the paint. Reschedule FIRST: every early return
+  // below (!r.ok, raced switch) must not kill the polling chain.
+  clearTimeout(friendLiveTimer);
+  friendLiveTimer = setTimeout(refreshFriendChat, 1500);
   try {
     const r = await fetch('/comm-log?host=' + encodeURIComponent(host));
     if (!r.ok) return;
     const d = await r.json();
     if (friendView !== host) return; // raced a switch away: never paint here
-    // keep the open friend view near-real-time: the hub delivers instantly,
-    // only this poll gates the paint. Reschedule FIRST: the no-change early
-    // return below must not kill the polling chain.
-    clearTimeout(friendLiveTimer);
-    if (friendView === host) {
-      friendLiveTimer = setTimeout(refreshFriendChat, 1500);
-    }
     const payload = JSON.stringify(d);
     if (payload === lastFriendPayload) return; // unchanged: no flicker
     lastFriendPayload = payload;
