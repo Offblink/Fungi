@@ -705,6 +705,9 @@ class JoinPage(QWidget):
             except Exception:  # network hiccup: report as "not found"
                 self.join_done.emit(None)
                 return
+            if not port:  # scan found nothing: the None path reports it plainly
+                self.join_done.emit(None)
+                return
             self.join_done.emit((ip or auto_ip, port))
 
         threading.Thread(target=scan, name="room-discovery", daemon=True).start()

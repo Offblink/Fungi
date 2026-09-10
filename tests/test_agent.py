@@ -305,3 +305,35 @@ def test_should_abort_passed_to_stream_chat(monkeypatch):
     agent = Agent(Config(api_key="k"), FnSink(lambda _t, _c: None), should_abort=lambda: False)
     agent.run([{"role": "user", "content": "hi"}])
     assert len(seen) == 1 and callable(seen[0])
+
+
+def test_parallel_batch_keeps_private_tools_off_the_stream():
+    """`diary` joins the parallel tool set when the feature is on. The parallel
+    path used to emit its card and result like any other tool — leaking the
+    agent's inner life into the WebUI stream and the live tape, which the
+    privacy contract forbids (the serial path always filtered it)."""
+    inner = BoundTool(
+        schema={"type": "function", "function": {"name": "diary", "parameters": {}}},
+        fn=lambda _a: "today I felt seen",
+    )
+    shared = BoundTool(
+        schema={"type": "function", "function": {"name": "todo", "parameters": {}}},
+        fn=lambda _a: "listed",
+    )
+    agent, _fake, events = make_agent(
+        [
+            LLMResult(tool_calls=[
+                tool_call("diary", '{"action": "read"}', "d1"),
+                tool_call("todo", '{"action": "list"}', "t2"),
+            ]),
+            LLMResult(content="done"),
+        ],
+        extra_tools={"diary": inner, "todo": shared},
+    )
+    agent.parallel_tools = frozenset({"diary", "todo"})
+    agent.run([{"role": "user", "content": "go"}])
+
+    offered = [c["name"] for kind, c in events if kind == "tool"]
+    results = [c["content"] for kind, c in events if kind == "tool_result"]
+    assert offered == ["todo"]  # the parallel batch still went through both
+    assert all("felt seen" not in str(r) for r in results)

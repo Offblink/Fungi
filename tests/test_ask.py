@@ -240,7 +240,7 @@ def test_ask_wakes_on_abort():
 
     thread = threading.Thread(target=blocker, daemon=True)
     thread.start()
-    card = first_ask(events)
+    first_ask(events)  # fails the test if no ask card was emitted
     time.sleep(0.05)  # let the tool enter its wait loop
     stop.set()
     thread.join(timeout=5)
@@ -276,3 +276,20 @@ def test_only_orchestrator_has_inquire():
     # L2 child tool table: base tools + spawn, no inquire
     assert "inquire" not in fake.requested[1]
     assert "spawn" in fake.requested[1]
+
+
+def test_ask_sweep_outlasts_every_waiter():
+    """The hub drops stale ask records on a timer; a waiter still blocked on
+    the card must outlive that sweep. At 600s vs a 1800s consent wait, the
+    record was gone while the card was still on screen — the user's late click
+    resolved nothing and the turn reported "consent required" anyway."""
+    import inspect
+
+    from fungi.clone.comm import build_comm_clone
+    from fungi.hub.app import ASK_TIMEOUT
+    from fungi.tools.ask import ASK_TIMEOUT_S
+
+    consent_wait = inspect.signature(build_comm_clone).parameters["ask_timeout_s"].default
+    assert ASK_TIMEOUT > max(ASK_TIMEOUT_S, consent_wait), (
+        f"sweep {ASK_TIMEOUT} must outlast inquire {ASK_TIMEOUT_S} and consent {consent_wait}"
+    )

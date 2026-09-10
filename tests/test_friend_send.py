@@ -64,7 +64,6 @@ def _room(tmp_path):
     room._live_tapes = {}
     room._live_lock = threading.Lock()
     room._direct_transfers = {}
-    room._direct_transfers = {}
     room.rules = _Rules()
     return room
 
@@ -416,3 +415,23 @@ def test_local_transport_mail_reads_this_host_mailbox(tmp_path):
     out = transport.mail()
     assert out["host"] == "alpha"
     assert [m["body"] for m in out["mails"]] == ["hi"]
+
+
+def test_room_stop_actually_stops_comm_clones(tmp_path):
+    """stop() cleared the clone dict before the loop, so remove_comm_clone's
+    pop() returned None and clone.stop() never ran: the poll/worker threads
+    kept draining envelopes after the room was gone."""
+    room = _room(tmp_path)
+    room._stop = threading.Event()
+    room._local = None
+    room._webui = None
+    stopped: list[str] = []
+
+    class _Clone:
+        def stop(self) -> None:
+            stopped.append("stopped")
+
+    room._clones = {"bob": _Clone()}
+    room.stop()
+    assert stopped == ["stopped"]
+    assert room._clones == {}

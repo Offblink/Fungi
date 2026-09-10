@@ -32,7 +32,10 @@ from .store import GuardError, Store
 
 MAX_BODY = 5 * 1024 * 1024
 MAX_POLL = 25.0
-ASK_TIMEOUT = 600.0
+# Sweep stale ask records. MUST exceed the longest waiter (the consent card
+# holds a clone for ask_timeout_s=1800): a swept record outlives its card,
+# so a late click resolves nothing. Pinned by tests/test_ask.py.
+ASK_TIMEOUT = 1900.0
 REAP_INTERVAL = 5.0
 
 
@@ -230,6 +233,16 @@ class Hub:
         }
 
     def send(self, env: Envelope) -> dict:
+        # The peer writes both addresses and the hub turns the host part into
+        # data/ file names (data/mail/<host>.jsonl, the comm log) and a relay
+        # key: reject anything that is not a legal hostname before that.
+        for addr in (env.src, env.dst):
+            try:
+                host_part = parse_addr(addr)[0]
+            except ProtocolError:
+                return {"ok": False, "status": "bounced"}
+            if not valid_host_name(host_part):
+                return {"ok": False, "status": "bounced"}
         # ask/answer envelopes maintain the consent registry transparently:
         # ask -> opened with the envelope id (so consent_id == envelope id),
         # answer -> resolves the referenced ask.

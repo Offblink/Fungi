@@ -345,3 +345,17 @@ def test_background_runs_command_directly_without_an_llm():
         time.sleep(0.2)
     assert got and got[0]["status"] == "done"
     assert "bg-direct" in got[0]["answer"]
+
+
+def test_bad_timeout_never_leaks_a_spawn_slot():
+    """_spawn took its per-turn slot before validating the timeout, and the
+    error return never gave it back: a few malformed calls exhausted the limit
+    and the model could no longer dispatch anything that turn."""
+    tl, _events, _fake = make_trilayer()
+    outs = [
+        tl.bound_spawn(1).fn({"goal": "g", "reply_format": "r", "timeout": "soon"})
+        for _ in range(MAX_SPAWNS_PER_TURN + 2)
+    ]
+    assert all("timeout must be a number" in o for o in outs)
+    assert not any("limit reached" in o for o in outs)
+    assert tl._active == 0

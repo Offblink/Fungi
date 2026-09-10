@@ -36,7 +36,7 @@ from .events import Sink
 from .hub.app import Hub, safe_name
 from .hub.client import HubClient, HubError
 from .hub.relay import Inbox
-from .protocol import Envelope, parse_addr
+from .protocol import Envelope, parse_addr, valid_host_name
 from .server import _BG_ABORTS, _PENDING_SPAWNS, WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
@@ -368,6 +368,10 @@ class RoomBase:
         size = body.get("size")
         reason = str(body.get("reason") or "")
         src_host, _role, _peer = parse_addr(str(body.get("from") or env.src))
+        if not valid_host_name(src_host):
+            # inbox/<src_host>/ is a path join: never let a malformed host reach it.
+            self.sink.emit("error", f"rejected transfer with bad sender host {src_host!r}")
+            return True
         ask = Envelope(
             src=env.src,
             dst=self.local_addr,
@@ -564,7 +568,9 @@ class RoomBase:
         self._stop.set()
         with self._guard:
             peers = list(self._clones)
-            self._clones.clear()
+        # remove_comm_clone pops AND stops each clone. Clearing the dict first
+        # made its pop() return None, so no clone was ever stopped: their poll
+        # and worker threads kept draining envelopes after the room was gone.
         for peer in peers:
             self.remove_comm_clone(peer)
         if self._local is not None:

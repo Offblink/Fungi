@@ -353,6 +353,10 @@ class Agent:
             args, parse_error = parse_tool_args(tc["function"]["arguments"])
             parsed.append([tc, args, parse_error])
         for entry in parsed:
+            # Same privacy rule as the serial path: PRIVATE_TOOLS calls are the
+            # agent's inner life — no card, no stream event, no tape entry.
+            if entry[0]["function"]["name"] in PRIVATE_TOOLS:
+                continue
             self.sink.emit(
                 "tool",
                 {
@@ -383,7 +387,8 @@ class Agent:
         for thread in threads:
             thread.join()
         for (tc, _args, _err), output in zip(parsed, outputs, strict=True):
-            self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
+            if tc["function"]["name"] not in PRIVATE_TOOLS:
+                self.sink.emit("tool_result", {"content": _truncate(output), "id": tc["id"]})
             messages.append(
                 {"role": "tool", "tool_call_id": tc["id"], "content": _tool_content(output)}
             )

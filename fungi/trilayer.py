@@ -47,9 +47,11 @@ When spawning you MUST write:
 - goal: what the subagent should accomplish (self-contained, no references to
   this conversation),
 - reply_format: exactly how to report back (e.g. "yes/no plus a reason",
-  "JSON with fields X and Y", "list of up to 3 file paths").
-context. Trivial one-step actions (a single read or a single command) are
-better done directly with your own tools.
+  "JSON with fields X and Y", "list of up to 3 file paths"),
+- context: background material the subagent needs (optional),
+- constraints: hard boundaries, e.g. files it must not touch (optional).
+Trivial one-step actions (a single read or a single command) are better done
+directly with your own tools.
 
 ## Asking the user
 You are the only layer that can ask the user a question. Use `inquire` when
@@ -445,16 +447,18 @@ class TriLayer:
         if child_layer > 3:
             return "ERROR: You are at the deepest layer (L3); finish the job yourself."
 
-        with self._lock:
-            if self._active >= MAX_SPAWNS_PER_TURN:
-                return f"ERROR: spawn limit reached ({MAX_SPAWNS_PER_TURN} per turn)."
-            self._active += 1
-
+        # Validate BEFORE taking a slot: the error return below must not leak
+        # the counter (a few bad timeouts used to exhaust the per-turn limit).
         raw_timeout = args.get("timeout")
         try:
             timeout = float(raw_timeout) if raw_timeout else None
         except (TypeError, ValueError):
             return "ERROR: timeout must be a number of seconds"
+
+        with self._lock:
+            if self._active >= MAX_SPAWNS_PER_TURN:
+                return f"ERROR: spawn limit reached ({MAX_SPAWNS_PER_TURN} per turn)."
+            self._active += 1
         spec = TaskSpec(
             id=uuid.uuid4().hex[:6],
             layer=child_layer,

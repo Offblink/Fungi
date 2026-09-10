@@ -256,3 +256,25 @@ def test_transfer_upload_enforces_size_cap(tmp_path):
         assert "too large" in out.get("error", "")
     finally:
         hub.stop()
+
+
+def test_send_rejects_hosts_that_would_become_file_names(room):
+    """The peer writes src/dst and the hub turns the host part into data/ file
+    names (data/mail/<host>.jsonl, the comm log) plus a relay key: a host that
+    is not a legal hostname must bounce before it reaches those joins."""
+    hub, clients = room
+    clients["alpha"].post("/api/join", {"name": "alpha", "token": "room-token"})
+    mail_root = hub.mail.root
+    for dst in ("../../evil:mail", "a/b:local", "-x:mail", "x" * 40 + ":local"):
+        code, out = clients["alpha"].post(
+            "/api/send",
+            {
+                "token": "room-token",
+                "envelope": Envelope(
+                    src="alpha:local", dst=dst, type="mail",
+                    body={"from": "alpha:human", "text": "hi"},
+                ).serialize(),
+            },
+        )
+        assert out.get("status") == "bounced", (dst, code, out)
+    assert not (mail_root.is_dir() and list(mail_root.iterdir()))

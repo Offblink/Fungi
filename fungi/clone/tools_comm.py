@@ -14,7 +14,7 @@ from ..agent import BoundTool
 from ..config import PROJECT_ROOT
 from ..hub.app import safe_name
 from ..pending import PendingAsks
-from ..protocol import Envelope, parse_addr
+from ..protocol import Envelope, parse_addr, valid_host_name
 from ..tools.ask import _format_answer, _normalize_questions
 
 
@@ -125,6 +125,10 @@ class CommTools:
         size = body.get("size")
         reason = str(body.get("reason") or "")
         src_host, _role, _peer = parse_addr(str(body.get("from") or env.src))
+        if not valid_host_name(src_host):
+            # The landing dir is inbox_dir/<src_host>/ — a peer-supplied string
+            # must never reach that join unchecked.
+            return {"ok": False, "error": "bad sender address"}
         text, _ask_id = self._blocking_ask(
             f"{self.host}:local",
             {
