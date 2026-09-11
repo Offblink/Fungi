@@ -162,7 +162,7 @@ ask 是普通消息，不需要独立协调设施：
 ## 12. 增补（2026-09-05）：托盘栈统一、房主 Token 自定义与热更新、CI/CD
 
 - **托盘栈修订（推翻 2026-09-03 的 PyQt6 定案）**：全局 qfluentwidgets 是 PyQt5 build，
-  GUI（gui.py）全程 PyQt5——托盘（`fungi/tray.py`）与 CLI 房间模式（`__main__.py`）、
+  GUI（今 `fungi/gui/` 包，2026-09-10 由 gui.py 拆包）全程 PyQt5——托盘（`fungi/tray.py`）与 CLI 房间模式（`__main__.py`）、
   selftest 一并迁到 PyQt5，**全仓库单一 Qt 绑定**。托盘菜单用 qfluentwidgets
   `SystemTrayMenu`（与 GUI 同一套 fluent 组件；右键弹出，零新增依赖）。
   CLI 托盘行为不变（左键/双击开 WebUI）；GUI 托盘点击/双击回主界面、右键弹 fluent 菜单；

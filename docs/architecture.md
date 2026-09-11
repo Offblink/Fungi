@@ -1,6 +1,13 @@
 # 架构与立项（Fungi）
 
 > 2026-09-06 合并自原 `docs/brainstorm.md`、`docs/design.md`、`docs/plan.md`（内容原样保留，按 立项脑暴 → 设计定稿 → 阶段计划 顺序）。现状规格以 [`spec.md`](spec.md) 为准；本文档是历史决策记录。
+>
+> **2026-09-11 现状对照**（历史章节照旧，下列事实已随代码前进）：托盘与 GUI 统一 PyQt5 + qfluentwidgets
+> （2026-09-03 的 PyQt6 定案已于 09-05 废除）；Redis 不引入（09-03 评审）；**包结构块已更新为当前仓库**——
+> 前端在**仓库根 `web/`**（不在 `fungi/` 内），GUI 拆成 `fungi/gui/` 包，新增 `todos.py` / `skills.py` /
+> `diary.py` / `cards.py` / `consent_rules.py` / `pending.py` / `room.py` / `update.py` 与
+> `hub/{asks,client,commlog,mail}.py`；通讯 Agent 的工具面见 spec §6.1（`send_peer` 是唯一出网通道，
+> `ask_consent`/`ask_user` 已改名 `confirm`/`inquire`），信使自 2026-09-10 起不再有 `spawn` / `background`。
 
 # Brainstorm: Fungi
 
@@ -56,10 +63,14 @@ Risk: 以后想换通道（长连接/gRPC）时 Redis 里的数据语义迁不�
 
 Agent 是角色化的 YESIR L1 Agent：
 
-- 通讯 Agent：工具面 = 消息工具（send_peer）+ 路径守卫版文件工具 + ask_consent / ask_user；专职对接一台远端主机的对位通讯 Agent。
-- 本机 Agent：工具面 = YESIR 原生工具 + ask_user + delegate（把跨主机任务委派给对应通讯 Agent）。
+- 通讯 Agent（信使）：工具面 = `send_peer`（唯一出网通道）+ `send_file` / `amail` / `confirm` /
+  `inquire` / `todo` + 路径守卫版文件工具；专职对接一台远端主机的对位通讯 Agent。
+  （原名 `ask_consent` / `ask_user`，2026-09 改名；完整清单见 spec §6.1。）
+- 本机 Agent：工具面 = YESIR 原生工具 + `inquire` + `delegate` / `peers` / `send_file`
+  （把跨主机任务委派给对应通讯 Agent）。
 
-TriLayer 的 spawn（L2/L3）保留，白名单继承所在 Agent 的文件限制。
+TriLayer 的 spawn（L2/L3）保留，白名单继承所在 Agent 的文件限制；**通讯 Agent 例外**——
+2026-09-10 起 `subagents=False`，信使不再 spawn / background（它由对端驱动、身边没有用户监督，见 spec §6.1）。
 
 ## 托盘与通知选型
 
@@ -104,26 +115,47 @@ TriLayer 的 spawn（L2/L3）保留，白名单继承所在 Agent 的文件限�
 ## 包结构
 
 ```
-pyproject.toml              # 元数据 + ruff 配置
+pyproject.toml              # 元数据 + ruff 配置 + dev / gui extras
+start.py                    # GUI 启动器入口
 fungi/
   __init__.py  __main__.py  # 入口：python -m fungi --server | --join <url> --token <t>
   config.py                 # role/name/token/server/ports/models（config.json > env）
-  protocol.py               # envelope 校验/序列化
+  protocol.py               # envelope 校验/序列化（chat/task/result/ask/answer/err/transfer/mail）
+  cards.py                  # 未决 ask 卡片注册表（WebUI /asks 载荷 + 心跳重放去重）
+  consent_rules.py          # 每好友 allow/ask 模式（~/.fungi/consent_rules.json，旧 always_allow 迁移）
+  diary.py                  # 私人日记（data/diary/YYYY-MM-DD.md，近 60 天全文注入）
+  pending.py                # PendingAsks：阻塞工具 ↔ answer 的进程内注册表
+  room.py                   # 房间运行时：托盘 + hub/client + 各信使 clone + 本机 WebUI
+  server.py                 # 本机 WebUI server（含移动端 token 门禁 / resume / mail / upload）
+  session.py  events.py  llm.py  agent.py  trilayer.py   # 移植自 YESIR（Sink 适配）
+  skills.py                 # 技能沉淀（data/skills/<name>/SKILL.md + 列表注入 prompt）
+  todos.py                  # 主人日历（data/todos.json）+ RULES + todo 工具
+  update.py                 # 版本自检（只提醒；GUI 设置页点按钮才更新）
+  tray.py                   # PyQt5 托盘：运行时画图标 + fluent 菜单 + showMessage 通知
   hub/
-    app.py                  # ThreadingHTTPServer + 房间路由 + pending-ask 注册表
-    roster.py               # 名册 + 心跳剔除（Face Roster 同构）
+    app.py                  # ThreadingHTTPServer + 房间路由 + fs 调度（守卫在 store）
+    asks.py                 # 未决 ask 注册表（发往本机用户的 consent/请求记录）
+    client.py               # client 角色的 hub 客户端（房间 / fs / 会话 / 传输）
+    commlog.py              # 信使对话镜像：/comm-log 的一张时间轴（转录 + 事件 + 留言）
+    mail.py                 # 留言邮箱 data/mail/<host>.jsonl（hub 权威、append-only）
     relay.py                # 投递函数：本地直投 / client 转发收敛于此
+    roster.py               # 名册 + 心跳剔除（Face Roster 同构）
     store.py                # data/ 存储 API + 路径守卫 + 内存文件锁
   clone/
     base.py                 # inbox 循环 + Agent 装配 + PendingAsk 适配
-    comm.py                 # 通讯 Agent
+    comm.py                 # 通讯 Agent（信使）：角色 prompt + CommTools 装配
     local.py                # 本机 Agent：WebUI 桥 + 本地 ask + 通知触发
-    tools_comm.py           # send_peer / ask_consent / 守卫版文件工具
-    delegate.py             # 本机 Agent 的 delegate / peers 工具
-  agent.py llm.py trilayer.py session.py events.py   # 移植自 YESIR（Sink 适配）
-  tools/                    # 移植自 YESIR + 路径守卫包装
-  tray.py                   # PyQt5 托盘：运行时画图标 + fluent 菜单 + showMessage 通知
-  web/                      # YESIR web 移植 + consent 卡片
+    tools_comm.py           # send_peer / send_file / amail / confirm / inquire / 守卫版文件工具
+    delegate.py             # 本机 Agent 的 delegate / peers / send_file 工具
+  gui/                      # PyQt5 + qfluentwidgets 启动器（2026-09-10 由 gui.py 拆包）
+    app.py                  # 主窗口 + 侧栏（发起/加入房间、手机端、信使、设置、帮助）
+    host.py  join.py        # 发起房间页 / 加入房间页（身份记在 QSettings）
+    mobile.py               # 手机端页（segno 二维码 + 缺依赖一键安装）
+    courier.py              # 信使页（长期记忆 + 四周日历）
+    config.py  help.py  net.py  trayicon.py  widgets.py  const.py
+  tools/                    # 移植自 YESIR + 路径守卫包装（search / webtools / shell / video / mcp / ask）
+web/                        # 前端在**仓库根**：index/app.js/common.js/style.css/motion.js + m.* 手机端 + vendor/
+vidsense/                   # 视频理解管线（vendored，子进程跑）
 scripts/check.ps1
 tests/
 ```

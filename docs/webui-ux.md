@@ -1,6 +1,12 @@
 # WebUI UX 设计（Fungi）
 
 > 2026-09-06 合并自原 `docs/brainstorm-ux.md`、`docs/plan-ux.md`、`docs/mobile-webui-design.md`（内容原样保留，按 桌面美化脑暴 → 桌面美化计划 → 移动端设计 顺序）。本文档是设计与实施记录。
+>
+> **2026-09-11 现状对照**（正文照旧，下列数字/清单当时快照已过期）：前端文件在**仓库根 `web/`**；
+> 体积已长到 `style.css` 36KB、`app.js` 48KB（另有 `common.js` 38KB、`m.js` 54KB）；服务端 WebUI
+> 端点见下面「移动端」一节更新后的清单（多了 `/resume` `/save` `/new` `/configure` `/comm-send`
+> `/pickfile` `/spawn-pending`）；二维码缺 `segno` 已自愈（spec §20）；好友视图与留言邮箱的后续修订
+> 见 spec §15 / §18 / §19。文中「280 tests / 385 passed」等计数也已过期：当前全量 458 passed。
 
 # Brainstorm: WebUI UX 美化（结合 Gasp-Design 组件库）
 
@@ -241,9 +247,9 @@ agent 气泡轨道漂移 + 进度环。
 2. `do_GET`/`do_POST` 入口统一过 `_authorized(self)` 门禁。
 3. 静态路由加 `/m`、`/m.css`、`/m.js`（沿用 `_send_static`）。
 4. `GET /lan` 端点。
-5. 现有 API 全部不动（/chat /events /sessions /session /asks /peers /comm-log /consent-mode /answer /stop /retry /upload /model /config-status）。
+5. 现有 API 全部不动（2026-09-11 实况——GET：`/` `/m` `/app.js /common.js /style.css /motion.js /m.css /m.js` `/vendor/*` `/model` `/config-status` `/lan` `/asks` `/sessions` `/session` `/peers` `/consent-mode` `/comm-log` `/mail` `/events` `/spawn-pending`；POST：`/chat` `/retry` `/stop` `/resume` `/answer` `/mail/read` `/configure` `/save` `/new` `/consent-mode` `/upload` `/pickfile` `/comm-send`）。
 
-## GUI：手机端页（fungi/gui.py）
+## GUI：手机端页（当时写在 `fungi/gui.py`，2026-09-10 起是 `fungi/gui/mobile.py`）
 
 - `MobilePage(QWidget)`，`addSubInterface` 顺序插在 join_page 与 cfg_page 之间（图标 `FluentIcon.QRCODE` 若可用，否则 CAMERA/SCAN 兜底）。
 - 进入页面（或点「生成二维码」）时若 WebUI 未启动则懒启动（`room.open_webui(open_browser=False)`），随后：
