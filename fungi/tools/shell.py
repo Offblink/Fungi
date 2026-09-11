@@ -28,6 +28,17 @@ def _truncate(text: str, limit: int = TRUNCATE_BASH) -> str:
     return f"{text[:half]}\n... [truncated {len(text) - limit} chars] ...\n{text[-half:]}"
 
 
+def _child_env() -> dict[str, str]:
+    """Env for child processes: make wsl.exe speak UTF-8.
+
+    wsl.exe writes its own output (listings, diagnostics) as UTF-16LE whatever
+    the console codepage is, so `wsl -l -v` came back through the chcp 65001
+    wrapper as `W\\x00S\\x00L\\x002\\x00` — unreadable. WSL_UTF8=1 switches it
+    to UTF-8, which is what the rest of this module decodes. Harmless for every
+    other command (it is just an env var)."""
+    return {**os.environ, "WSL_UTF8": "1"}
+
+
 def tool_bash(
     command: str, cwd: str | None = None, should_abort: Callable[[], bool] | None = None
 ) -> str:
@@ -43,6 +54,7 @@ def tool_bash(
             # timeout — fast-fail without banning any command.
             stdin=subprocess.DEVNULL,
             cwd=cwd or None,
+            env=_child_env(),
             start_new_session=os.name != "nt",  # own group: killpg on abort
         )
     except OSError as exc:
@@ -269,6 +281,7 @@ def _start_session(
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL if stdin_arg == "nul" else subprocess.PIPE,
             cwd=cwd or None,
+            env=_child_env(),
             start_new_session=os.name != "nt",
         )
     except OSError as exc:

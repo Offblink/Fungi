@@ -126,6 +126,12 @@ def test_bash_exit_code():
     assert result.endswith("[exit: 3]")
 
 
+def test_bash_children_see_utf8_wsl_env():
+    """wsl.exe writes its own output as UTF-16LE; only WSL_UTF8=1 in the child
+    env makes `wsl -l -v` readable instead of `W\\x00S\\x00L\\x002\\x00`."""
+    assert "WSL_UTF8=1" in tool_bash("set WSL_UTF8")
+
+
 def test_bash_timeout(monkeypatch):
     monkeypatch.setattr(shell_mod, "BASH_TIMEOUT", 2)
     result = shell_mod.tool_bash("ping -n 10 127.0.0.1 > nul")

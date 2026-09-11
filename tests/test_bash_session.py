@@ -157,3 +157,11 @@ def test_dispatch_wiring():
     sid = _sid(out)
     assert "hi" in out
     assert "unknown" not in tool_bash_kill(id=sid).lower()
+
+
+def test_session_children_see_utf8_wsl_env():
+    """wsl.exe writes UTF-16LE unless WSL_UTF8=1 is in the child env, so a
+    session running `wsl -l -v` used to come back as `W\\x00S\\x00L\\x002\\x00`."""
+    out = tool_bash_start("set WSL_UTF8")
+    tool_bash_kill(id=_sid(out))
+    assert "WSL_UTF8=1" in out
