@@ -34,7 +34,7 @@ JSON envelope，HTTP 承载：
  "type": "chat", "ts": 1730000000, "reply_to": null, "body": {}}
 ```
 
-- type：`chat`（对话）、`task`（goal/reply_format/context 委派）、`result`（task 回执）、`ask`（同意/提问请求）、`answer`（对 ask 的回答，reply_to=ask_id）、`err`。
+- type：`chat`（对话）、`task`（goal/reply_format/context 委派）、`result`（task 回执）、`ask`（同意/提问请求）、`answer`（对 ask 的回答，reply_to=ask_id）、`err`（另有 `transfer` §10、`mail` §14）。
 - 可靠性：server 为每 Agent 维护内存 inbox，收端长轮询拉取后 ack；投递按消息 id 去重，语义 at-least-once。
 
 ## 4. Server（hub）职责
@@ -81,7 +81,7 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.1 通讯 Agent
 
-- 工具：`send_peer(text|task)`、`read_file/write_file/edit/glob/grep`（路径守卫版）、`confirm(host, action, path, reason)`、`inquire(...)`。
+- 工具：`send_peer(text)`（只发 chat；task 由本机 Agent 的 `delegate` 发，见 §6.2）、`send_file(host, path, name, reason)`（§10）、`amail(host, subject, body)`（§14）、`read_file/write_file/edit_file/glob_files/grep_files`（路径守卫版，hub 侧 op 名是 `ls|read|write|edit|glob|grep`，见 §4）、`confirm(host, action, path, reason)`、`inquire(...)`，另挂 `todo`（§16）。
 - 2026-09-10 移除 `spawn` / `background`：通讯 Agent 由对端驱动、身边没有用户监督，而 clone 没有 spawn 的再激活通道（子代理只能同步多跑一跳，`background` 的报告也无处落地）——两者都只放大这个不受控 Agent 的爆炸半径（`trilayer.build_clone_agent(subagents=False)`）。
 - 路径守卫：`public/` 自由；`homes/<owner>/` 非属主需 consent（confirm 发往属主 host 的 本机 Agent）；`homes/<own>/` 与自身会话目录需自身用户 consent；`sessions/` 拒绝。
 - 自主交流：对位通讯 Agent 之间 chat/task 自由往来，无需用户参与；涉及 `public/` 之外的文件操作才触发 consent。
@@ -122,7 +122,7 @@ ask 是普通消息，不需要独立协调设施：
 - **通讯会话落盘**：hub 投递成功后镜像 chat/task/result/transfer envelope 到
   `data/comm/<hostA>__<hostB>.jsonl`（按 host 名排序，双向同文件，单写者 = relay）。
   `Clone.history` 仍只作 LLM 上下文。
-- **chat 回复兜底**：chat 回合若 LLM 未调用 send_peer 且最终文本非空，回合结束钩子自动补发
+- **chat 回复兜底（2026-09-10 废除，见 §20）**：chat 回合若 LLM 未调用 send_peer 且最终文本非空，回合结束钩子自动补发
   （防止 LLM 忘调工具导致回复静默丢失，2026-09-03 真机实测发现）；显式调用过则不重复。
 - **好友列表**：`GET /api/peers`（hub）→ 本机 Agent 代理 `/peers` → WebUI 侧栏在线成员；
   点击进入只读会话视图（`GET /comm-log?host=` 渲染双方通讯 Agent 对话流），无输入框
@@ -179,6 +179,9 @@ ask 是普通消息，不需要独立协调设施：
   pytest 为门禁（windows-latest + py3.13，Qt 测试在 runner 上 importorskip 跳过）；
   release 追加 `git archive` 源码 zip + GitHub Release（generate_release_notes）。
   ruff 仍是本地门禁（`scripts/check.ps1`），暂不进 CI——版本漂移待统一后钉版。
+  **2026-09-10 修订**：ruff 已进 CI（`python -m ruff check`，只 check 不 format），
+  版本从 pyproject 的 dev extra 读出（`ruff==0.13.0`）；playwright 已装、浏览器用例真跑
+  （不再 skip）。
 
 ## 13. 增补（2026-09-06）：文件空间全景、会话目录统一、视频理解与移动端打磨
 
@@ -196,6 +199,8 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 | `public/`、`homes/<host>/` | Agent 文件空间（守卫白名单内） | Agent |
 | `transfers/` | send_file 暂存（store-and-forward，取走即删） | hub |
 | `skills/<name>/` | 每主机技能沉淀（SKILL.md + 脚本） | 仅用户面 agent；通讯 Agent 只读 |
+| `mail/<host>.jsonl`（仅 server，§14/§15） | 留言邮箱（append-only，每箱 500 封滚旧） | hub |
+| `todos.json`（§16） | 主人的日历待办（GUI 日历与信使共写） | 用户与信使 |
 
 仓库根另有 `inbox/`（send_file 收件，`<来源主机>/` 子目录）与 `config.json`（模型、
 展示昵称）；用户级配置在 `~/.fungi/`（`webui_token`=WebUI 门禁、
@@ -420,3 +425,15 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   开房、热更新 token、实时改名时写回；**离开房间不再换 token**（下一个房间继续用，好友不必重输）。
 
 顺带修了两条被午夜打翻的时间标签用例（正午锚点 + 星期几由时间戳推导，别写死）。
+
+## 22. 增补（2026-09-11）：信使的第三件正事——替两边把「约」定下来
+
+用户指令：**需要约会（广义）时，信使要帮助人类双方确定时间、地点和事件。** 广义＝见面、通话、
+吃饭、拜访，任何需要定下来的计划。`COMM_SYSTEM_PROMPT`（`fungi/clone/comm.py`）新增一条：
+钉死三件让计划成真的东西——**事件、时间、地点**；本机主人不知道的向对面信使要，给具体选项
+而不是来回「你什么时候方便」；没有任何一方点头的细节不算数；落定的计划带钟点写进主人的日历
+（`todo` 工具），只把真正该由主人回答的问题交给主人（沿用 §20 的 `inquire` 约束）。
+
+与既有约束的关系：这条**不是**给信使新开一个聊天理由——`send_peer` 仍只在回复有必要时调用、
+「别为确认而回复」照旧；它管的是「计划该被推着走完」，不是「多说两句」。GUI 帮助页（`fungi/gui/help.py`
+的「信使」一条）同步补上这半句；README 场景①正是这类对话，故未改动。
