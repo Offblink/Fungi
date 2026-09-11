@@ -670,6 +670,21 @@ class RoomBase:
         )
         return {"ok": True, "kind": "chat"}
 
+    def comm_note_human(self, peer: str, text: str) -> dict:
+        """Owner feedback on a courier report (the friend view's feedback box).
+
+        A turn for OUR courier and nothing else: no envelope is handed to the
+        transport, so the counterpart never learns of it — the owner talking to
+        their own courier (2026-09-11 user instruction)."""
+        with self._guard:
+            clone = self._clones.get(peer)
+        if clone is None:
+            return {"error": f"no comm clone for {peer}"}
+        if not text.strip():
+            return {"error": "empty feedback"}
+        clone.note(text.strip())
+        return {"ok": True, "kind": "note"}
+
     # ── WebUI ──
 
     def open_webui(self, open_browser: bool = True) -> str:
@@ -1189,6 +1204,14 @@ class RoomRuntime(WebUIRuntime):
         return self.room.comm_send_human(
             host, text=data.get("text"), file_path=data.get("file")
         )
+
+    def comm_note(self, data: dict) -> dict:
+        """Feedback on a courier report, from the friend view's feedback box:
+        a turn for our own courier, nothing on the wire (RoomBase.comm_note_human)."""
+        host = str(data.get("host") or "").strip()
+        if not host:
+            return {"error": "host required"}
+        return self.room.comm_note_human(host, str(data.get("text") or ""))
 
 
 # ── selftest hook (FUNGI_SELFTEST=1, server role) ──

@@ -794,3 +794,48 @@ def test_friend_live_thinking_opens_while_it_streams(page, rooms):
         ],
     ):
         page.wait_for_function("() => msgs.querySelector('details.msg.reasoning')?.open === false")
+
+
+def test_every_report_row_offers_feedback_for_our_courier_only(page, rooms):
+    """2026-09-11 用户要求：每条信使汇报卡片上给一个反馈输入框，提交的内容只给自家信使
+    （与对面无关）。框里允许为空——空提交不发请求，也不报错。"""
+    server, _client = rooms
+    _seed_transcript(server, "beta", _transcript_messages(), _asks())
+    assert _wait(lambda: server._clones.get("beta") is not None), "no courier for beta"
+    _open_friend(page)
+    page.wait_for_function(
+        "() => msgs.querySelector('.msg.assistant.report .report-feedback') !== null"
+    )
+    box = page.locator(".report-feedback").first
+
+    rows_before = len((server._comm_store.load("comm-beta") or {}).get("messages") or [])
+    box.locator("button").click()  # 空框：什么都不发
+    page.wait_for_timeout(300)
+    assert box.locator(".fb-hint").text_content() == ""
+    rows_after = len((server._comm_store.load("comm-beta") or {}).get("messages") or [])
+    assert rows_after == rows_before, "an empty box must not start a turn"
+
+    box.locator("input").fill("时间记错了，是 17:15 不是 17:30")
+    box.locator("button").click()
+    page.wait_for_function(
+        "() => (document.querySelector('.report-feedback .fb-hint')||{}).textContent"
+        " === '已发给信使'"
+    )
+    # it landed in OUR courier's transcript (the owner's row, then its answer)
+    page.wait_for_function("() => msgs.textContent.includes('[主人的反馈] 时间记错了')")
+    stored = (server._comm_store.load("comm-beta") or {})["messages"]
+    assert "[主人的反馈] 时间记错了，是 17:15 不是 17:30" in [m.get("content") for m in stored]
+
+
+def test_the_mobile_friend_view_offers_feedback_too(mobile_page, rooms):
+    """手机端与桌面同一套渲染器（FC.attachReportFeedback）：反馈框在那里、也能发出去
+    ——手机端的 fetch 带 token 前缀，这条顺便证明前缀没漏。"""
+    server, _client = rooms
+    _seed_transcript(server, "beta", _transcript_messages(), _asks())
+    assert _wait(lambda: server._clones.get("beta") is not None), "no courier for beta"
+    mobile_page.evaluate("async () => { await openFriendChat('beta'); }")
+    mobile_page.wait_for_function("() => msgs.querySelector('.report-feedback') !== null")
+    box = mobile_page.locator(".report-feedback").first
+    box.locator("input").fill("记错了，是 17:15")
+    box.locator("button").click()
+    mobile_page.wait_for_function("() => msgs.textContent.includes('[主人的反馈] 记错了')")

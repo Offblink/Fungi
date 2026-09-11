@@ -962,7 +962,9 @@ function renderFriendChat(d) {
   registerArchived(d.subagents || []);
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
-  const opts = renderOpts({ friend: true, side: FRIEND_SIDE, mailBodies, report: true });
+  const opts = renderOpts({
+    friend: true, side: FRIEND_SIDE, mailBodies, report: true, feedbackHost: friendView,
+  });
   FC.renderTranscript(F, messages, d.asks || [], opts);
   var fileNodes = [];
   events.forEach(row => {

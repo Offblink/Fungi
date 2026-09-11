@@ -74,6 +74,45 @@ def test_add_keeps_existing_items_and_never_duplicates(tmp_path, monkeypatch):
     assert todos.load(p)["2026-09-11"] == ["傍晚18:00 出去玩（地点待定）", "去咖啡店当集合点"]
 
 
+def test_update_fixes_an_entry_in_place(tmp_path, monkeypatch):
+    """2026-09-11 user instruction: the courier may not delete the user's
+    entries for no reason, but correcting a mistake of its OWN is allowed --
+    `update` replaces one item in place, keeping the day's order, instead of a
+    remove+add that reads as a cancellation."""
+    p = tmp_path / "todos.json"
+    monkeypatch.setattr(todos, "TODOS_PATH", p)
+    orig = todos.load
+    monkeypatch.setattr(todos, "load", lambda path=None: orig(p))
+    todos.todo_tool({"action": "add", "date": "2026-09-12", "text": "16:00 校门口碰面"})
+    todos.todo_tool({"action": "add", "date": "2026-09-12", "text": "17:30 和 Aria 吃饭"})
+    out = todos.todo_tool(
+        {
+            "action": "update",
+            "date": "2026-09-12",
+            "old": "17:30 和 Aria 吃饭",
+            "text": "17:15 和 Aria 吃饭",
+        }
+    )
+    assert "updated" in out
+    assert todos.load(p)["2026-09-12"] == ["16:00 校门口碰面", "17:15 和 Aria 吃饭"]
+    # an entry that is not there is never invented, and nothing is deleted
+    assert "no such item" in todos.todo_tool(
+        {"action": "update", "date": "2026-09-12", "old": "买菜", "text": "买水果"}
+    )
+    assert todos.load(p)["2026-09-12"] == ["16:00 校门口碰面", "17:15 和 Aria 吃饭"]
+    assert "error" in todos.todo_tool({"action": "update", "date": "2026-09-12", "old": "x"})
+    # an update onto an existing line leaves one line, not two
+    todos.todo_tool(
+        {
+            "action": "update",
+            "date": "2026-09-12",
+            "old": "17:15 和 Aria 吃饭",
+            "text": "16:00 校门口碰面",
+        }
+    )
+    assert todos.load(p)["2026-09-12"] == ["16:00 校门口碰面"]
+
+
 def test_remove_needs_the_exact_item(tmp_path, monkeypatch):
     """A bare date must never wipe a day: the GUI calendar is the only
     whole-day editor."""

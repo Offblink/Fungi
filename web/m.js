@@ -761,7 +761,9 @@ function renderFriendChat(d) {
   p.clearMsgs();
   const stick = isNearBottom(msgs); // measure before the repaint replaces the DOM
   const mailBodies = new Set(mails.map(m => String(m.body || '').trim()).filter(Boolean));
-  const opts = renderOpts({ friend: true, side: FRIEND_SIDE, mailBodies, report: true });
+  const opts = renderOpts({
+    friend: true, side: FRIEND_SIDE, mailBodies, report: true, feedbackHost: friendView,
+  });
   FC.renderTranscript(p, messages, d.asks || [], opts);
   events.forEach(row => {
     let node = null;

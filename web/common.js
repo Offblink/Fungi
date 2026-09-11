@@ -557,6 +557,49 @@
     return m ? { who: m[1], text: m[2].trim() } : null;
   }
 
+  /* Owner feedback on a courier report: the box under every report in the
+     friend view, and it is between the owner and their OWN courier — the note
+     wakes that courier's turn locally and never reaches the peer (2026-09-11
+     user instruction: 「与对面没有关系」). An empty box sends nothing: leaving
+     it alone is allowed, so an empty submit is a no-op rather than an error.
+     The button's label is CSS content, not a text node: a row's textContent
+     stays the row's own words (the same rule the 信使汇报 label follows, and
+     the row-text probes in tests/test_webui_friend.py depend on). */
+  function attachReportFeedback(row, host) {
+    const form = document.createElement('form');
+    form.className = 'report-feedback';
+    form.innerHTML =
+      '<input type="text" placeholder="给信使说点什么——只有它看得见" />' +
+      '<button type="submit" aria-label="发送"></button>' +
+      '<span class="fb-hint"></span>';
+    const input = form.querySelector('input');
+    const hint = form.querySelector('.fb-hint');
+    form.addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const text = input.value.trim();
+      if (!text) { hint.textContent = ''; return; }   // 允许为空：没写就不发
+      hint.textContent = '发送中…';
+      try {
+        // postJSON hands back the Response (its callers so far just fire and
+        // forget), so the body decides whether the note actually landed —
+        // a 200 carrying {"error": ...} must not read as success.
+        const res = await postJSON('/comm-note', { host, text });
+        const out = await res.json().catch(() => null);
+        if (out && out.ok) {
+          input.value = '';
+          hint.textContent = '已发给信使';
+        } else {
+          const why = (out && out.error) || '发送失败';
+          hint.textContent = /no comm clone/.test(why) ? '信使还没就绪，稍后再试' : why;
+        }
+      } catch (e) {
+        hint.textContent = '发送失败';
+      }
+    });
+    row.appendChild(form);
+    return form;
+  }
+
   /* The courier's abstention marker is a delivery control token, not text to
      read: `<<SILENT>>` ends a comm turn silently (clone/comm.py). When one is
      left in a transcript — an older file, or the model adding it after real
@@ -583,6 +626,8 @@
        argsMax         tool-card argument preview length
        spawnTitle      tooltip wording for spawn cards (mobile says 点按…)
        reasoningHtml   (text) -> inner html of the reasoning <details>
+       feedbackHost    friend view only: the peer whose courier gets the
+                       feedback box on every report row
        liveText        (run) -> html for a streaming text run
   */
   function markTs(el, ts) {
@@ -685,9 +730,11 @@
           else {
             // Friend thread: our courier's turn text is a report to *us* — it
             // never went to the peer (comm._chat_end), so the stylesheet marks
-            // it as one (a ::before label, so it stays out of the row's text).
+            // it as one (a ::before label, so it stays out of the row's text),
+            // and the row carries the feedback box back to that courier.
             const cls = 'assistant' + agentSide + (opts.report ? ' report' : '');
-            markTs(p.add(cls, marked.parse(text)), m.ts);
+            const row = markTs(p.add(cls, marked.parse(text)), m.ts);
+            if (opts.report && opts.feedbackHost) attachReportFeedback(row, opts.feedbackHost);
           }
         }
         if (m.tool_calls) m.tool_calls.forEach(tc => {

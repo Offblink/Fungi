@@ -286,6 +286,15 @@ html.motion-on .agent-bubble{animation:none}
 .msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
 .msg.reasoning.friend-live{box-shadow:none}
 
+/* Feedback box under a courier report (2026-09-11): the owner talking to their own
+   courier — it never goes to the peer. Empty box = nothing sent. */
+.report-feedback{display:flex;align-items:center;gap:0.4rem;margin-top:0.6rem;padding-top:0.5rem;border-top:1px dashed var(--border-light)}
+.report-feedback input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--text);font-family:var(--font);font-size:0.8rem;padding:5px 9px;outline:none;transition:border-color var(--t-fast)}
+.report-feedback input:focus{border-color:var(--accent)}
+.report-feedback button{background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:var(--radius-xs);padding:5px 11px;font-size:0.78rem;font-weight:600;cursor:pointer;transition:all var(--t-fast) var(--ease-smooth);flex-shrink:0}
+.report-feedback button::after{content:"发送"}
+.report-feedback button:hover{border-color:var(--accent);color:var(--accent2)}
+.report-feedback .fb-hint{font-size:0.72rem;color:var(--dim);flex-shrink:0}
 /* server-injected [background report] user message: a muted system note, not a chat bubble */
 .msg.sys-note{align-self:center;max-width:94%;background:transparent;color:var(--dim);font-size:0.78rem;font-family:var(--mono);border:1px dashed var(--border);padding:0.5rem 0.8rem;border-radius:var(--radius);white-space:pre-wrap}
 

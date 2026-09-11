@@ -39,6 +39,12 @@ user's own list, not your scratchpad.
   the message courier are concerned.
 - `remove` takes the exact item text, and only once there is a reason to believe
   the user wants that entry gone -- someone merely mentioning a date is not one.
+- Fixing a mistake of your own IS a reason: if an entry you wrote has the wrong
+  clock time, the wrong place, or wording you got wrong, `update` it in place
+  (`old` -> `text`) instead of removing it and adding a rewritten copy -- that
+  keeps it one entry, in its place, and reads as a correction rather than a
+  cancellation. Say what you changed when you report. The user's own entries
+  are not yours to correct: leave their wording alone.
 - Record dated commitments as they settle, the user's or a peer's (a meeting, a
   rendezvous point, an errand), and put the clock time in the item when the plan
   has one.
@@ -107,23 +113,30 @@ TODO_SCHEMA = {
             "list the GUI calendar shows and the message courier answers from. "
             "action 'add' appends one item to a date and keeps everything already "
             "there; 'list' shows upcoming days that have items; 'remove' deletes "
-            "one item by its exact text. The entries belong to the user and stay "
-            "until they ask for them to be gone: record new detail as a new item "
-            "instead of rewriting an old one, and never tidy the list up. Use "
-            "'add' when a dated commitment settles (meetings, errands, reminders, "
-            "rendezvous points) so the courier can act on it later."
+            "one item by its exact text; 'update' replaces one item in place "
+            "('old' -> 'text') and is how a mistake of your own gets corrected — "
+            "a wrong clock time, a wrong place, wording you wrote badly. The "
+            "entries belong to the user and stay until they ask for them to be "
+            "gone: record new detail as a new item instead of rewriting an old "
+            "one, never tidy the list up, and leave the user's own wording alone. "
+            "Use 'add' when a dated commitment settles (meetings, errands, "
+            "reminders, rendezvous points) so the courier can act on it later."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "action": {"type": "string", "enum": ["add", "list", "remove"]},
+                "action": {"type": "string", "enum": ["add", "list", "remove", "update"]},
                 "date": {
                     "type": "string",
-                    "description": "For add/remove: YYYY-MM-DD.",
+                    "description": "For add/remove/update: YYYY-MM-DD.",
                 },
                 "text": {
                     "type": "string",
-                    "description": "For add: the item, with its clock time when the plan has one. For remove: the exact item text (required).",
+                    "description": "For add: the item, with its clock time when the plan has one. For remove/update: the exact item text (required).",
+                },
+                "old": {
+                    "type": "string",
+                    "description": "For update: the exact existing item text to replace (required).",
                 },
             },
             "required": ["action"],
@@ -138,6 +151,7 @@ def todo_tool(args: dict) -> str:
     action = str(args.get("action") or "")
     date = str(args.get("date") or "")
     text = str(args.get("text") or "")
+    old = str(args.get("old") or "")
     if action == "add":
         if not _valid_date(date) or not text.strip():
             return "error: 'add' needs date (YYYY-MM-DD) and text"
@@ -147,6 +161,22 @@ def todo_tool(args: dict) -> str:
             return f"already on {date}: {item}"
         set_day(date, [*items, item])
         return f"added on {date}: {item}"
+    if action == "update":
+        if not _valid_date(date) or not old.strip() or not text.strip():
+            return "error: 'update' needs date (YYYY-MM-DD), old and text"
+        old_item, new_item = old.strip(), text.strip()
+        items = load().get(date, [])
+        if old_item not in items:
+            return f"no such item on {date}"
+        if new_item == old_item:
+            return f"unchanged on {date}: {new_item}"
+        out: list[str] = []
+        for item in items:
+            fixed = new_item if item == old_item else item
+            if fixed not in out:  # an update must not leave the same line twice
+                out.append(fixed)
+        set_day(date, out)
+        return f"updated on {date}: {old_item} -> {new_item}"
     if action == "remove":
         if not _valid_date(date):
             return "error: 'remove' needs date (YYYY-MM-DD)"

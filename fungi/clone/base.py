@@ -202,6 +202,23 @@ class Clone:
 
     # ── lifecycle ──
 
+    def note(self, text: str) -> None:
+        """Owner feedback on one of this clone's reports — a local turn.
+
+        It rides the chat path (same history, same report back to the owner) but
+        is never handed to the transport, so the counterpart hears nothing: the
+        feedback box in the friend view is between the owner and their courier
+        (2026-09-11 user instruction). `render_input` labels it as the owner's.
+        """
+        self._work.put(
+            Envelope(
+                src=f"{self.host}:owner",
+                dst=self.addr,
+                type="chat",
+                body={"text": text, "from_owner": True},
+            )
+        )
+
     def start(self) -> None:
         self._loop_thread = threading.Thread(
             target=self._loop, name=f"clone-loop-{self.addr}", daemon=True
@@ -286,6 +303,10 @@ class Clone:
             # it faithfully instead of passing it off as the peer clone.
             who = str(env.body.get("sender_name") or parse_addr(env.src)[0])
             return f"[来自 {who} 的用户] {env.body.get('text', '')}"
+        if env.body.get("from_owner"):
+            # Feedback on a report, from the friend view's feedback box: OUR
+            # owner talking to us. Nothing about it goes to the counterpart.
+            return f"[主人的反馈] {env.body.get('text', '')}"
         return f"[{env.src}] {env.body.get('text', '')}"
 
     def resolved_prompt(self) -> str:

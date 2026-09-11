@@ -268,6 +268,10 @@ class WebUIRuntime:
         """Human direct-send from the friend view (room mode)."""
         return {"error": "friend direct send requires room mode"}
 
+    def comm_note(self, data: dict) -> dict:  # noqa: ARG002 (room mode overrides)
+        """Feedback on a courier report (room mode)."""
+        return {"error": "courier feedback requires room mode"}
+
     def consent_mode(self, host: str) -> str:  # noqa: ARG002 (room mode overrides)
         """Per-friend consent mode: "allow" or "ask" (room mode)."""
         return "ask"
@@ -567,6 +571,8 @@ class YesSirHandler(BaseHTTPRequestHandler):
             self._handle_pickfile()
         elif url.path == "/comm-send":
             self._send_json(self.runtime.comm_send(self._read_body()))
+        elif url.path == "/comm-note":
+            self._send_json(self.runtime.comm_note(self._read_body()))
         else:
             self._send_json({"error": "not found"}, status=404)
 

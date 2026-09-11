@@ -277,6 +277,51 @@ def test_human_text_mail_lands_in_both_mailboxes_without_agent(tmp_path, monkeyp
         server.stop()
 
 
+def test_courier_feedback_wakes_our_courier_and_never_the_peer(tmp_path, monkeypatch):
+    """2026-09-11 user instruction: every report card carries a feedback box,
+    and what it sends is between the owner and their OWN courier. Our courier
+    runs a turn with it (that is how it fixes its own mistakes, calendar
+    included) while the counterpart hears nothing and its agent never wakes."""
+    server, client, llm_beta = _two_rooms(tmp_path, monkeypatch, courier=True)
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert _wait(lambda: client._clones.get("alpha") is not None)
+        assert server.comm_note_human("beta", "时间记错了，是 17:15 不是 17:30")["ok"]
+        assert _wait(
+            lambda: any(
+                str(m.get("content") or "").startswith("[主人的反馈]")
+                for m in (server._comm_store.load("comm-beta") or {}).get("messages") or []
+            )
+        )
+        msgs = (server._comm_store.load("comm-beta") or {})["messages"]
+        assert "[主人的反馈] 时间记错了，是 17:15 不是 17:30" in [
+            m.get("content") for m in msgs
+        ]
+        assert msgs[-1]["role"] == "assistant", msgs[-1]  # our courier answered it
+        # nothing about it went out: no envelope, no mirror row, peer asleep
+        assert server.hub.commlog.read("alpha", "beta") == []
+        assert not (client._comm_store.load("comm-alpha") or {}).get("messages")
+        assert llm_beta.results, "a note must never reach the counterpart's agent"
+    finally:
+        client.stop()
+        server.stop()
+
+
+def test_an_empty_note_never_wakes_the_courier(tmp_path, monkeypatch):
+    """The box may be left empty (2026-09-11): an empty submit sends nothing
+    and must not spend a turn."""
+    server, client, _llm = _two_rooms(tmp_path, monkeypatch, courier=True)
+    try:
+        assert _wait(lambda: server._clones.get("beta") is not None)
+        assert "error" in server.comm_note_human("beta", "   ")
+        assert "error" in server.comm_note_human("ghost", "hi")  # no courier there
+        time.sleep(0.4)
+        assert not (server._comm_store.load("comm-beta") or {}).get("messages")
+    finally:
+        client.stop()
+        server.stop()
+
+
 def test_comm_log_mails_are_filtered_to_the_peer(tmp_path):
     room = _room(tmp_path)
     mailbox = Mailbox(tmp_path / "mail")

@@ -467,3 +467,37 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   既有三条 merge 用例（丢标记、跨回合回复、克隆遗忘）语义不变，全绿。
 - **已写坏的文件不会自愈**：那份转录的顺序是坏 merge 烙进文件的，新代码只保证此后不再写坏。
   要修复旧转录需按其真实时间重排（需 pc 那台的 `data/comm/OwO__pc.jsonl` 镜像给出对面消息的真实 ts）。
+
+## 24. 增补（2026-09-11）：信使能改自己写错的日历；汇报卡片上的反馈框
+
+### 日历：`update`（用户可以删/改，别人不许乱动）
+用户裁决：「之前我强调不要乱删日程，指的是不要无缘无故删除。但如果他自己写错了，还是可以修改的。」
+- `todo` 工具新增 **`update`**（`date` + `old` → `text`）：**就地替换**一天里的一条，保持位置；
+  `old` 不在那天就报 `no such item`（绝不凭空造条目），新文本与既有条目重名时只留一条。
+- `todos.RULES` 随三处 prompt 注入，写明：**改自己的错是正当理由**（钟点/地点/措辞写错），
+  用 `update` 而不是 `remove` + 重加（后者对用户就是一次静默取消，那是 2026-09-10 的教训）；
+  **用户自己写下的条目不许动**，`remove` 仍需有理由相信用户想让它消失。
+- 回归：`tests/test_todos.py::test_update_fixes_an_entry_in_place`。
+
+### 反馈框：每条汇报卡片下面，主人 ↔ 自家信使
+用户要求：「为了纠正信使偶尔会犯的小错误，每条信使汇报卡片上都提供一个反馈输入框。
+提交的内容与对面没有关系，只是主人与信使之间的对话。」
+- **每条 `.msg.assistant.report`（好友视图的我方汇报行）下带一个 `.report-feedback`**：
+  一行输入 + 发送，`common.js::attachReportFeedback` 构建（桌面 app.js 与手机 m.js 共用，
+  由 `opts.feedbackHost` 触发，两个客户端都传 `friendView`）。
+- **只在本地唤醒自家信使**：`POST /comm-note {host, text}` → `RoomBase.comm_note_human` →
+  `Clone.note()` 把一个 `from_owner` 的 chat 信封**直接塞进自己的 worker 队列**，
+  从不过 `transport`：对面既收不到信封，hub 的 comm 镜像里也没有行（回归直接断言
+  `commlog.read() == []` 且对面 agent 不醒）。渲染成 `[主人的反馈] …` 一行，走 chat 回合
+  的全部好处：进 history、进转录（刷新后还在）、收尾文本仍是给主人的汇报。
+- **与对面的关系**：`COMM_SYSTEM_PROMPT` 写明这是主人私下对你说的话——**不许转达对面、
+  不许在对面的对话里提起**，只当纠错依据。
+- **框里允许为空**：空提交**不发请求**（前端直接早退，不空转一次 LLM 回合），也不报错。
+  服务端对空文本返回 `error: empty feedback`（防御性，正常 UI 到不了）。
+- **成功与否看响应体**：`FC.postJSON` 返回的是 `Response`（既有调用都是"发了不管"），
+  这里必须 `await res.json()` 再看 `ok`——HTTP 200 里带 `{"error": …}` 不能读成成功
+  （实测踩到过：信使还没就绪时界面谎报"已发给信使"）。
+- 回归：`tests/test_friend_send.py::test_courier_feedback_wakes_our_courier_and_never_the_peer`、
+  `test_an_empty_note_never_wakes_the_courier`；
+  `tests/test_webui_friend.py::test_every_report_row_offers_feedback_for_our_courier_only`
+  （真浏览器：空框不发、填了才发、转录里出现主人的行）。

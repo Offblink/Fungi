@@ -196,6 +196,12 @@ html[data-theme="dark"] .ic-sun{display:block}
 .msg.friend-live{box-shadow:inset 2px 0 0 var(--accent)}
 .msg.reasoning.friend-live{box-shadow:none}
 
+/* Feedback box under a courier report (2026-09-11): owner -> own courier only. */
+.report-feedback{display:flex;align-items:center;gap:0.35rem;margin-top:0.5rem;padding-top:0.45rem;border-top:1px dashed var(--border-light)}
+.report-feedback input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-xs);color:var(--text);font-size:16px;padding:6px 9px;outline:none}
+.report-feedback button{background:var(--surface2);color:var(--text2);border:1px solid var(--border);border-radius:var(--radius-xs);padding:6px 10px;font-size:0.78rem;font-weight:600;flex-shrink:0}
+.report-feedback button::after{content:"发送"}
+.report-feedback .fb-hint{font-size:0.7rem;color:var(--dim);flex-shrink:0}
 /* server-injected [background report] user message: a muted system note */
 .msg.sys-note{align-self:center;max-width:94%;background:transparent;color:var(--dim);font-size:0.72rem;font-family:var(--mono);border:1px dashed var(--border);padding:0.45rem 0.7rem;border-radius:var(--radius);white-space:pre-wrap}
 @keyframes breath{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.4;transform:scale(0.75)}}
