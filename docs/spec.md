@@ -551,10 +551,10 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 - **设置页「来信提醒」**：铃声开关（默认开，写 `config.ring`）+ 铃声选择下拉（换一个即保存并试听一次）
   + 「试听」按钮（听当前选中的那一首，见 §26.2）。
   **关掉不显示铃声选择**（用户明确要求），未读的图标闪动照旧。
-- **托盘**：未读时图标在两版之间闪（`tray.make_icon(badge=True)` 的红点版），菜单只在响铃时多出
-  「停止铃声」——停的是这一条的铃，闪动留着；未读清零后重新武装，下一条照响。
-- 回归：`tests/test_gui.py` 的四条（宽限期、关铃仍闪、停止铃声只停这一条、开关收起下拉）
-  + `test_tray_icon_flashes_and_offers_to_stop_the_ring`（第十二轮另加三条，见 §26.2）。
+- **托盘**：未读时图标在两版之间闪（`tray.make_icon(badge=True)` 的红点版），未读清零即停。
+  （当时菜单里还有一项「停止铃声」，同一天就按用户要求撤掉了，见 §28。）
+- 回归：`tests/test_gui.py`（宽限期、关铃仍闪、开关收起下拉；第十二轮另加三条，见 §26.2）
+  + `test_tray_icon_flashes_while_mail_is_unread`。
 
 ### 25.3 发文件的进度条（模态，完成自动关闭；手机两步）
 
@@ -594,7 +594,7 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   若它在 WAV 放完就变回 False，同一首会被每秒重播一遍。
 - **图标不受牵连**：闪动由 `RoomBase.last_unread` 驱动（`_poll_unread` → `_Tray.set_alert`），
   与铃声各自独立——铃声停了图标照闪，直到那条被读掉。
-- **托盘「停止铃声」保留**：现在掐的是还在响的尾音（并清标志，下一条重新武装）。
+- **托盘不再有铃声项**：一声就完，没有可停的东西——同一天就按用户要求撤掉了「停止铃声」（§28）。
 - 回归：`test_a_tone_asks_both_backends_for_a_single_play`（Qt 的 loop count == 1、winsound 的 flags
   不含 `SND_LOOP`；改回循环即红）、`test_the_unread_poll_rings_once_not_once_per_second`
   （五次轮询只发一次播放请求）。
@@ -657,3 +657,14 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 - 回归：`tests/test_webui_sessions.py::test_renaming_a_session_updates_the_list_not_only_the_file`
   （真浏览器：先 `await loadSessions()` 造出陈旧闭包的条件，再改名，断言**画面**、**内存里的列表**、
   **`/sessions` 返回**三者一致且无未捕获错误）。改前红：画面停在 `(new session)`。
+
+## 28. 调整（2026-09-11）：撤掉托盘菜单的「停止铃声」
+
+用户：「托盘菜单的停止铃声去掉，多余」。
+
+- 铃声改成一声之后（§26.1），那一项只剩「掐掉还在响的尾音」这点用处——连它一起撤掉。菜单回到
+  显示主界面 / 打开 WebUI / 退出（`fungi/gui/trayicon.py`），`set_alert` 只管闪动与提示语。
+- **连带删净，不留半死的开关**：`FungiGui.stop_ring()` 与 `_silenced` 标志一起移除——`_silenced`
+  只由它置位，留着就是一段永不触发的分支（`_poll_unread` 的两处条件随之简化）。
+- 回归：`tests/test_gui.py::test_tray_icon_flashes_while_mail_is_unread`（断言菜单里没有「停止铃声」，
+  闪动与提示语照旧）；原来那条「停止铃声只停这一条」的用例随行为删除。

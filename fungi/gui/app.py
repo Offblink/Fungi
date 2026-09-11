@@ -59,7 +59,6 @@ class FungiGui(FluentWindow):
         # 的邮箱轮询结果，GUI 不再打一份到 hub。
         self._ringer = ring.Ringer()
         self._unread_since: float | None = None
-        self._silenced = False  # 托盘「停止铃声」：这一条不响，下一条照响
         self._unread_timer = QTimer(self)
         self._unread_timer.setInterval(UNREAD_POLL_MS)
         self._unread_timer.timeout.connect(self._poll_unread)
@@ -108,12 +107,11 @@ class FungiGui(FluentWindow):
         rooms = self.rooms()
         unread = int(getattr(rooms[0], "last_unread", 0) or 0) if rooms else 0
         if unread <= 0:
-            if self._unread_since is not None or self._ringer.ringing or self._silenced:
+            if self._unread_since is not None or self._ringer.ringing:
                 # only when there was an alert to take down: with no room and
                 # nothing ringing this poll must cost nothing (it runs every
                 # second, for the whole life of the window)
                 self._unread_since = None
-                self._silenced = False
                 self._stop_alert()
             return
         now = time.monotonic()
@@ -121,7 +119,7 @@ class FungiGui(FluentWindow):
             self._unread_since = now
         if self._tray is not None:
             self._tray.set_alert(True)  # unread flashes at once; only the tone waits
-        if not self._silenced and now - self._unread_since >= RING_GRACE_S:
+        if now - self._unread_since >= RING_GRACE_S:
             self._start_ring()
 
     def _start_ring(self) -> None:
@@ -136,14 +134,6 @@ class FungiGui(FluentWindow):
     def _stop_alert(self) -> None:
         if self._tray is not None:
             self._tray.set_alert(False)
-        self._ringer.stop()
-
-    def stop_ring(self) -> None:
-        """Tray menu 停止铃声: silence this ring, the next message rings again.
-
-        The flash stays — it is the unread indicator, and it clears when the
-        thread is actually read."""
-        self._silenced = True
         self._ringer.stop()
 
     def show_and_raise(self) -> None:

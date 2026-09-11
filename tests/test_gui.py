@@ -1137,30 +1137,6 @@ def test_ring_off_still_flashes_the_tray(window, ringing):
     assert ringer.played == []
 
 
-def test_stop_ring_silences_this_message_only(window, ringing):
-    """托盘「停止铃声」：这一条不响，下一条照响；闪动留着（它才是未读提示）。"""
-    room, ringer = ringing
-    room.last_unread = 1
-    window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
-    window._poll_unread()
-    assert ringer.ringing is True and window._tray._stop_ring.isVisible()
-
-    window.stop_ring()
-    assert ringer.ringing is False
-    window._poll_unread()
-    assert ringer.ringing is False          # silenced, not re-armed
-    assert window._tray._alerting is True   # the unread flash stays
-
-    room.last_unread = 0
-    window._poll_unread()
-    assert window._tray._alerting is False and not window._tray._stop_ring.isVisible()
-
-    room.last_unread = 1
-    window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
-    window._poll_unread()
-    assert ringer.ringing is True           # a new message rings again
-
-
 def test_a_tone_asks_both_backends_for_a_single_play(monkeypatch):
     """一次性播放（用户 2026-09-11：「铃声只响一次，但是图标保持闪动」）：Qt 后端的
     loop count 是 1，winsound 不带 SND_LOOP —— 试听与来信铃是同一种播放。"""
@@ -1250,16 +1226,17 @@ def test_the_audition_button_plays_the_tone_that_is_already_selected(window, mon
     assert gui.load_config().ring_tone == gui.TONE_IDS[selected]
 
 
-def test_tray_icon_flashes_and_offers_to_stop_the_ring(window, ringing):
-    """闪动本身：图标在两版之间换，菜单里只在响铃时给出「停止铃声」。"""
+def test_tray_icon_flashes_while_mail_is_unread(window, ringing):
+    """闪动本身：图标在两版之间换，提示语说明为什么；菜单里没有铃声那一项
+    （用户 2026-09-11：铃声一声就完，「停止铃声」多余）。"""
     tray = window._tray
+    labels = [a.text() for a in tray._menu.actions()]
+    assert "停止铃声" not in labels, labels
     tray.set_alert(True)
     first = tray.icon().pixmap(64, 64).toImage()
     tray._flash_tick()
     second = tray.icon().pixmap(64, 64).toImage()
     assert first != second
-    assert tray._stop_ring.isVisible()
     assert "未读" in tray.toolTip()
     tray.set_alert(False)
-    assert not tray._stop_ring.isVisible()
     assert tray.toolTip() == "Fungi"
