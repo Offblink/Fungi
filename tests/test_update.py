@@ -188,6 +188,48 @@ def test_update_exe_restores_old_install_on_failure(monkeypatch, tmp_path):
     assert not (root / "_internal.old").exists()
 
 
+def test_update_exe_recovers_when_the_running_exe_is_gone(monkeypatch, tmp_path):
+    """2026-09-11 用户报告（pc 那台）：`Fungi.exe -> Fungi.exe.old` 报 WinError 2，
+    整个更新就地失败。运行中的映象已经不在盘上时（文件夹被挪过、或上次换装半途死掉），
+    没有东西需要让位——新文件直接放进去，这既是修复也是那次卡住的恢复路径。"""
+    root = tmp_path / "app"
+    root.mkdir()
+    (root / "_internal").mkdir()  # only the runtime is left; Fungi.exe is gone
+    (root / "_internal" / "web.js").write_text("js-old", encoding="utf-8")
+    zipped = _make_release_zip(tmp_path)
+
+    monkeypatch.setattr(sys, "executable", str(root / "Fungi.exe"))  # not on disk
+    monkeypatch.setattr(
+        update, "_download",
+        lambda _url, dest, _progress=None: dest.write_bytes(zipped.read_bytes()),
+    )
+
+    exe = update.update_exe("https://example/fungi-v9.9.9-windows-x64.zip")
+
+    assert exe == root / "Fungi.exe"
+    assert exe.read_text(encoding="utf-8") == "exe-new"  # no backup needed, no failure
+    assert (root / "_internal" / "web.js").read_text(encoding="utf-8") == "js-new"
+    assert not (root / "Fungi.exe.old").exists()
+
+
+def test_update_exe_installs_the_runtime_even_without_one_on_disk(monkeypatch, tmp_path):
+    """新包的 _internal 必须就位，哪怕旧安装里一个都没有（否则装出个跑不起来的 exe）。"""
+    root = tmp_path / "moved"
+    root.mkdir()  # empty: the whole install was moved out from under the process
+    zipped = _make_release_zip(tmp_path)
+
+    monkeypatch.setattr(sys, "executable", str(root / "Fungi.exe"))
+    monkeypatch.setattr(
+        update, "_download",
+        lambda _url, dest, _progress=None: dest.write_bytes(zipped.read_bytes()),
+    )
+
+    update.update_exe("https://example/fungi-v9.9.9-windows-x64.zip")
+
+    assert (root / "Fungi.exe").read_text(encoding="utf-8") == "exe-new"
+    assert (root / "_internal" / "web.js").read_text(encoding="utf-8") == "js-new"
+
+
 def test_cleanup_old_install_sweeps_leftovers(monkeypatch, tmp_path):
     root = tmp_path / "app"
     root.mkdir()

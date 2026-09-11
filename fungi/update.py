@@ -169,7 +169,12 @@ def update_exe(asset_url: str, progress=None) -> Path:
     The rename dance: a running exe cannot be overwritten on Windows but can
     be *renamed* — so Fungi.exe/_internal step aside as .old, the new files
     move in, and .old leftovers are swept by cleanup_old_install() on the
-    next start.
+    next start. When the running image is no longer on disk (the folder was
+    moved under the live process, or an earlier swap died half-way leaving
+    only Fungi.exe.old) there is nothing to step aside: the new files move
+    straight in, which is also the recovery from that state — 2026-09-11, the
+    pc box failed the whole update on `WinError 2` renaming a missing
+    Fungi.exe. Any OSError behind the dance puts the old install back whole.
     """
     exe = Path(sys.executable).resolve()
     root = exe.parent
@@ -184,23 +189,28 @@ def update_exe(asset_url: str, progress=None) -> Path:
 
         old_exe = root / _OLD_EXE
         old_internal = root / _OLD_INTERNAL
+        internal = root / "_internal"
         _sweep(old_exe)
         _sweep(old_internal)
-        exe.rename(old_exe)
-        internal = root / "_internal"
-        had_internal = internal.exists()
-        if had_internal:
-            internal.rename(old_internal)
+
+        backed_up_exe = exe.is_file()  # False: nothing at sys.executable to keep
+        backed_up_internal = internal.is_dir()
         try:
+            if backed_up_exe:
+                exe.rename(old_exe)
+            if backed_up_internal:
+                internal.rename(old_internal)
             shutil.move(str(new_exe), str(exe))
-            if had_internal and new_internal.exists():
+            if new_internal.exists():  # the bundle brings the runtime, not the layout
                 shutil.move(str(new_internal), str(internal))
         except OSError:
-            # Put the running install back; the app keeps working on the old
-            # version instead of dying mid-swap.
-            if had_internal and not internal.exists() and old_internal.exists():
+            # Put the old install back whole (partial copies from this attempt
+            # go away first), so the app keeps working on the version it runs.
+            if backed_up_internal and old_internal.exists():
+                _sweep(internal)
                 old_internal.rename(internal)
-            if not exe.exists() and old_exe.exists():
+            if backed_up_exe and old_exe.exists():
+                _sweep(exe)
                 old_exe.rename(exe)
             raise
     return exe
