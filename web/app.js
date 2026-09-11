@@ -177,6 +177,14 @@ async function deleteSession(id) {
     await loadSessions();
   } catch (e) {}
 }
+/* The live list entry for a row, by id. Rows are reused keyed by id, so a row's
+   handlers hold the session object of whatever /sessions fetch created that row
+   — an older generation after the next poll. Write through this, never through
+   the captured object: renderSessionList's title guard compares the painted name
+   against the live entry, and a stale write is exactly how a rename silently
+   reverted to the old name (2026-09-11 user report). */
+const sessionById = id => allSessions.find(s => s.id === id) || null;
+
 function renderSessionList() {
   const list = document.getElementById('session-list');
   const empty = document.getElementById('session-list-empty');
@@ -208,15 +216,16 @@ function renderSessionList() {
           + '<button class="session-row-act del" title="Delete">&#10005;</button></span>';
         row.querySelector('.session-row-act.del').addEventListener('click', e => {
           e.stopPropagation();
+          const cur = sessionById(row.dataset.sid);
           showConfirm({
             title: 'Delete session',
-            message: '"' + (s.title || 'Untitled') + '" will be permanently removed. This cannot be undone.',
+            message: '"' + ((cur && cur.title) || 'Untitled') + '" will be permanently removed. This cannot be undone.',
             confirmText: 'Delete',
             danger: true,
-            onConfirm: () => deleteSession(s.id)
+            onConfirm: () => deleteSession(row.dataset.sid)
           });
         });
-        row.querySelector('.session-row-act:not(.del)').addEventListener('click', e => { e.stopPropagation(); startRename(row, s); });
+        row.querySelector('.session-row-act:not(.del)').addEventListener('click', e => { e.stopPropagation(); startRename(row); });
         row.addEventListener('click', () => switchSession(s.id));
         list.appendChild(row);
       }
@@ -229,27 +238,39 @@ function renderSessionList() {
   else mutate();
 }
 const fmtDate = d => FC.fmtDate(d, 'en-US');
-function startRename(row, s) {
+function startRename(row) {
+  const s = sessionById(row.dataset.sid);
+  if (!s) return;
   const titleEl = row.querySelector('.session-row-title');
-  const old = titleEl.textContent;
   const inp = document.createElement('input');
-  inp.className = 'rename-input'; inp.value = old;
-  inp.addEventListener('blur', () => finishRename(row, s, inp));
+  inp.className = 'rename-input'; inp.value = s.title || titleEl.textContent;
+  inp.addEventListener('blur', () => finishRename(row, inp));
   inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter') finishRename(row, s, inp);
-    if (e.key === 'Escape') { row.replaceChild(titleEl, inp); titleEl.textContent = old; }
+    // Enter swaps the input back out, which blurs it: one finish per rename
+    // (finishRename's `done` flag absorbs the blur that its own teardown fires).
+    if (e.key === 'Enter') { e.preventDefault(); finishRename(row, inp); }
+    if (e.key === 'Escape') { row.replaceChild(titleEl, inp); titleEl.textContent = s.title || 'Untitled'; }
   });
   row.replaceChild(inp, titleEl); inp.focus(); inp.select();
 }
-async function finishRename(row, s, inp) {
+async function finishRename(row, inp) {
+  if (inp.dataset.done) return;
+  inp.dataset.done = '1';
   const newTitle = inp.value.trim() || 'Untitled';
   try {
     await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: s.id, title: newTitle, messages: [] }) });
+      body: JSON.stringify({ id: row.dataset.sid, title: newTitle, messages: [] }) });
   } catch (e) {}
-  const titleEl = document.createElement('span');
-  titleEl.className = 'session-row-title'; titleEl.textContent = newTitle;
-  row.replaceChild(titleEl, inp); s.title = newTitle; renderSessionList();
+  if (inp.parentNode === row) {
+    const titleEl = document.createElement('span');
+    titleEl.className = 'session-row-title'; titleEl.textContent = newTitle;
+    row.replaceChild(titleEl, inp);
+  }
+  // Onto the LIVE entry, so renderSessionList's guard agrees with the paint
+  // instead of restoring the old name from a list object this row predates.
+  const s = sessionById(row.dataset.sid);
+  if (s) s.title = newTitle;
+  renderSessionList();
 }
 
 /* ---------- sidebar wiring ---------- */

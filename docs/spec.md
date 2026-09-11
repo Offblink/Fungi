@@ -635,3 +635,25 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 - 与未读的配合：响铃时点图标正好直接开好友视图，读掉即停闪。
 - 回归：`tests/test_gui.py::test_tray_icon_click_opens_the_webui`
   （`FakeRoom` 记 `open_webui` 的调用次数）。
+
+## 27. 修复（2026-09-11）：会话列表改名不生效，要刷新才看见
+
+用户报告：「会话列表的重命名回车后不更新命名（虽然已经改了，但是刷新才显示）」。
+
+- **症状与成因**：`/save` 真的写了盘（刷新后名字是新），但那一行**停在旧名字上**。会话行是
+  **按 id 复用**的（`renderSessionList` 的 keyed reconciliation，为 FLIP 动画保留节点），所以一行的
+  ✎/删除 handler 攥着的是**创建那一行时**那次 `/sessions` 返回的 session 对象；任何后续
+  `loadSessions()`（`resumeIfPending` 3 s 轮询、每次 turn 之后、新建/删除会话）换掉的是
+  `allSessions` 里的**新对象**，行的闭包却还是旧的。`finishRename` 于是把新名字写进**旧对象**，
+  紧接着 `renderSessionList()` 的守卫发现「画出来的名字 ≠ 列表条目的名字」，又按旧条目把名字写了回去。
+- **修法**（`web/app.js`）：新增 `sessionById(id)`（查**当前** `allSessions` 条目），
+  `startRename` / `finishRename` / 删除确认一律按 `row.dataset.sid` 现查现用，改名写回的是当前条目
+  ——画出来与列表一致，守卫自然不再回滚。
+- **顺带修掉的第二个缺陷**：回车把输入框换回 `<span>` 会让它 blur，blur 处理器于是**第二次**
+  调用 `finishRename`，`row.replaceChild` 抛未捕获的 `NotFoundError`（浏览器控制台可见），且
+  向 `/save` 多发一次请求。现在输入框带 `done` 标志（一次改名只收尾一次），并按
+  `inp.parentNode === row` 判断还该不该换回。
+- 手机端（`web/m.js`）不受影响：它每次渲染**重建**所有行，闭包永远属于当前那一代。
+- 回归：`tests/test_webui_sessions.py::test_renaming_a_session_updates_the_list_not_only_the_file`
+  （真浏览器：先 `await loadSessions()` 造出陈旧闭包的条件，再改名，断言**画面**、**内存里的列表**、
+  **`/sessions` 返回**三者一致且无未捕获错误）。改前红：画面停在 `(new session)`。
