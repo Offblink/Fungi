@@ -444,3 +444,26 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
 与既有约束的关系：这条**不是**给信使新开一个聊天理由——`send_peer` 仍只在回复有必要时调用、
 「别为确认而回复」照旧；它管的是「计划该被推着走完」，不是「多说两句」。GUI 帮助页（`fungi/gui/help.py`
 的「信使」一条）同步补上这半句；README 场景①正是这类对话，故未改动。
+
+## 23. 增补（2026-09-11）：好友视图的顺序——信使的转录被自己写坏的那次
+
+现场：「好友视图的顺序依旧会乱，刷新也不行，整体呈现对话沉底、工具和思考上浮」。
+渲染没错，**`merge_comm_history` 写坏的是文件本身**。
+
+- 克隆的 history **不是转录的逐行镜像**：它只有对话（对面的行 + 信使的汇报文本），而转录里还有
+  这一轮 Agent 自己写下的行——reasoning、tool_calls、tool 结果（`Agent.run` 就地往 `messages`
+  里追加）。旧实现**按下标逐对比较** `carried_c[si] == stored_c[si]`：走到第一个「只有 store 有」
+  的工具行就再也对不上，于是判定成「克隆把历史全忘了」，走 `keep + carried` 兜底——
+  **把整段对话连同新的 `ts` 重新追加到末尾**。结果是 store 里已有的工具/思考行原地不动留在上面，
+  全部对话（对面的消息、信使的汇报）沉到下面；每次 chat 回合都重演一遍，刷新也只是重画同一个文件。
+  证据：用户机器上那份 `data/comm-sessions/comm-pc.json` 正是这个形状——前 18 行全是 rich 行（4 个
+  回合的 reasoning/tool），后 12 行是**整段 lean 对话**（对面消息 + 汇报）且 `ts` 全等于最后一次
+  merge 的时刻。
+- **新语义**：store 是基底，只增不改。逐行在 store 里**向后找**（`while stored_c[j] != comp: j += 1`），
+  跨过只有 store 才有的行；每个 store 行最多被认领一次；只有**最后一个被认领的 carried 行之后**
+  的行才算新行，追加到末尾并盖 `ts`。store 丢了的行（history 被裁剪）不再被重新追加。
+- 回归：`tests/test_room.py::test_comm_history_merge_keeps_the_tool_rows_above_the_dialogue_they_turn_belonged_to`
+  （旧实现下第一个元素就是 `('assistant', None)`——工具行被抬到对话之前；新实现顺序不变）。
+  既有三条 merge 用例（丢标记、跨回合回复、克隆遗忘）语义不变，全绿。
+- **已写坏的文件不会自愈**：那份转录的顺序是坏 merge 烙进文件的，新代码只保证此后不再写坏。
+  要修复旧转录需按其真实时间重排（需 pc 那台的 `data/comm/OwO__pc.jsonl` 镜像给出对面消息的真实 ts）。

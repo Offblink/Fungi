@@ -115,42 +115,43 @@ def _drop_silent(msgs: list[dict]) -> list[dict]:
 def merge_comm_history(prev: list[dict], fresh: list[dict], ts: float | None = None) -> list[dict]:
     """Transcript body (system prompt excluded) after a chat turn.
 
-    `fresh` is normally the clone's cumulative history: it already ends with
-    what is stored, so the stored copy is dropped and `fresh` continues it. A
-    clone rebuilt after its peer dropped off the roster starts EMPTY, though —
-    and replacing there threw every earlier turn away (2026-09-10 real-machine
-    finding). The overlap is measured, so that case appends instead.
+    The stored transcript is the base, and it only grows: a row the clone still
+    carries keeps the transcript's own copy — its ts, and the display payload
+    the lean history copy no longer has — and what the clone has and the store
+    does not is appended, stamped with `ts` (the friend view merges the
+    transcript with the timestamped ask/event/mail rows by that stamp).
 
-    Messages arriving now are stamped with `ts`: the friend view merges the
-    transcript with the timestamped ask/event/mail rows by that stamp.
+    The clone's history is no row-for-row mirror of the transcript. It carries
+    the conversation — the peer's rows and the courier's report text — while the
+    transcript also holds what the agent wrote during the turn: its reasoning,
+    its tool calls and their results. Comparing position by position therefore
+    stopped at the first tool row, concluded "the clone forgot everything", and
+    re-appended the whole conversation at the end. On a transcript that had
+    already accumulated such rows that hoisted them: the tools and thinking
+    recorded first stayed on top while every line of dialogue sank below them,
+    and the file was already wrong on the next refresh (2026-09-11 user report:
+    the dialogue sank to the bottom while the tools and thinking floated up).
+    The match now walks *past* those rows — each stored row is claimed at most
+    once — and only the carried rows after the last claim count as new; rows the
+    store no longer has (history trimmed) are left alone rather than re-appended.
     """
     now = time.time() if ts is None else ts
     stored = _drop_silent([m for m in prev if m.get("role") != "system"])
     carried = _drop_silent([m for m in fresh if m.get("role") != "system"])
     stored_c, carried_c = _comparable(stored), _comparable(carried)
-    # Align the stored transcript with the clone's history (it grows at the end):
-    # a row the clone still carries keeps the transcript's own copy — its ts,
-    # and the display payload the lean history copy no longer has.
-    merged, si = [], 0
-    for row in carried:
-        if si < len(stored_c) and carried_c[si] == stored_c[si]:
-            merged.append({**row, **{k: v for k, v in stored[si].items() if k != "ts"},
-                           "ts": stored[si].get("ts", now)})
-            si += 1
-        else:
-            merged.append({**row, "ts": now})
-    if si == len(stored_c):
-        return merged  # the clone carries everything still: it IS the transcript
-    # The clone forgot rows (peer dropped off the roster / history trimmed):
-    # carry them forward instead of overwriting the user's conversation.
-    remaining = list(carried_c)
-    keep = []
-    for row, comp in zip(stored, stored_c, strict=False):
-        if comp in remaining:
-            remaining.remove(comp)  # the clone still has this row: fresh carries it
-        else:
-            keep.append(row)
-    return keep + [{**m, "ts": now} for m in carried]
+    merged = list(stored)
+    si, last_claim = 0, -1
+    for ci, row in enumerate(carried):
+        comp = carried_c[ci]
+        j = si
+        while j < len(stored_c) and stored_c[j] != comp:
+            j += 1  # a row only the store has (reasoning / tool call): it keeps its place
+        if j == len(stored_c):
+            continue  # the clone has it, the store does not (yet)
+        merged[j] = {**row, **{k: v for k, v in stored[j].items() if k != "ts"},
+                     "ts": stored[j].get("ts", now)}
+        si, last_claim = j + 1, ci
+    return merged + [{**m, "ts": now} for m in carried[last_claim + 1:]]
 
 
 MAX_LIVE_EVENTS = 400  # per-peer live turn tape cap (friend-view spectating)

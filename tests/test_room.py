@@ -151,6 +151,49 @@ def test_comm_history_merge_keeps_a_reply_with_its_question(server_room):
     assert [m["ts"] for m in merged] == [1.0, 1.5, 2.0, 2.0]
 
 
+def test_comm_history_merge_keeps_the_tool_rows_above_the_dialogue_they_turn_belonged_to(
+    server_room,
+):
+    """2026-09-11 用户报告：好友视图「对话沉底，工具和思考上浮」，刷新也不行。
+
+    The clone's history carries the conversation (the peer's rows and the
+    courier's report text); the transcript also holds what the agent wrote —
+    its reasoning, its tool calls and their results. Matching the two lists
+    position by position stopped at the first of those rows, decided the clone
+    had forgotten everything, and re-appended the whole conversation at the
+    end: everything the store already had (the tools and thinking) ended up on
+    top of the dialogue, and it stayed wrong across a refresh."""
+    stored = [
+        {"role": "user", "content": "在吗", "ts": 1.0},
+        {
+            "role": "assistant",
+            "content": None,
+            "reasoning": "看看日历",
+            "tool_calls": [{"id": "c1", "function": {"name": "todo"}}],
+            "ts": 1.5,
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "09-12: 晚饭", "ts": 1.5},
+        {"role": "assistant", "content": "在的", "ts": 1.5},
+    ]
+    fresh = [  # the clone's history: the same conversation, leaner, plus this turn
+        {"role": "user", "content": "在吗"},
+        {"role": "assistant", "content": "在的"},
+        {"role": "user", "content": "晚上吃啥"},
+        {"role": "assistant", "content": "吃火锅"},
+    ]
+    merged = merge_comm_history(stored, fresh, ts=2.0)
+    assert [(m["role"], m.get("content")) for m in merged] == [
+        ("user", "在吗"),
+        ("assistant", None),
+        ("tool", "09-12: 晚饭"),
+        ("assistant", "在的"),
+        ("user", "晚上吃啥"),
+        ("assistant", "吃火锅"),
+    ]
+    assert [m["ts"] for m in merged] == [1.0, 1.5, 1.5, 1.5, 2.0, 2.0]
+    assert merged[1]["reasoning"] == "看看日历"  # the stored copy keeps its payload
+
+
 def test_comm_history_merge_keeps_rows_the_clone_forgot(server_room):
     """A clone rebuilt after its peer dropped off the roster comes back with an
     empty history: the stored transcript must be carried forward, marker rows
