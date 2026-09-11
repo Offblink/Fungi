@@ -16,8 +16,8 @@ import socket
 import sys
 from pathlib import Path
 
-from fungi import __version__
 from fungi.config import PROJECT_ROOT
+from fungi.update import local_version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Fungi — LAN multi-host Orchestrator network on the TriLayer agent harness",
     )
     parser.add_argument("query", nargs="*", help="single-shot query (console mode)")
-    parser.add_argument("--version", action="version", version=f"fungi {__version__}")
+    parser.add_argument("--version", action="version", version=f"fungi {local_version()}")
     parser.add_argument("--web", action="store_true", help="single-host WebUI server mode")
     parser.add_argument(
         "--gui", action="store_true", help="graphical launcher (host / join / config)"
