@@ -668,3 +668,58 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   只由它置位，留着就是一段永不触发的分支（`_poll_unread` 的两处条件随之简化）。
 - 回归：`tests/test_gui.py::test_tray_icon_flashes_while_mail_is_unread`（断言菜单里没有「停止铃声」，
   闪动与提示语照旧）；原来那条「停止铃声只停这一条」的用例随行为删除。
+
+## 29. 边界（2026-09-11）：exe 版没有本地视频理解
+
+用户拿着一句外部说法来问真伪：「已知边界：exe 版上 video 工具不可用（PyInstaller 冻结环境里跑不了
+vidsense 子进程的 Python 解释器）——需要视频理解请用源码方式运行」。**结论：属实，而且是结构性的**
+（不是「装个 Python 就好了」）。
+
+- **子进程需要一个解释器**：`fungi/tools/video.py` 用
+  `[sys.executable, "-m", "vidsense.cli", str(work), "--no-api"]` 起 vendored 管线；冻结之后
+  `sys.executable` 就是 `Fungi.exe`，那行会变成「再起一个 Fungi」。`video.py` 里没有任何 frozen 分支；
+  `fungi/gui/config.py::_python_cmd()` 的注释早就写明 *frozen exe has none*。
+- **更早一步就断了**：`_video_ready()` 在**当前解释器**里 `find_spec` torch / transformers /
+  faster-whisper / opencv。exe 的构建环境（`.github/workflows/release.yml` 的
+  `pip install pytest pillow segno PyQt5 PyQt-Fluent-Widgets pyinstaller`）里没有 torch，
+  而它是 GB 级、不可能塞进 60 MB 的包；冻结进程也**看不见系统 Python 的 site-packages**，
+  所以「自己再装一套依赖」救不回来。`--collect-all vidsense` 只打包**包文件**，不带解释器。
+- **处置**（用户 2026-09-11 拍板「按 1 办」）：不折腾打包形态，**写清楚 + 界面上说明白**——
+  `ConfigPage._check_video_models` 在 `sys.frozen` 时直接写「本地视频理解只在源码方式下可用
+  （exe 里没有 Python 解释器，跑不了 vidsense 子进程）：需要它就用 python start.py 跑源码」，
+  并**隐藏**那个点了也没用的「下载缺失模型」按钮（`_HEALABLE` 那套自愈链在冻结态无从生效）。
+- 回归：`tests/test_gui.py::test_config_page_frozen_exe_points_video_at_the_source_run`。
+
+## 30. 修复（2026-09-11）：exe 原地更新在「运行中的 exe 已不在盘上」时不再全盘失败；图标回到任务栏
+
+### 30.1 `update_exe`：没有东西可以让位时就直接装
+
+用户报告（pc 那台，对话框原文）：
+
+> 更新失败: [WinError 2] 系统找不到指定的文件。: '…\Desktop\release\Fungi\Fungi.exe' → '…\Fungi.exe.old'
+
+- **读到的病因**：`WinError 2`（ERROR_FILE_NOT_FOUND）出在换装第一步 `exe.rename(old_exe)` 上——
+  `sys.executable` 指向的 `Fungi.exe` **当时已经不在盘上**（文件夹被挪过/被改名、上次换装半途死掉只剩
+  `.old`、或被安全软件/云同步动了）。下载与解压都成功了，卡的是「备份旧映象」这一步。
+- **修法**：`exe` 不在盘上就**跳过备份直接装**（新文件 move 进去），这既是修复也是那种半残状态的恢复；
+  `_internal` 的搬入条件从「旧安装里有」改成「新包里就有」（旧安装缺 runtime 时不再装出个跑不起来的
+  exe）。**整段换装进 try**：任何 `OSError` 都把旧安装**整体**放回去（先清掉这次留下的半成品，再还原
+  `_internal.old` / `Fungi.exe.old`），不再有「exe 已让位、_internal 还原失败」那种半坏状态。
+- 回归：`tests/test_update.py::test_update_exe_recovers_when_the_running_exe_is_gone`、
+  `test_update_exe_installs_the_runtime_even_without_one_on_disk`（两条在改前都是那条 WinError 2）。
+- **注意**：修复只有到**下一个 release** 才到得了 exe 用户手里——那台机器先手动解压新版 zip 覆盖一次。
+
+### 30.2 任务栏图标：找回被误删的 `--icon`，并给进程一个身份
+
+用户报告：「程序图标是蘑菇，托盘也是蘑菇，但是任务栏不是」。
+
+- **一条被误删的旗标**：`7e44559` 给 exe 加过 `--icon assets/fungi.ico`，**`0066456` 重写 workflow 时把它
+  丢了**（`assets/fungi.ico` 自此成了没人引用的死资源）→ exe 里没有蘑菇资源，Explorer 与任务栏只能落到
+  PyInstaller 的默认图标。已在 `release.yml` 复原（并写明是复原，别再丢）。
+- **进程身份**：源码运行（`python start.py`）时任务栏是按 `python.exe` 分组的，用的是它的图标；现在
+  `run_gui()` 在**创建任何窗口之前**调用
+  `SetCurrentProcessExplicitAppUserModelID("Offblink.Fungi")`，并 `app.setWindowIcon(assets/fungi.ico)`
+  （缺资源时退化为运行时绘制的那枚 `make_icon()`），任务栏按钮因此拿到自家图标与身份。
+- 实测：AUMID 读回 `Offblink.Fungi`（hr=0）；app/window 图标非空、64×64（`assets/fungi.ico` 只有一档
+  64×64，够用；要更锐的高分屏大图标得再加尺寸）。⚠️ 本机 `QScreen.grabWindow(0)` 抓屏全黑、PIL 抓屏
+  跑不起来，**任务栏的视觉确认得在你机器上看一眼**（源码跑一次就能看到；exe 要等下一个 release）。

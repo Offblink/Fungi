@@ -1,10 +1,12 @@
 """The window itself: page assembly, single-instance guard, entry point."""
 
+import contextlib
 import os
 import sys
 import time
 
 from PyQt5.QtCore import QSharedMemory, Qt, QTimer
+from PyQt5.QtGui import QIcon
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
 from PyQt5.QtWidgets import (
     QApplication,
@@ -17,6 +19,8 @@ from qfluentwidgets import (
 )
 
 from .. import config as config_mod
+from ..config import RESOURCE_ROOT
+from ..tray import make_icon
 from . import ring
 from .config import ConfigPage
 from .const import GUI_SCALE
@@ -28,6 +32,10 @@ from .mobile import MobilePage
 from .trayicon import _Tray
 
 _GUI_IPC = "FungiGuiIPC"  # named pipe: second launch -> running window shows itself
+# Windows taskbar identity. Without it the taskbar groups the window under
+# python.exe (source runs) and shows the exe's own icon, so the mushroom the
+# tray draws never reaches the taskbar button (2026-09-11 user report).
+_APP_ID = "Offblink.Fungi"
 UNREAD_POLL_MS = 1000
 # Ring only after unread mail has stayed unread this long. The friend view needs
 # up to ~8 s to mark a thread read (its /comm-log poll is 5 s, the room's mailbox
@@ -201,12 +209,36 @@ def _activate_running_instance() -> bool:
     return ok
 
 
+def _set_windows_app_id() -> None:
+    """Claim our own taskbar identity, before any window exists.
+
+    Source runs otherwise inherit python.exe's icon and grouping; the call is
+    Windows-only and harmless everywhere else (and if the shell32 entry point
+    is missing, the app must still start).
+    """
+    if os.name != "nt":
+        return
+    with contextlib.suppress(Exception):
+        import ctypes  # noqa: PLC0415 (Windows-only, and only for the taskbar)
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_APP_ID)
+
+
+def _app_icon() -> QIcon:
+    """The mushroom: assets/fungi.ico — the same art the tray draws itself."""
+    ico = RESOURCE_ROOT / "assets" / "fungi.ico"
+    return QIcon(str(ico)) if ico.is_file() else make_icon()
+
+
 def run_gui() -> int:
     # QT_SCALE_FACTOR grows fonts, widgets and the window together (must be set
     # before QApplication exists); AA_EnableHighDpiScaling lets Qt5 honor it.
     os.environ.setdefault("QT_SCALE_FACTOR", str(GUI_SCALE))
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    _set_windows_app_id()
     app = QApplication(sys.argv)
+    app.setApplicationName("Fungi")
+    app.setWindowIcon(_app_icon())  # window, Alt-Tab and the taskbar button
     # Single instance: a second launcher raises the running window instead
     # (IPC ping). Without the guard, two GUI windows (each able to host a
     # room) could coexist (2026-09-04 real-machine finding; tray-room mode

@@ -247,6 +247,19 @@ class ConfigPage(QWidget):
             self.download_btn.hide()
             return
         marks = " · ".join(f"{name} {'✓' if ok else '✗'}" for name, ok in ready.items())
+        if getattr(sys, "frozen", False):
+            # A frozen exe has no interpreter of its own (vidsense runs as
+            # `sys.executable -m vidsense.cli`, which there is Fungi.exe) and
+            # cannot see a system Python's site-packages either, so installing
+            # anything is a dead end — say so instead of offering the button
+            # (2026-09-11). The rest of Fungi is unaffected.
+            self.video_status.setText(
+                f"{marks}\n本地视频理解只在源码方式下可用（exe 里没有 Python 解释器，"
+                "跑不了 vidsense 子进程）：需要它就用 python start.py 跑源码。"
+            )
+            self.download_btn.setVisible(False)
+            self.download_btn.setEnabled(False)
+            return
         missing = [name for name, ok in ready.items() if not ok]
         healable = [name for name in missing if name in _HEALABLE]
         if missing:

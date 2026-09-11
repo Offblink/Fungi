@@ -41,9 +41,13 @@ jobs:
       # --add-data (assets/ too: the ringtones the GUI's 铃声 setting plays);
       # fungi/config.py resolves user data next to the exe when frozen.
       # Foreign Qt bindings are excluded so hooks never collide.
+      # --icon: the mushroom the tray draws must also live in the exe, or
+      # Explorer and the taskbar fall back to PyInstaller's default icon. The
+      # flag was dropped by accident in 0066456 (2026-09-11, user report).
       - name: Build Windows exe
         run: >
           python -m PyInstaller --noconfirm --noconsole --name Fungi start.py
+          --icon assets/fungi.ico
           --add-data "web;web" --add-data "assets;assets" --add-data "pyproject.toml;."
           --collect-all qfluentwidgets --collect-all vidsense --collect-all segno
           --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6

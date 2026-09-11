@@ -679,6 +679,20 @@ def test_config_page_frozen_exe_falls_back_to_path_python(monkeypatch):
     assert page_gui._python_cmd() == "C:/Python/python.exe"
 
 
+def test_config_page_frozen_exe_points_video_at_the_source_run(window, monkeypatch):
+    """exe 冻结态下本地视频理解根本够不着（没有解释器、也看不见系统依赖）：
+    状态行直接说清楚，别再给那个点了也没用的下载按钮。"""
+    page = window.cfg_page
+    monkeypatch.setattr(gui.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        "fungi.gui.config._video_ready", lambda: _ready(torch=False, CLIP=False)
+    )
+    page._check_video_models()
+
+    assert "python start.py" in page.video_status.text()
+    assert not page.download_btn.isVisibleTo(page)
+
+
 def test_config_page_download_btn_hidden_when_nothing_to_heal(window, monkeypatch):
     """用户定调: 没有可自愈缺失 -> 下载按钮整体隐藏 (不是灰着)。"""
     page = window.cfg_page
