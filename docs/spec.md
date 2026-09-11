@@ -88,7 +88,7 @@ ask 是普通消息，不需要独立协调设施：
 
 ### 6.2 本机 Agent
 
-- 工具：YESIR 原生全套（shell/web/inquire…）+ `delegate(host, goal, reply_format)` + `peers()`。
+- 工具：YESIR 原生全套（shell/web/inquire…，其中 shell 除一次性 `bash` 外还有会话式 `bash_start`/`bash_send`/`bash_kill`，见 §31）+ `delegate(host, goal, reply_format)` + `peers()`。
 - 用户仅与本机 Agent 对话（核心洞见 2）；delegate 内部把 task envelope 发给对应通讯 Agent 并阻塞等 result。
 
 ### 6.3 ask 汇聚
@@ -723,3 +723,60 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
 - 实测：AUMID 读回 `Offblink.Fungi`（hr=0）；app/window 图标非空、64×64（`assets/fungi.ico` 只有一档
   64×64，够用；要更锐的高分屏大图标得再加尺寸）。⚠️ 本机 `QScreen.grabWindow(0)` 抓屏全黑、PIL 抓屏
   跑不起来，**任务栏的视觉确认得在你机器上看一眼**（源码跑一次就能看到；exe 要等下一个 release）。
+
+## 31. 增补（2026-09-11）：会话式 bash（`bash_start`/`bash_send`/`bash_kill`）与「不上 PTY」的裁决
+
+### 31.1 工具语义
+
+- **三个工具**（`fungi/tools/shell.py`，与一次性 `bash` 同文件）：`bash_start(command, cwd, stdin_arg, should_abort)`
+  起一条长驻命令，回 `id=<8hex>` + 首屏（最多等 1.0s）；`stdin_arg="nul"`（默认）时交互程序立刻读 EOF 自退，
+  `"pipe"` 才可喂输入。`bash_send(id, text)` 写一行（`text + "\n"`），返回**自上次读取以来**的全部输出——
+  不是「本次发送之后」：两次调用之间到达的提示符/报错正是要看的东西。`bash_kill(id)` 杀整棵进程树
+  （Windows `taskkill /F /T`，POSIX `killpg`）。
+- **分层**：三件套在 `TOOLS` 里，但**不在** `L3_TOOL_NAMES`——L3 工具子代理只拿一次性 `bash`（REPL 驱动
+  属于用户面 Agent 的能力）。
+- **生命周期**：会话属于发起它的回合。`should_abort` 经 `WeakMethod` 持 `Agent._aborted`，Agent 被 GC 即视为
+  回合结束、会话成孤儿；另有 `BASH_SESSION_IDLE = 600s` 空闲上限与 `/stop`。守护线程 `bash-session-reaper`
+  每 2s 收一次。**已退出**的会话不立刻摘除：缓冲与退出码留着做 post-mortem（`npm create vite` 的失败证据
+  曾被 reaper 在 2s 内抹掉），直到空闲上限。
+- **输出**：两条 daemon 线程各按 `read1(65536)` 喂增量 utf-8 解码器（Windows 管道没有 select），
+  合并后统一走 `_truncate`（8000 字符头尾）。
+
+### 31.2 能力边界：三根管道，不是 PTY
+
+- 能跑：`python -i`、`npm` 一类脚手架提示、dev server / watch——任何「按行读写」的程序。
+- 跑不了：要真 tty 的全屏/ANSI 程序（vim/top/psql）——`isatty()` 为假、无回显、无 terminfo。
+- 与 eval 型内核的区别：没有跨调用的语言状态；`python -i` 的状态活在那个会话进程里，会话一杀就没了。
+
+### 31.3 要不要升级成 ConPTY：2026-09-11 实测后裁决「不做」
+
+用户提问「你觉得有必要完善 pty 吗？」。本机（Win11 + Python 3.13.7 + pywinpty 3.0.5）实测对照，
+同一条 `print(1+1)`：
+
+| | 现状（PIPE） | ConPTY |
+|---|---|---|
+| 起会话首屏 | `>>>`：56 字符 / 0 转义 | 23 字符，全是握手查询 `ESC[1t ESC[c ESC[?1004h ESC[?9001h` |
+| 首行结果 | 6 字符 `2\r\n>>>` | 18,626 字符 / 667 个 ESC |
+| 下一行 | 18 字符 | 175,381 字符 / 6,306 个 ESC |
+| 换行 | `\n` 有效 | **`\n` 无效，必须 `\r`**（CRLF 输出再翻倍） |
+| 输入回显 | 无 | 有，另带 OSC 标题序列 |
+| `getpass` 密码 | 答不进去 | ✅ `pw: ` → `PW=secret123` |
+| 全屏 VT 程序 | 不适用 | 绝对定位重绘流；没有屏幕模型就重建不出画面 |
+
+- **唯一真收益**是 tty-gated 的密码提示（管道喂不进去，ConPTY 可以）。**代价**：现有 `bash_send` 的 `\n`
+  全部失效；输出被重绘流灌满（`_truncate` 前得先 strip ANSI）；固定 2s 的 `SEND_READ_WAIT` 要换成
+  「静默即停」；`.bat` 包装与行纪律要重做；`pywinpty`（cp313 wheel 存在）要进基础依赖并被 PyInstaller
+  收 native 扩展。而按 31.1，`bash_start` 是**唯一**有产线证据的路径，改造风险直接落在它身上。
+- **需求侧证据**：全库 `data/sessions/` 里 `bash_start` 只出现在一个会话（`20260910-090126.json`：
+  1 起 + 8 喂，全是 `python -i -q` 里试 pyfiglet/cowsay），全部管道兼容，**零次因缺 tty 失败**。
+- **结论**：不做。判据＝出现真实需求（要在 Fungi 里回答 ssh/mysql/git 的凭据提示，或驱动 TUI 类程序）
+  再议；且那时的形状是**另开一条通道 + 最小 ANSI 屏幕模型**，不是给现有会话加个 `pty=true` 开关。
+  纯凭据类需求更省的解法是让它非交互（`SSH_ASKPASS` / `credential.helper` / `mysql_config_editor`）。
+
+### 31.4 子进程一律带 `WSL_UTF8=1`（2026-09-11 修）
+
+`wsl.exe` 不管控制台代码页，**自己的输出一律 UTF-16LE**（发行版列表、诊断），于是 `wsl -l -v` 经
+`chcp 65001` 包装回来是 `W\x00S\x00L\x002\x00` 这种乱码。`shell._child_env()` 给所有 bash 子进程注入
+`WSL_UTF8=1`，wsl 改用 UTF-8，与本模块的 utf-8 解码对齐。回归：
+`tests/test_tools.py::test_bash_children_see_utf8_wsl_env`、
+`tests/test_bash_session.py::test_session_children_see_utf8_wsl_env`（改前两条皆红：`Environment variable WSL_UTF8 not defined`）。

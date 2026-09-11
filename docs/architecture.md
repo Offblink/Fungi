@@ -154,6 +154,7 @@ fungi/
     courier.py              # 信使页（长期记忆 + 四周日历）
     config.py  help.py  net.py  trayicon.py  widgets.py  const.py
   tools/                    # 移植自 YESIR + 路径守卫包装（search / webtools / shell / video / mcp / ask）
+                            # shell.py 另有会话式 bash_start/bash_send/bash_kill（spec §31）
 web/                        # 前端在**仓库根**：index/app.js/common.js/style.css/motion.js + m.* 手机端 + vendor/
 vidsense/                   # 视频理解管线（vendored，子进程跑）
 scripts/check.ps1
@@ -166,6 +167,8 @@ tests/
 - hub 线程：ThreadingHTTPServer（仅 server 角色）。
 - 每 Agent 一条 inbox 循环线程：收信 → 起 Agent 回合（per Agent 串行，复用 YESIR `_session_lock` 思路）。
 - 本机 Agent 的 WebUI HTTP 线程：YESIR server 模式，`/chat /answer /stop` 语义保留。
+- 会话 bash（`bash_start`）：每条会话两条 `_pump` 读者线程（Windows 管道没有 select）+ 一条全局
+  `bash-session-reaper`（每 2s 收孤儿/空闲会话；已退出的会话留到空闲上限，保住 post-mortem 证据，spec §31）。
 
 Qt 与后台线程交互经信号桥（洞见 `_Bridge` 同构，queued 连接）。关闭顺序：托盘退出 → 停 inbox → 停 hub → flush → join 全部线程。
 
