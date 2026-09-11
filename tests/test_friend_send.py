@@ -65,6 +65,7 @@ def _room(tmp_path):
     room._live_tapes = {}
     room._live_lock = threading.Lock()
     room._direct_transfers = {}
+    room.xfer_jobs = room_mod.TransferJobs()
     room.rules = _Rules()
     return room
 
@@ -95,7 +96,7 @@ def test_comm_send_human_transfer_stages_and_sends(tmp_path):
     transport = _wire_clone(room)
     src = tmp_path / "plan.txt"
     src.write_text("hello")
-    transport.upload_transfer = lambda path, name, to_host: {
+    transport.upload_transfer = lambda path, name, to_host, progress=None: {
         "id": "t9", "name": name, "size": src.stat().st_size
     }
     out = room.comm_send_human("bob", file_path=str(src))
@@ -499,3 +500,92 @@ def test_room_stop_actually_stops_comm_clones(tmp_path):
     room.stop()
     assert stopped == ["stopped"]
     assert room._clones == {}
+
+
+def test_a_card_answer_carries_its_question_back_to_the_courier(tmp_path):
+    """信使的 inquire 不阻塞，答复晚于那一轮才到：问题要跟着答复回去，
+    否则信使只看到一句「周六有空」而不知道在答什么（RoomBase._send_answer）。"""
+    room = _room(tmp_path)
+    transport = _wire_clone(room)
+    room._local = _FakeClone("alice:local", transport)
+    ask = Envelope(
+        src="alice:comm-bob",
+        dst="alice:local",
+        type="ask",
+        body={
+            "from": "alice:comm-bob",
+            "questions": [{"question": "周六见面吗？", "options": [], "allow_custom": True}],
+        },
+    )
+    room._send_answer(ask, "周六有空")
+    (env,) = transport.sent
+    assert env.type == "answer" and env.dst == "alice:comm-bob"
+    assert env.body["value"] == "周六有空"
+    assert env.body["questions"][0]["question"] == "周六见面吗？"
+
+
+def test_a_consent_verdict_stays_a_bare_value(tmp_path):
+    """同意类的答复（confirm/收文件）不带上问题：它对应的是一个还在等的工具，
+    迟到的裁决不该被当成一轮新对话（见 Clone._answer_turn）。"""
+    room = _room(tmp_path)
+    transport = _wire_clone(room)
+    room._local = _FakeClone("alice:local", transport)
+    ask = Envelope(
+        src="alice:comm-bob",
+        dst="alice:local",
+        type="ask",
+        body={
+            "from": "alice:comm-bob",
+            "action": "write",
+            "path": "homes/alice/x.md",
+            "question": "Allow write?",
+        },
+    )
+    room._send_answer(ask, "yes")
+    (env,) = transport.sent
+    assert env.body == {"value": "yes"}
+
+
+def test_comm_send_human_reports_the_hub_upload_into_the_job(tmp_path):
+    """发文件时浏览器自己造的 job id 拿到真实的字节进度：桌面端和手机端用同一个
+    进度条，而字节只在服务器上流动（见 fungi/xfer.py）。"""
+    room = _room(tmp_path)
+    transport = _wire_clone(room)
+    src = tmp_path / "big.bin"
+    src.write_bytes(b"x" * 10)
+    seen: list[tuple] = []
+
+    def fake_upload(path, name, to_host, progress=None):
+        seen.append((path, name, to_host))
+        if progress is not None:
+            progress(4, 10)
+        return {"id": "t9", "name": name, "size": 10}
+
+    transport.upload_transfer = fake_upload
+    out = room.comm_send_human("bob", file_path=str(src), job="job-1")
+    assert out == {"ok": True, "kind": "transfer", "name": "big.bin"}
+    assert seen == [(str(src), "big.bin", "bob")]
+    job = room.xfer_jobs.get("job-1")
+    assert job["state"] == "done"
+    assert job["done"] == job["total"] == 10
+    assert job["name"] == "big.bin"
+
+
+def test_a_failed_upload_marks_the_job(tmp_path):
+    """上传失败要落在 job 上：进度条不能停在半路假装还在传。"""
+    room = _room(tmp_path)
+    transport = _wire_clone(room)
+    src = tmp_path / "x.bin"
+    src.write_bytes(b"x")
+    transport.upload_transfer = lambda path, name, to_host, progress=None: {
+        "error": "hub is down"
+    }
+    out = room.comm_send_human("bob", file_path=str(src), job="job-2")
+    assert out == {"error": "hub is down"}
+    job = room.xfer_jobs.get("job-2")
+    assert job["state"] == "error" and "hub is down" in job["error"]
+
+
+def test_transfer_progress_for_an_unknown_job_is_an_error(tmp_path):
+    room = _room(tmp_path)
+    assert "error" in room.xfer_jobs.get("nope")

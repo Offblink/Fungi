@@ -11,7 +11,7 @@
   /* Build marker: bump per web/ change so any WebUI instance can self-identify
      (console + window.__FUNGI_WEB_VER) — stale cache vs new server is otherwise
      indistinguishable from the outside. */
-  window.__FUNGI_WEB_VER = 'web-friend-timeline';
+  window.__FUNGI_WEB_VER = 'web-transfer-progress';
   try { console.info('[fungi-web]', window.__FUNGI_WEB_VER); } catch (e) {}
   /* ---------- http ---------- */
   /* One fetch wrapper. Mobile inits a token prefix + 403 hook; desktop inits
@@ -109,6 +109,181 @@
     } else {
       overlay.addEventListener('click', e => { if (e.target.id === 'confirm-overlay') closeConfirm(false); });
     }
+  }
+
+  /* ---------- send-file progress modal (基建) ----------
+     One modal for every file the user sends. The page never sees the bytes:
+     the browser mints a job id, hands it to POST /comm-send, and polls
+     /transfer-progress while the SERVER moves the upload to the hub
+     (fungi/xfer.py). The phone has one hop more — the browser's own push to
+     this host — which XHR measures client-side, so it gets a step of its own.
+     Both shells pass their step labels; every step shows its own bar + note.
+     A shell without the modal markup still sends — the flows just skip the
+     card (open() returns false and they fall back to the bare request). */
+  function initTransfer(opts) {
+    opts = opts || {};
+    const http = opts.http || {};
+    const MB = 1024 * 1024;
+    let steps = [];
+    let autoClose = null;
+
+    function human(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < MB) return (n / 1024).toFixed(1) + ' KB';
+      return (n / MB).toFixed(1) + ' MB';
+    }
+    function row(label) {
+      const el = document.createElement('div');
+      el.className = 'xf-step';
+      el.innerHTML = '<div class="xf-lab"></div><div class="xf-bar"><i></i></div><div class="xf-note"></div>';
+      el.querySelector('.xf-lab').textContent = label;
+      return { el, bar: el.querySelector('.xf-bar > i'), note: el.querySelector('.xf-note') };
+    }
+    function open(title, labels) {
+      const overlay = document.getElementById('xfer-overlay');
+      if (!overlay) return false;
+      if (autoClose) { clearTimeout(autoClose); autoClose = null; }
+      document.getElementById('xfer-title').textContent = title;
+      const box = document.getElementById('xfer-steps');
+      box.innerHTML = '';
+      steps = labels.map(label => {
+        const s = row(label);
+        s.note.textContent = '等待…';
+        box.appendChild(s.el);
+        return s;
+      });
+      overlay.classList.add('show');
+      return true;
+    }
+    function progress(i, done, total) {
+      const s = steps[i];
+      if (!s) return;
+      const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      s.bar.style.width = pct + '%';
+      s.note.textContent = total ? human(done) + ' / ' + human(total) + ' · ' + pct + '%' : human(done);
+    }
+    function note(i, text) {
+      const s = steps[i];
+      if (s) s.note.textContent = text;
+    }
+    function finish(text) {
+      // every hop is through by the time a flow finishes: close them all, and
+      // say the last word on the last one
+      steps.forEach((s, i) => {
+        s.bar.style.width = '100%';
+        s.el.classList.add('done');
+        if (i === steps.length - 1) s.note.textContent = text || '完成';
+      });
+      autoClose = setTimeout(close, 900); // 完成后自动关闭
+    }
+    function fail(text, at) {
+      const s = steps[at === undefined ? steps.length - 1 : at];
+      if (s) {
+        s.note.textContent = text || '失败';
+        s.el.classList.add('failed');
+      }
+    }
+    function close() {
+      if (autoClose) { clearTimeout(autoClose); autoClose = null; }
+      const overlay = document.getElementById('xfer-overlay');
+      if (overlay) overlay.classList.remove('show');
+    }
+    document.getElementById('xfer-close')?.addEventListener('click', close);
+
+    /* hop 1 (phone): push the picked file to this host's inbox over XHR, whose
+       upload events are the only place those bytes are countable. */
+    function upload(file, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url('/upload'));
+        if (xhr.upload) {
+          xhr.upload.onprogress = e => {
+            if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total);
+          };
+        }
+        xhr.onload = () => {
+          if (xhr.status === 403) {
+            if (_onUnauthorized) _onUnauthorized();
+            reject(new Error('unauthorized'));
+            return;
+          }
+          let d = {};
+          try { d = JSON.parse(xhr.responseText || '{}'); } catch (e) {}
+          if (xhr.status === 200 && d.path) resolve(d.path);
+          else reject(new Error(d.error || ('upload failed: HTTP ' + xhr.status)));
+        };
+        xhr.onerror = () => reject(new Error('upload failed'));
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        xhr.send(fd);
+      });
+    }
+
+    /* hop 2 (both): this host's copy goes out to the peer through the hub.
+       The POST answers only when the upload is done, so polling it is what
+       feeds the bar; the job record is authoritative once the reply lands.
+       The pump is never cancelled from outside — the reply sets `settled` and
+       the pump's own next tick ends it (clearing its timer would leave the
+       promise with nothing to wake it, and the modal would never close). */
+    function sendToPeer(host, path, onProgress) {
+      const job = 'j-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      // the job id on the element: the one handle onto the server-side record,
+      // for a console and for the browser tests to read back
+      const overlay = document.getElementById('xfer-overlay');
+      if (overlay) overlay.dataset.job = job;
+      let settled = false;
+      const watch = new Promise(resolve => {
+        const poll = () => {
+          if (settled) return resolve(null);
+          http.fetchJSON('/transfer-progress?id=' + encodeURIComponent(job))
+            .then(r => r.json())
+            .then(j => {
+              if (j.state === 'done' || j.state === 'error') return resolve(j);
+              if (j.done && onProgress) onProgress(j.done, j.total);
+              setTimeout(poll, 200);
+            })
+            .catch(() => { setTimeout(poll, 400); });
+        };
+        poll();
+      });
+      return http.postJSON('/comm-send', { host: host, file: path, job: job })
+        .then(r => r.json())
+        .then(
+          d => {
+            settled = true;
+            if (d.error) throw new Error(d.error);
+            return watch.then(() => d);
+          },
+          e => { settled = true; throw e; }  // a dead request must stop the pump too
+        );
+    }
+
+    /* the three flows the shells use */
+    function sendOne(title, host, path) {
+      if (!open(title, ['发送给对方'])) return sendToPeer(host, path, null);
+      note(0, '正在发送…');
+      return sendToPeer(host, path, (done, total) => progress(0, done, total)).then(d => {
+        finish('已发出，等待对方接收');
+        return d;
+      }).catch(e => { fail(e.message || String(e)); throw e; });
+    }
+    function sendFromPhone(title, host, file) {
+      if (!open(title, ['① 上传到电脑', '② 由电脑发送给对方'])) {
+        return upload(file, null).then(path => sendToPeer(host, path, null));
+      }
+      note(0, '正在上传…');
+      return upload(file, (done, total) => progress(0, done, total))
+        .then(path => {
+          progress(0, file.size, file.size);  // ① done, with the file's real bytes
+          note(1, '电脑已收到，正在送往对方…');
+          return sendToPeer(host, path, (done, total) => progress(1, done, total));
+        })
+        .then(d => { finish('已发出，等待对方接收'); return d; })
+        .catch(e => { fail(e.message || String(e)); throw e; });
+    }
+
+    return { open, close, finish, fail, progress, note, upload, sendToPeer, sendOne, sendFromPhone };
   }
 
   /* ---------- tool card rendering ----------
@@ -833,6 +1008,7 @@
     initHttp, url, fetchJSON, postJSON,
     escapeHtml, fmtDate, getSessionTitle,
     initConfirmModal, showConfirm, closeConfirm,
+    initTransfer,
     buildToolCard, fillToolResult, attachSpawnClick,
     initAsks, initPendingAsks, initMailUnread,
     initPane, stripSilent, humanEcho,

@@ -41,6 +41,7 @@ from .server import _BG_ABORTS, _PENDING_SPAWNS, WebUIRuntime, make_webui_server
 from .session import SESSIONS_DIR, SessionStore
 from .tools.ask import make_ask_tool, resolve_ask
 from .trilayer import TriLayer
+from .xfer import TransferJobs
 
 MONITOR_INTERVAL_S = 2.0
 HEARTBEAT_INTERVAL_S = 10.0
@@ -244,6 +245,11 @@ class RoomBase:
         # Courier mail wake (see _mail_watch_loop): started lazily with the
         # first comm clone.
         self._mail_thread: threading.Thread | None = None
+        # Unread mail from the last mailbox poll (see _mail_watch_loop): the GUI
+        # rings on it. One poller, two consumers — the GUI never asks the hub.
+        self.last_unread = 0
+        # Send-file jobs the WebUI's modal polls (see fungi/xfer.py).
+        self.xfer_jobs = TransferJobs()
         self._direct_transfers: dict[str, tuple] = {}
         # Per-sid write lock for comm transcripts: the clone worker (turn
         # end), the clone poll loop (courier-off direct) and WebUI HTTP
@@ -459,12 +465,21 @@ class RoomBase:
                 )
             )
             return
+        body: dict = {"value": value}
+        questions = ask.body.get("questions")
+        if isinstance(questions, list) and questions:
+            # The courier's inquire does not block, so this answer arrives after
+            # the turn that asked it: the raising clone turns it into a fresh
+            # turn of its own and needs the question to make it readable
+            # (_qa_lines). A consent verdict carries `question`, never
+            # `questions`, so it is never turned into a turn.
+            body["questions"] = questions
         self.local.transport.send(
             Envelope(
                 src=self.local_addr,
                 dst=ask.src,
                 type="answer",
-                body={"value": value},
+                body=body,
                 reply_to=ask.id,
             )
         )
@@ -582,6 +597,7 @@ class RoomBase:
                     self._stop.wait(1.0)
                     continue
                 seen = {str(m.get("id")) for m in data.get("mails") or []}
+                self.last_unread = int(data.get("unread") or 0)
             else:
                 self._mail_poll_once(seen)
             self._stop.wait(self.MAIL_POLL_S)
@@ -592,6 +608,7 @@ class RoomBase:
         except Exception:
             return
         rows = [m for m in (data.get("mails") or []) if not m.get("mine")]
+        self.last_unread = int(data.get("unread") or 0)
         fresh = [m for m in rows if str(m.get("id")) not in seen]
         for m in fresh:
             seen.add(str(m.get("id")))
@@ -617,12 +634,33 @@ class RoomBase:
                 )
             )
 
+    def _xfer_progress(self, job: str | None):
+        """Progress sink for a send-file job, or None when nobody polls it."""
+        if not job:
+            return None
+
+        def report(done: int, _total: int) -> None:
+            self.xfer_jobs.progress(job, done)
+
+        return report
+
     # ── human direct sends (friend view composer) ──
-    def comm_send_human(self, peer: str, text: str | None = None, file_path: str | None = None) -> dict:
+    def comm_send_human(
+        self,
+        peer: str,
+        text: str | None = None,
+        file_path: str | None = None,
+        job: str | None = None,
+    ) -> dict:
         """Human sends a message/file straight from the friend view. Text
         goes into the unified amail store (both mailboxes, zero agent
         involvement); files stage on the hub and the PEER's consent flow
-        decides landing."""
+        decides landing.
+
+        `job` is the caller's own id for the send-file modal: the bytes to the
+        hub are counted into it here (see fungi/xfer.py), and the reply keeps
+        the same shape with or without one.
+        """
         with self._guard:
             clone = self._clones.get(peer)
         if clone is None:
@@ -633,8 +671,13 @@ class RoomBase:
             if not path.is_file():
                 return {"error": f"no such file: {file_path}"}
             name = path.name
-            staged = clone.transport.upload_transfer(str(path), name, peer)
+            if job:
+                self.xfer_jobs.start(job, name, path.stat().st_size)
+            staged = clone.transport.upload_transfer(
+                str(path), name, peer, self._xfer_progress(job)
+            )
             if staged.get("error"):
+                self.xfer_jobs.fail(job or "", str(staged["error"]))
                 return staged
             env = Envelope(
                 src=clone.addr,
@@ -653,6 +696,7 @@ class RoomBase:
             # Fire-and-forget: the peer's answer resolves on their side; no
             # local agent is waiting on this transfer.
             clone.transport.send(env)
+            self.xfer_jobs.finish(job or "")
             return {"ok": True, "kind": "transfer", "name": name}
         text = (text or "").strip()
         if not text:
@@ -1197,13 +1241,21 @@ class RoomRuntime(WebUIRuntime):
 
     def comm_send(self, data: dict) -> dict:
         """Human direct-send from the friend view composer (see
-        RoomBase.comm_send_human)."""
+        RoomBase.comm_send_human). `job` is the send-file modal's own id: the
+        upload's byte count lands in it for the modal to poll."""
         host = str(data.get("host") or "").strip()
         if not host:
             return {"error": "host required"}
         return self.room.comm_send_human(
-            host, text=data.get("text"), file_path=data.get("file")
+            host,
+            text=data.get("text"),
+            file_path=data.get("file"),
+            job=str(data.get("job") or "") or None,
         )
+
+    def transfer_progress(self, job_id: str) -> dict:
+        """Send-file modal poll: the job the browser minted for its own send."""
+        return self.room.xfer_jobs.get(job_id)
 
     def comm_note(self, data: dict) -> dict:
         """Feedback on a courier report, from the friend view's feedback box:

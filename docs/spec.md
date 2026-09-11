@@ -501,3 +501,78 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   `test_an_empty_note_never_wakes_the_courier`；
   `tests/test_webui_friend.py::test_every_report_row_offers_feedback_for_our_courier_only`
   （真浏览器：空框不发、填了才发、转录里出现主人的行）。
+
+## 25. 增补（2026-09-11）：信使不再被提问卡住；来信的铃声与闪动；发文件的进度条
+
+### 25.1 信使的 `inquire` 不再阻塞（否则它会替对面闭嘴 30 分钟）
+
+用户提问：「目前的 inquire 是阻塞的吗？如果是的话，一旦用户没有及时回复 inquire，那信使是不是
+就卡死不动，对面来信也不动了？这可不行。」
+
+- **事实确认**：是阻塞的。`CommTools.inquire` → `_blocking_ask` → `PendingAsks.wait(timeout_s=1800)`，
+  而一个 clone **只有一条 worker 线程**（`Clone._work` 队列 + `_work_loop`）：问题没人答，工人的这一轮
+  就停在 `Event.wait` 上，最长 30 分钟。期间轮询线程照旧收信，但**对面每一条 chat 都排在队列里不动**
+  （它还会连带卡住 `send_peer`，因为网络通道也长在同一个 worker 上）。
+- **新语义**：信使的提问只发信封、立刻返回（工具结果 `ASKED (not blocking)…`），卡片照旧等人。
+  主人答复后 `RoomBase._send_answer` **把 `questions` 一起带回**（同意类裁决没有 `questions`，只有
+  `question`），`Clone.dispatch` 发现**没人在 wait**（`pending.resolve()` 返回 False）时走
+  `Clone._answer_turn`：把答复变成**一轮新的 chat**，渲染成 `[主人的答复] 问: … 答: …`。
+  问题必须跟着答复走——那一轮的 tool 调用不在 clone 的 history 里（history 只存对话文本），
+  只给一句「周六有空」信使不知道在答什么。
+- **边界**：`confirm` / `send_file` / `receive_transfer` 的等待**保持阻塞**。它们的返回值就是裁决本身，
+  工具要在这一轮里拿到答案才能继续；`_answer_turn` 只认 `questions`，所以迟到的同意裁决**不会**
+  被误当成一轮对话（回归在 `test_friend_send.py::test_a_consent_verdict_stays_a_bare_value`）。
+- **为什么不是复用 `background`**：`TriLayer.build_clone_agent` 的 docstring 已经写明
+  「a clone has no re-activation channel … its background reports had nowhere to land」，comm clone 走
+  `subagents=False`（连 spawn/background 都没有）；而 background 的复活链路是 **WebUI 会话级**的
+  （`server.py::_PENDING_SPAWNS` + 浏览器 `/spawn-pending` → `/resume`），信使既没有会话 id 也没有浏览器。
+  这一次补的正是 clone 侧的复活通道——**答复信封自己就是唤醒**，与上一轮的「反馈框」（`Clone.note`）
+  同一条路：不过 transport、直接进 worker 队列。
+- prompt 与 schema 同步（`COMM_SYSTEM_PROMPT` 的 inquire 一条 + `_SCHEMA_INQUIRE`）：
+  「不阻塞、答复晚些作为 `[主人的答复]` 到达、别等、别再问第二遍」。
+- 回归：`tests/test_comm_clone.py::test_inquire_never_blocks_the_courier_and_the_answer_arrives_as_a_turn`
+  （一轮提问未答 → 这一轮照常收尾 → 期间对面的 chat 被照常服务并回话 → 答复到达后再起一轮，
+  且带问题原文）、`test_an_answer_without_questions_is_not_a_turn`。
+
+### 25.2 来信提醒：托盘图标闪动 + 铃声（可关）
+
+用户要求：「对于来信，当用户不在好友视图时（和显示未读一个判断条件），需要响铃和托盘图标闪动。」
+
+- **条件与未读徽标同源**：房间自己的邮箱轮询把 `unread` 记在 `RoomBase.last_unread`
+  （`_mail_watch_loop` / `_mail_poll_once`），GUI 每秒读它——不额外打一份到 hub。
+  WebUI 里「点开好友视图即整线标已读」，那正是停铃的开关（与 `initMailUnread` 的 `byPeer` 同一个字段）。
+- **宽限期 10 秒**（`fungi/gui/app.py::RING_GRACE_S`）：好友视图要 ~8 秒才把这一条标成已读
+  （5s `/comm-log` 轮询 + 3s 邮箱轮询），立刻响铃就会为「你正看着的那条」响。闪动**不等**宽限
+  ——它就是未读提示本身，误报的代价只是一枚图标。
+- **铃声资产**：`assets/ringtones/*.wav`（7 个：叮咚/风铃/蜂鸣/警示/通知/钢琴/合成器），
+  由 `scripts/make_ringtones.py` 按用户 Get It 应用的合成配方生成（44.1kHz 单声道，仓库里不带 numpy）。
+  播放是 QtMultimedia 的 `QSoundEffect` 循环；缺多媒体插件退 `winsound`；都没有就静音——
+  没有声卡不能拖垮 GUI。exe 打包加了 `--add-data "assets;assets"`。
+- **设置页「来信提醒」**：铃声开关（默认开，写 `config.ring`）+ 铃声选择下拉（换一个即保存并试听一次）。
+  **关掉不显示铃声选择**（用户明确要求），未读的图标闪动照旧。
+- **托盘**：未读时图标在两版之间闪（`tray.make_icon(badge=True)` 的红点版），菜单只在响铃时多出
+  「停止铃声」——停的是这一条的铃，闪动留着；未读清零后重新武装，下一条照响。
+- 回归：`tests/test_gui.py` 的四条（宽限期、关铃仍闪、停止铃声只停这一条、开关收起下拉）
+  + `test_tray_icon_flashes_and_offers_to_stop_the_ring`。
+
+### 25.3 发文件的进度条（模态，完成自动关闭；手机两步）
+
+用户要求：「对于文件传输，我希望添加进度条。进度条本身是模态框（风格一致），进度完成后自动关闭。
+手机端的上传文件需要多一步——首先上传到服务器端，再从服务器上传到目标主机。对于不同的进行步骤，
+进度条应进行说明。」
+
+- **字节只在服务器上流动**（页面看不到它们），所以进度只能由服务器数：**浏览器自己铸一个 job id**
+  → `POST /comm-send {host, file, job}` → `GET /transfer-progress?id=` 轮询 →
+  `fungi/xfer.py::TransferJobs`（`running` / `done` / `error`，跑完 300 秒后清）。
+  不带 `job` 的调用（测试、命令行、旧页面）**行为与返回体完全不变**（`{ok, kind, name}`）。
+- **进度钩子**：`upload_transfer(path, name, to_host, progress=)` 从 room 穿到
+  `HubClient`（256 KiB 一块地数）与 `LocalTransport`（`read` 闭包，同一根进度条）。
+- **手机多一跳，就多一条进度**：① 浏览器 → 电脑（XHR 的 `upload.onprogress`，只有客户端能测）
+  ② 电脑 → 对方（服务器的 job）。手机聊天框的文件上传也走同一个模态（单步）。
+  桌面发文件是单步——文件本来就在这台电脑上。
+- **模态**（`web/common.js::initTransfer`，桌面与手机共用；`#xfer-overlay` + `.xf-step`）：
+  每一跳一行「标签 + 进度条 + 字节/百分比说明」，完成时全行 100% 并标绿，等 900ms 自动关闭；
+  失败则把原因写在那一行并**留在屏幕上**（关掉它不会取消传输：按钮只是收起卡片）。
+  job id 存在 `#xfer-overlay.dataset.job` 上（控制台与浏览器测试的唯一把手）。
+- 回归：`tests/test_webui_transfer.py`（真浏览器 4 条：条与说明的渲染、桌面上传全流程并落在 hub、
+  手机两跳并把文件落进 inbox、失败留在屏幕上）+ `tests/test_friend_send.py` 的 job 状态两条。

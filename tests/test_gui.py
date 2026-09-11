@@ -1027,3 +1027,145 @@ def test_join_page_rejected_token_is_rolled_back(window):
     assert page.token_edit.text() == "tok-old"
     assert page._joined_token == "tok-old"
     page.room = None
+
+
+# ── 来信提醒：铃声 + 托盘闪动 ──
+
+
+class _UnreadRoom:
+    """A stand-in room: the GUI reads exactly one field off it (last_unread)."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+        self.last_unread = 0
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class _RecordingRinger:
+    def __init__(self) -> None:
+        self.played: list[str] = []
+        self.ringing = False
+
+    def start(self, tone: str) -> None:
+        self.played.append(tone)
+        self.ringing = True
+
+    def preview(self, tone: str) -> None:
+        self.played.append("preview:" + tone)
+
+    def stop(self) -> None:
+        self.ringing = False
+
+
+@pytest.fixture()
+def ringing(window, monkeypatch):
+    """A room with a driven unread count, and the ring isolated (no audio in a
+    test run). Torn down so later tests see neither a room nor a tray."""
+    cfg = gui.load_config()
+    cfg.ring, cfg.ring_tone = True, "alert"
+    gui.save_config(cfg)
+    room, ringer = _UnreadRoom(), _RecordingRinger()
+    monkeypatch.setattr(window, "_ringer", ringer)
+    window.host_page.room = room
+    window.update_tray()
+    try:
+        yield room, ringer
+    finally:
+        room.last_unread = 0
+        window._poll_unread()
+        window.host_page.room = None
+        window.update_tray()
+
+
+def test_unread_flashes_at_once_and_rings_after_the_grace(window, ringing):
+    """未读即闪，铃声等一个宽限期：好友视图要 ~8 秒才把这一条标成已读
+    （5s /comm-log 轮询 + 3s 邮箱轮询），没有宽限期就会为「你正看着的那条」响铃。"""
+    room, ringer = ringing
+    window._poll_unread()
+    assert window._tray._alerting is False and ringer.played == []
+
+    room.last_unread = 2
+    window._poll_unread()
+    assert window._tray._alerting is True  # 未读立刻闪
+    assert ringer.played == []             # 铃声还没到
+
+    window._unread_since -= gui.app.RING_GRACE_S + 1
+    window._poll_unread()
+    assert ringer.played == ["alert"]
+
+    room.last_unread = 0
+    window._poll_unread()
+    assert window._tray._alerting is False
+    assert ringer.ringing is False
+
+
+def test_ring_off_still_flashes_the_tray(window, ringing):
+    """关掉铃声只是不响：未读的视觉提示照样在。"""
+    room, ringer = ringing
+    cfg = gui.load_config()
+    cfg.ring = False
+    gui.save_config(cfg)
+
+    room.last_unread = 1
+    window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
+    window._poll_unread()
+    assert window._tray._alerting is True
+    assert ringer.played == []
+
+
+def test_stop_ring_silences_this_message_only(window, ringing):
+    """托盘「停止铃声」：这一条不响，下一条照响；闪动留着（它才是未读提示）。"""
+    room, ringer = ringing
+    room.last_unread = 1
+    window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
+    window._poll_unread()
+    assert ringer.ringing is True and window._tray._stop_ring.isVisible()
+
+    window.stop_ring()
+    assert ringer.ringing is False
+    window._poll_unread()
+    assert ringer.ringing is False          # silenced, not re-armed
+    assert window._tray._alerting is True   # the unread flash stays
+
+    room.last_unread = 0
+    window._poll_unread()
+    assert window._tray._alerting is False and not window._tray._stop_ring.isVisible()
+
+    room.last_unread = 1
+    window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
+    window._poll_unread()
+    assert ringer.ringing is True           # a new message rings again
+
+
+def test_ring_switch_hides_the_tone_picker_and_the_choice_is_saved(window, monkeypatch):
+    """设置页：关掉就不显示铃声选择；换一个音色即时保存并试听一次。"""
+    page = window.cfg_page
+    page.ring_switch.setChecked(False)
+    assert page.tone_row.isHidden()
+    assert gui.load_config().ring is False
+
+    page.ring_switch.setChecked(True)
+    assert not page.tone_row.isHidden()
+
+    preview = _RecordingRinger()
+    monkeypatch.setattr(page, "_preview", preview)
+    page.tone_combo.setCurrentIndex(3)
+    assert gui.load_config().ring_tone == gui.TONE_IDS[3]
+    assert preview.played == ["preview:" + gui.TONE_IDS[3]]
+
+
+def test_tray_icon_flashes_and_offers_to_stop_the_ring(window, ringing):
+    """闪动本身：图标在两版之间换，菜单里只在响铃时给出「停止铃声」。"""
+    tray = window._tray
+    tray.set_alert(True)
+    first = tray.icon().pixmap(64, 64).toImage()
+    tray._flash_tick()
+    second = tray.icon().pixmap(64, 64).toImage()
+    assert first != second
+    assert tray._stop_ring.isVisible()
+    assert "未读" in tray.toolTip()
+    tray.set_alert(False)
+    assert not tray._stop_ring.isVisible()
+    assert tray.toolTip() == "Fungi"

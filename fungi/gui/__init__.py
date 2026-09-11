@@ -47,6 +47,7 @@ from .net import (
     start_client_room,
     start_server_room,
 )
+from .ring import TONE_IDS, TONE_LABELS, TONES, Ringer, tone_path
 from .trayicon import _Tray
 from .widgets import _copy, _copy_button, _row
 
@@ -59,6 +60,9 @@ __all__ = [
     "SETTINGS_APP",
     "SETTINGS_ORG",
     "SWEEP_TIMEOUT",
+    "TONES",
+    "TONE_IDS",
+    "TONE_LABELS",
     "_ACCENT",
     "_ACCENT_GUI",
     "_GUI_IPC",
@@ -70,6 +74,7 @@ __all__ = [
     "HostPage",
     "JoinPage",
     "MobilePage",
+    "Ringer",
     "_DayDialog",
     "_Tray",
     "_activate_running_instance",
@@ -96,6 +101,7 @@ __all__ = [
     "subprocess",
     "sys",
     "todos",
+    "tone_path",
     "update",
     "valid_host_name",
 ]

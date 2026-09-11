@@ -46,7 +46,9 @@ working on. Do not rummage through your host's files for clues about a task nobo
 build a plan on a document you merely stumbled across — if you cannot find out who asked for something, \
 say exactly that.
 - Use inquire only when your own host's user must decide something — never to confirm a plan you \
-invented.
+invented. It does not block you: the question goes to their card and their answer comes back later \
+as a [主人的答复] message on a turn of its own (with the question attached). Do not wait for it, do \
+not ask it again, and keep serving your counterpart in the meantime.
 - When given a [TASK], do exactly what the goal says and answer strictly in the reply format; report \
 failure as specified instead of improvising.
 """

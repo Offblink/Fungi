@@ -38,12 +38,13 @@ jobs:
           git archive --format=zip --prefix="fungi-${GITHUB_REF_NAME#v}/" -o "$name" HEAD
           echo "ARCHIVE=$name" >> "$GITHUB_ENV"
       # GUI exe (PyInstaller, onedir): web/ static assets ride along via
-      # --add-data; fungi/config.py resolves user data next to the exe when
-      # frozen. Foreign Qt bindings are excluded so hooks never collide.
+      # --add-data (assets/ too: the ringtones the GUI's 铃声 setting plays);
+      # fungi/config.py resolves user data next to the exe when frozen.
+      # Foreign Qt bindings are excluded so hooks never collide.
       - name: Build Windows exe
         run: >
           python -m PyInstaller --noconfirm --noconsole --name Fungi start.py
-          --add-data "web;web" --add-data "pyproject.toml;."
+          --add-data "web;web" --add-data "assets;assets" --add-data "pyproject.toml;."
           --collect-all qfluentwidgets --collect-all vidsense --collect-all segno
           --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6
           --exclude-module shiboken2 --exclude-module shiboken6

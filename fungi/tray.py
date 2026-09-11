@@ -14,10 +14,14 @@ from PyQt5.QtWidgets import QApplication, QSystemTrayIcon
 from qfluentwidgets import Action, MenuAnimationType, SystemTrayMenu
 
 _ACCENT = "#e07a5f"
+_ALERT = "#e5484d"
 
 
-def make_icon(size: int = 64) -> QIcon:
-    """运行时绘制蘑菇图标（菌盖 + 菌柄 + 斑点），避免二进制资源文件。"""
+def make_icon(size: int = 64, badge: bool = False) -> QIcon:
+    """运行时绘制蘑菇图标（菌盖 + 菌柄 + 斑点），避免二进制资源文件。
+
+    badge=True 在右上角加一枚红点：来信未读时托盘图标在两版之间闪动。
+    """
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
@@ -44,6 +48,12 @@ def make_icon(size: int = 64) -> QIcon:
         painter.drawEllipse(
             int(size * (cx - r)), int(size * (cy - r)), int(size * r * 2), int(size * r * 2)
         )
+    if badge:
+        # unread dot, top-right: white rim first so it reads on any taskbar
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(int(size * 0.60), int(size * 0.02), int(size * 0.38), int(size * 0.38))
+        painter.setBrush(QColor(_ALERT))
+        painter.drawEllipse(int(size * 0.64), int(size * 0.06), int(size * 0.30), int(size * 0.30))
     painter.end()
     return QIcon(pixmap)
 

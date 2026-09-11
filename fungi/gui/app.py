@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 from PyQt5.QtCore import QSharedMemory, Qt, QTimer
 from PyQt5.QtNetwork import QLocalServer, QLocalSocket
@@ -15,6 +16,8 @@ from qfluentwidgets import (
     FluentWindow,
 )
 
+from .. import config as config_mod
+from . import ring
 from .config import ConfigPage
 from .const import GUI_SCALE
 from .courier import CourierPage
@@ -25,6 +28,12 @@ from .mobile import MobilePage
 from .trayicon import _Tray
 
 _GUI_IPC = "FungiGuiIPC"  # named pipe: second launch -> running window shows itself
+UNREAD_POLL_MS = 1000
+# Ring only after unread mail has stayed unread this long. The friend view needs
+# up to ~8 s to mark a thread read (its /comm-log poll is 5 s, the room's mailbox
+# poll 3 s), so ringing at once would ring for a message the user is already
+# looking at. The tray flash takes no grace: it is the unread indicator itself.
+RING_GRACE_S = 10.0
 
 
 class FungiGui(FluentWindow):
@@ -46,6 +55,15 @@ class FungiGui(FluentWindow):
         self.addSubInterface(self.help_page, FluentIcon.INFO, "帮助")
         self.resize(840, 540)  # compact default; pages scroll instead of stretching it
         self._tray: _Tray | None = None
+        # 来信提醒：未读留言的托盘闪动 + 铃声（见 _poll_unread）。读的是房间自己
+        # 的邮箱轮询结果，GUI 不再打一份到 hub。
+        self._ringer = ring.Ringer()
+        self._unread_since: float | None = None
+        self._silenced = False  # 托盘「停止铃声」：这一条不响，下一条照响
+        self._unread_timer = QTimer(self)
+        self._unread_timer.setInterval(UNREAD_POLL_MS)
+        self._unread_timer.timeout.connect(self._poll_unread)
+        self._unread_timer.start()
         # single-instance IPC: a second launch asks this window to show itself
         QLocalServer.removeServer(_GUI_IPC)  # stale pipe from a hard crash
         self._ipc_server = QLocalServer(self)
@@ -80,6 +98,54 @@ class FungiGui(FluentWindow):
         elif self._tray is not None:
             self._tray.hide()
 
+    # ── 来信：托盘闪动 + 铃声 ──
+
+    def _poll_unread(self) -> None:
+        """Ring and flash while a friend's message sits unread — the same event
+        the WebUI's unread badge counts (RoomBase.last_unread, filled by the
+        room's own mailbox poll), and opening that thread marks it read, which
+        is what stops the ring."""
+        rooms = self.rooms()
+        unread = int(getattr(rooms[0], "last_unread", 0) or 0) if rooms else 0
+        if unread <= 0:
+            if self._unread_since is not None or self._ringer.ringing or self._silenced:
+                # only when there was an alert to take down: with no room and
+                # nothing ringing this poll must cost nothing (it runs every
+                # second, for the whole life of the window)
+                self._unread_since = None
+                self._silenced = False
+                self._stop_alert()
+            return
+        now = time.monotonic()
+        if self._unread_since is None:
+            self._unread_since = now
+        if self._tray is not None:
+            self._tray.set_alert(True)  # unread flashes at once; only the tone waits
+        if not self._silenced and now - self._unread_since >= RING_GRACE_S:
+            self._start_ring()
+
+    def _start_ring(self) -> None:
+        """Play the configured tone (config is read as a ring begins, so a
+        settings change applies to the next message, not mid-ring)."""
+        if self._ringer.ringing:
+            return
+        cfg = config_mod.load_config()
+        if cfg.ring:
+            self._ringer.start(cfg.ring_tone)
+
+    def _stop_alert(self) -> None:
+        if self._tray is not None:
+            self._tray.set_alert(False)
+        self._ringer.stop()
+
+    def stop_ring(self) -> None:
+        """Tray menu 停止铃声: silence this ring, the next message rings again.
+
+        The flash stays — it is the unread indicator, and it clears when the
+        thread is actually read."""
+        self._silenced = True
+        self._ringer.stop()
+
     def show_and_raise(self) -> None:
         self.showNormal()
         self.raise_()
@@ -101,6 +167,7 @@ class FungiGui(FluentWindow):
 
     def quit_from_tray(self) -> None:
         """Real exit: stop rooms (proper leave envelopes), then quit."""
+        self._stop_alert()  # a ring must not outlive the room it belongs to
         for page in (self.host_page, self.join_page):
             room = getattr(page, "room", None)
             if room is not None:

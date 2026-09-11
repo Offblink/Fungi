@@ -169,6 +169,23 @@ html,body{font-family:var(--font);font-size:var(--fs-md);line-height:1.6;color:v
 #confirm-modal #confirm-ok.danger:hover{background:#c41e1e;box-shadow:0 0 16px rgba(220,38,38,0.3)}
 #confirm-modal button:focus-visible{outline:none;box-shadow:0 0 0 3px var(--accent-glow)}
 
+/* ---- send-file progress modal (one card per hop; auto-closes when it lands) ---- */
+#xfer-overlay{display:none;position:fixed;inset:0;z-index:115;background:rgba(10,12,30,0.45);backdrop-filter:blur(8px) saturate(1.15);-webkit-backdrop-filter:blur(8px) saturate(1.15);align-items:center;justify-content:center}
+#xfer-overlay.show{display:flex}
+#xfer-modal{background:var(--surface);background-image:var(--sheen);border-radius:var(--radius-lg);padding:1.6rem 1.6rem 1.2rem;width:420px;max-width:92vw;box-shadow:var(--shadow-pop);border:1px solid var(--border-light);animation:msgIn 0.3s var(--ease-out-expo)}
+#xfer-modal h2{font-size:1rem;font-weight:600;margin-bottom:1.1rem;color:var(--text);letter-spacing:-0.01em}
+.xf-step + .xf-step{margin-top:0.9rem}
+.xf-lab{font-size:0.8rem;font-weight:600;color:var(--text2);margin-bottom:0.35rem}
+.xf-bar{height:8px;border-radius:99px;background:var(--surface2);border:1px solid var(--border-light);overflow:hidden}
+.xf-bar > i{display:block;height:100%;width:0;background:var(--accent);border-radius:99px;transition:width 0.25s var(--ease-out-expo)}
+.xf-note{font-size:0.74rem;color:var(--dim);margin-top:0.35rem;font-family:var(--mono);word-break:break-word}
+.xf-step.done .xf-bar > i{background:#22c55e}
+.xf-step.failed .xf-bar > i{background:var(--error-text)}
+.xf-step.failed .xf-note{color:var(--error-text)}
+#xfer-modal .xfer-actions{display:flex;justify-content:flex-end;margin-top:1.3rem}
+#xfer-modal .xfer-actions button{background:transparent;color:var(--dim);border:1px solid var(--border);border-radius:var(--radius-xs);padding:0.5rem 1.3rem;font-weight:600;font-size:0.82rem;cursor:pointer;font-family:var(--font);transition:all var(--t-fast)}
+#xfer-modal .xfer-actions button:hover{color:var(--text);background:rgba(0,0,0,0.03)}
+
 /* ---- pending card asks (out-of-band consent / cross-host asks) ---- */
 #asks-banner{display:flex;flex-direction:column;gap:0.6rem;padding:0.8rem 1.5rem 0;flex-shrink:0}
 #asks-banner:empty{display:none}

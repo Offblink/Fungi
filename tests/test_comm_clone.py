@@ -319,3 +319,130 @@ def test_courier_calendar_injected(monkeypatch):
     # the calendar rules ride along even when there is nothing to show: they are
     # what keeps the courier from rewriting the host's entries.
     assert "user's calendar" in clone.resolved_prompt()
+
+
+def _wait(predicate, timeout_s: float = 10.0) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+class _RecordingTransport:
+    """The real transport plus a log of what the courier put on the wire."""
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+        self.sent: list[Envelope] = []
+
+    def send(self, env: Envelope) -> dict:
+        self.sent.append(env)
+        return self.inner.send(env)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def test_inquire_never_blocks_the_courier_and_the_answer_arrives_as_a_turn(room):
+    """A courier that asks its owner must keep serving the peer meanwhile.
+
+    One clone owns exactly one worker thread, so the blocking inquire parked
+    every peer message behind the question for up to 30 minutes
+    (2026-09-11 user report: 一旦用户没有及时回复 inquire，信使就卡死不动).
+    The question now returns at once and the answer comes back as a turn of its
+    own, carrying the question it answers.
+    """
+    _hub, clients = _joined_room(room)
+    fake = ScriptedLLM(
+        [
+            # turn 1: ask the owner, then report (the ask is left unanswered)
+            LLMResult(
+                content="",
+                tool_calls=[tool_call("inquire", {"question": "周六见面吗？"}, "t1")],
+            ),
+            LLMResult(content="问过主人了，等他回"),
+            # turn 2: a peer chat that arrives while the question is open
+            LLMResult(content="", tool_calls=[tool_call("send_peer", {"text": "收到"}, "t2")]),
+            LLMResult(content="转达了"),
+            # turn 3: the owner's answer, as a turn of its own
+            LLMResult(content="好，周六见"),
+        ]
+    )
+    turns: list[tuple[str, list[dict]]] = []
+    transport = _RecordingTransport(RemoteTransport(clients["beta"]))
+    clone = build_comm_clone(
+        "beta",
+        "alpha",
+        transport,
+        CFG,
+        NullSink(),
+        llm=fake,
+        poll_timeout=0.1,
+        on_turn_end=lambda kind, messages, _agent: turns.append((kind, list(messages))),
+    )
+    clone.start()
+    try:
+        clients["alpha"].send(
+            Envelope(
+                src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "周六有空吗"}
+            )
+        )
+        # The turn ends while nobody has answered: the courier is not parked.
+        assert _wait(lambda: len(turns) == 1), "the courier blocked on the unanswered ask"
+
+        ask = next(e for e in transport.sent if e.type == "ask")
+        assert ask.dst == "beta:local"  # its OWN host's card, not the peer's
+        assert ask.body["questions"][0]["question"] == "周六见面吗？"
+        asked = [m for m in turns[0][1] if m.get("role") == "tool"]
+        assert any("ASKED" in str(m.get("content")) for m in asked), "the tool did not return at once"
+
+        # A peer message that arrives while the question is still open is served.
+        clients["alpha"].send(
+            Envelope(
+                src="alpha:comm-beta", dst="beta:comm-alpha", type="chat", body={"text": "在吗"}
+            )
+        )
+        assert _wait(lambda: len(turns) == 2), "the unanswered ask held the next peer chat"
+        assert any(
+            e.type == "chat" and e.body.get("text") == "收到" for e in transport.sent
+        ), "the courier never reached the peer while the card waited"
+
+        # The owner answers (what RoomBase._send_answer sends): a new turn, with
+        # the question carried along so the answer stands on its own.
+        clients["beta"].send(
+            Envelope(
+                src="beta:local",
+                dst="beta:comm-alpha",
+                type="answer",
+                body={"value": "周六有空", "questions": ask.body["questions"]},
+                reply_to=ask.id,
+            )
+        )
+        assert _wait(lambda: len(turns) == 3), "the answer never reached the courier"
+        said = next(
+            str(m.get("content"))
+            for m in turns[2][1]
+            if m.get("role") == "user" and str(m.get("content", "")).startswith("[主人的答复]")
+        )
+        assert "问: 周六见面吗？" in said and "答: 周六有空" in said
+    finally:
+        clone.stop()
+
+
+def test_an_answer_without_questions_is_not_a_turn(room):
+    """A late consent verdict (confirm/send_file timed out) must not become a
+    chat turn: there is no question to interpret, and a bare "yes" would only
+    confuse the courier."""
+    clone = build_comm_clone("beta", "alpha", transport=None, cfg=CFG, sink=NullSink())
+    clone.dispatch(
+        Envelope(
+            src="beta:local",
+            dst="beta:comm-alpha",
+            type="answer",
+            body={"value": "yes"},
+            reply_to="ask-1",
+        )
+    )
+    assert clone._work.empty()

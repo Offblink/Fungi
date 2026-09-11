@@ -181,13 +181,32 @@ class CommTools:
         return text
 
     def inquire(self, args: dict) -> str:
+        """Put a question to this host's user without holding the courier.
+
+        It must not block: one clone has one worker thread, so an inquire that
+        parked until the human answered (up to 30 minutes) stopped every peer
+        message queued behind it — the counterpart got silence for as long as
+        the user was away from the keyboard (2026-09-11 user instruction). The
+        card waits for them; their answer comes back later as a turn of its own
+        ([主人的答复], see Clone._answer_turn).
+        """
         questions = _normalize_questions(args)
         if not questions:
             return "ERROR: Missing required argument: question"
-        text, _ask_id = self._blocking_ask(
-            f"{self.host}:local", {"from": self.addr, "questions": questions}
+        env = Envelope(
+            src=self.addr,
+            dst=f"{self.host}:local",
+            type="ask",
+            body={"from": self.addr, "questions": questions},
         )
-        return text
+        out = self.transport.send(env)
+        if out.get("error"):
+            return f"ERROR: {out['error']}"
+        return (
+            "ASKED (not blocking): the question is on your host's card. The answer arrives later"
+            " as a [主人的答复] message — carry on with what you can settle without it, and never"
+            " ask the same question twice."
+        )
 
     # ── guarded fs tools ──
 
@@ -338,7 +357,10 @@ _SCHEMA_CONFIRM = _obj_schema(
 _SCHEMA_INQUIRE = _obj_schema(
     {
         "__name": "inquire",
-        "__desc": "Ask your own host's user a question via system notification + WebUI card. Blocks until answered.",
+        "__desc": (
+            "Ask your own host's user a question (friend-view card). Returns at once — the"
+            " answer arrives later as a [主人的答复] message; never ask it twice."
+        ),
         "question": _str_schema("question", "the question", required=False),
         "options": {"type": "array", "description": "optional answer options"},
         "allow_custom": {

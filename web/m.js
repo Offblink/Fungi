@@ -1047,22 +1047,20 @@ document.getElementById('btn-file').addEventListener('click', () => fileInput.cl
 fileInput.addEventListener('change', async () => {
   const files = Array.from(fileInput.files || []);
   fileInput.value = '';
-  for (const f of files) {
-    status.textContent = '上传中… ' + f.name;
+  if (!files.length) return;
+  Xfer.open('上传文件到电脑', files.map(f => '上传到电脑 · ' + f.name));
+  for (const [i, f] of files.entries()) {
+    Xfer.note(i, '正在上传…');
     try {
-      const fd = new FormData();
-      fd.append('file', f, f.name);
-      const d = await (await fetchJSON('/upload', { method: 'POST', body: fd })).json();
-      if (d.path) {
-        input.value = (input.value ? input.value + ' ' : '') + d.path;
-        autoGrow();
-      } else {
-        status.textContent = '上传失败：' + f.name;
-        return;
-      }
-    } catch (e) { return; } // 403: fetchJSON already showed the rescan overlay
+      const path = await Xfer.upload(f, (done, total) => Xfer.progress(i, done, total));
+      Xfer.finish('已保存到电脑'); // 完成后自动关闭
+      input.value = (input.value ? input.value + ' ' : '') + path;
+      autoGrow();
+    } catch (e) {
+      Xfer.fail('上传失败：' + (e.message || f.name), i);
+      return;
+    }
   }
-  status.textContent = '';
   input.focus();
 });
 // Keep the transcript pinned when the mobile keyboard resizes the viewport.
@@ -1117,6 +1115,9 @@ setInterval(loadPeers, 5000);
 const MailUnread = FC.initMailUnread({ http: FC, onChange: renderFriendList });
 MailUnread.start();
 
+/* ---------- send-file progress modal (shared implementation) ---------- */
+const Xfer = FC.initTransfer({ http: FC });
+
 
 /* ---------- friend view composer: human direct sends ---------- */
 const friendInput = document.getElementById('friend-input');
@@ -1146,14 +1147,12 @@ friendFileInput.addEventListener('change', async () => {
   const files = Array.from(friendFileInput.files || []);
   friendFileInput.value = '';
   for (const f of files) {
-    status.textContent = '上传中… ' + f.name;
     try {
-      const fd = new FormData();
-      fd.append('file', f, f.name);
-      const d = await (await fetchJSON('/upload', { method: 'POST', body: fd })).json();
-      if (d.path) await commSend({ file: d.path });
-      else { status.textContent = '上传失败：' + f.name; return; }
-    } catch (e) { return; } // 403: fetchJSON already showed the rescan overlay
+      // two hops on a phone: browser -> this host, then this host -> the peer
+      await Xfer.sendFromPhone('发送文件给 ' + displayOf(friendView), friendView, f);
+    } catch (e) {
+      return; // the modal carries the reason and stays open until it is closed
+    }
   }
-  status.textContent = '';
+  setTimeout(refreshFriendChat, 300);
 });

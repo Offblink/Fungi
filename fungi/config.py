@@ -51,6 +51,12 @@ class Config:
     # in the GUI (" weekdays I'm in class, answer for me and note anything
     # urgent"). Injected into every comm-clone chat turn's system prompt.
     courier_memory: str = ""
+    # GUI ringtone for incoming mail: ring while a friend's message sits
+    # unread (the tray icon flashes either way). `ring_tone` is one of the ids
+    # in fungi/gui/ring.py::TONES — validated there, so an unknown id falls
+    # back to the default instead of failing here.
+    ring: bool = True
+    ring_tone: str = "dingdong"
 
     @property
     def configured(self) -> bool:
@@ -96,6 +102,8 @@ def load_config(path: Path | None = None) -> Config:
         cfg.diary = bool(data.get("diary"))
         cfg.courier_memory = str(data.get("courier_memory") or "")
         cfg.courier = bool(data.get("courier", True))
+        cfg.ring = bool(data.get("ring", True))
+        cfg.ring_tone = str(data.get("ring_tone") or "dingdong")
     cfg.api_key = os.environ.get("OPENAI_API_KEY") or cfg.api_key
     cfg.endpoint = os.environ.get("OPENAI_ENDPOINT") or cfg.endpoint
     cfg.model = os.environ.get("OPENAI_MODEL") or cfg.model
@@ -128,6 +136,10 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         data["courier_memory"] = cfg.courier_memory
     if not cfg.courier:
         data["courier"] = False
+    if not cfg.ring:
+        data["ring"] = False
+    if cfg.ring_tone != "dingdong":
+        data["ring_tone"] = cfg.ring_tone
     if cfg.display:
         data["display"] = cfg.display
     target.write_text(json.dumps(data, indent=4), encoding="utf-8")

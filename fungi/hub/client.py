@@ -151,25 +151,35 @@ class HubClient:
         """Receiver-side: drop the hub's staged copy after a delivery."""
         return self._request("DELETE", "/api/transfer", {"id": transfer_id, "host": self.host})
 
-    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
-        """Stream a local file's raw bytes to the hub staging area."""
+    def upload_transfer(self, path: str, name: str, to_host: str, progress=None) -> dict:
+        """Stream a local file's raw bytes to the hub staging area.
+
+        `progress(sent, total)` rides along per chunk: the send-file modal in
+        the WebUI renders it (room.py transfer jobs), and nothing else needs to
+        know how the bytes travelled.
+        """
         src = Path(path)
         u = urllib.parse.urlparse(self.base)
         q = urllib.parse.urlencode(
             {"token": self.token, "host": self.host, "to": to_host, "name": name}
         )
+        total = src.stat().st_size
+        sent = 0
         conn = http.client.HTTPConnection(u.hostname, u.port, timeout=600)
         try:
             with src.open("rb") as fh:
                 conn.putrequest("POST", f"/api/transfer/upload?{q}")
                 conn.putheader("Content-Type", "application/octet-stream")
-                conn.putheader("Content-Length", str(src.stat().st_size))
+                conn.putheader("Content-Length", str(total))
                 conn.endheaders()
                 while True:
                     chunk = fh.read(256 * 1024)
                     if not chunk:
                         break
                     conn.send(chunk)
+                    sent += len(chunk)
+                    if progress is not None:
+                        progress(sent, total)
             resp = conn.getresponse()
             body = resp.read()
         finally:

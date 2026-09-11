@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
+    ComboBox,
     FluentIcon,
     InfoBar,
     LineEdit,
@@ -35,6 +36,7 @@ from ..config import (
     PROJECT_ROOT,
 )
 from ..tools.video import _HEALABLE, _module_available, _video_ready
+from . import ring
 from .widgets import _row
 
 
@@ -54,6 +56,7 @@ class ConfigPage(QWidget):
         super().__init__()
         self.window_ref = window
         self.setObjectName("configPage")
+        self._preview: ring.Ringer | None = None  # 试听用的播放器（懒建）
 
         root = QVBoxLayout(self)
         root.setContentsMargins(48, 14, 48, 14)
@@ -105,6 +108,42 @@ class ConfigPage(QWidget):
         )
         file_hint.setWordWrap(True)
         root.addWidget(file_hint)
+
+        # 来信提醒：铃声开关 + 铃声选择（关掉就把下面那行收起来）
+        root.addSpacing(10)
+        root.addWidget(SubtitleLabel("来信提醒"))
+        ring_row = QHBoxLayout()
+        ring_lbl = BodyLabel("铃声")
+        # SwitchButton's default size policy is Expanding: without pinning both
+        # widgets to Fixed the switch drifts to mid-row (same as diary below).
+        ring_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        ring_row.addWidget(ring_lbl)
+        ring_row.addSpacing(8)
+        self.ring_switch = SwitchButton()
+        self.ring_switch.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # setChecked BEFORE connect (checkedChanged fires on programmatic sets)
+        self.ring_switch.setChecked(config_mod.load_config().ring)
+        ring_row.addWidget(self.ring_switch)
+        self.ring_switch.checkedChanged.connect(self._toggle_ring)
+        ring_row.addStretch(1)
+        root.addLayout(ring_row)
+        ring_hint = BodyLabel(
+            "朋友留言还没读时响铃，托盘图标同时闪动；点开好友视图即停。\n"
+            "关掉只是不响，未读照样闪。"
+        )
+        ring_hint.setWordWrap(True)
+        root.addWidget(ring_hint)
+        self.tone_combo = ComboBox()
+        self.tone_combo.addItems([label for _, label in ring.TONES])
+        saved_tone = config_mod.load_config().ring_tone
+        self.tone_combo.setCurrentIndex(
+            ring.TONE_IDS.index(saved_tone) if saved_tone in ring.TONE_IDS else 0
+        )
+        self.tone_combo.setFixedWidth(180)
+        self.tone_combo.currentIndexChanged.connect(self._preview_tone)
+        self.tone_row = _row("铃声选择", self.tone_combo)
+        self.tone_row.setVisible(self.ring_switch.isChecked())
+        root.addWidget(self.tone_row)
 
         # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
         root.addSpacing(10)
@@ -354,6 +393,29 @@ class ConfigPage(QWidget):
             duration=2500,
             parent=self.window_ref,
         )
+
+    def _toggle_ring(self, checked: bool) -> None:
+        """来信铃声开关：即时写盘（下一次响铃就按新设置来）。"""
+        cfg = config_mod.load_config()
+        cfg.ring = bool(checked)
+        config_mod.save_config(cfg)
+        self.tone_row.setVisible(bool(checked))  # 关掉就不显示铃声选择
+        InfoBar.success(
+            "已保存",
+            "来信会响铃" if checked else "来信不再响铃（托盘仍闪动）",
+            duration=2500,
+            parent=self.window_ref,
+        )
+
+    def _preview_tone(self, index: int) -> None:
+        """选一个铃声就试听一次，同时写盘：只听名字分不出哪个是哪个。"""
+        tone = ring.TONE_IDS[index] if 0 <= index < len(ring.TONE_IDS) else ring.DEFAULT_TONE
+        cfg = config_mod.load_config()
+        cfg.ring_tone = tone
+        config_mod.save_config(cfg)
+        if self._preview is None:
+            self._preview = ring.Ringer()
+        self._preview.preview(tone)
 
     def _toggle_courier(self, checked: bool) -> None:
         """信使开关：即时写盘；通讯 clone 每个信封重读配置，无需重启。"""

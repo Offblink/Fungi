@@ -1037,6 +1037,9 @@ document.getElementById('theme-switch').addEventListener('click', function () {
 const MailUnread = FC.initMailUnread({ http: FC, onChange: renderFriendList });
 MailUnread.start();
 
+/* ---------- send-file progress modal (shared implementation) ---------- */
+const Xfer = FC.initTransfer({ http: FC });
+
 
 /* ---------- friend view composer: human direct sends ---------- */
 const friendInput = document.getElementById('friend-input');
@@ -1065,6 +1068,17 @@ document.getElementById('friend-browse').addEventListener('click', async () => {
   try {
     const r = await fetch('/pickfile', { method: 'POST' });
     const d = await r.json();
-    if (d.path) commSend({ file: d.path });
+    if (d.path) await sendFileToFriend(d.path);
   } catch (e) {}
 });
+/* One file to one friend, with the progress modal: the bytes leave from this
+   host (the file is already on its disk) and the job the modal polls counts
+   them there — see FC.initTransfer. */
+async function sendFileToFriend(path) {
+  try {
+    await Xfer.sendOne('发送文件给 ' + displayOf(friendView), friendView, path);
+  } catch (e) {
+    // the modal already shows it; nothing else to say here
+  }
+  setTimeout(refreshFriendChat, 300);
+}

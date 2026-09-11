@@ -160,6 +160,21 @@ main{position:relative}
 #confirm-modal #confirm-cancel{background:transparent;color:var(--dim)}
 #confirm-modal #confirm-ok{background:var(--accent);color:var(--on-accent)}
 #confirm-modal #confirm-ok.danger{background:var(--error-text)}
+/* ---- send-file progress modal (one card per hop; auto-closes when it lands) ---- */
+#xfer-overlay{display:none;position:fixed;inset:0;z-index:110;background:rgba(10,12,30,0.5);backdrop-filter:blur(8px);align-items:center;justify-content:center}
+#xfer-overlay.show{display:flex}
+#xfer-modal{background:var(--surface);border-radius:var(--radius);padding:1.4rem 1.4rem 1.1rem;width:88vw;max-width:380px;box-shadow:0 16px 56px rgba(0,0,0,0.4);border:1px solid var(--border-light)}
+#xfer-modal h2{font-size:1rem;font-weight:600;margin-bottom:1rem;color:var(--text)}
+.xf-step + .xf-step{margin-top:0.85rem}
+.xf-lab{font-size:0.82rem;font-weight:600;color:var(--text2);margin-bottom:0.35rem}
+.xf-bar{height:10px;border-radius:99px;background:var(--surface2);border:1px solid var(--border-light);overflow:hidden}
+.xf-bar > i{display:block;height:100%;width:0;background:var(--accent);border-radius:99px;transition:width 0.25s ease}
+.xf-note{font-size:0.72rem;color:var(--dim);margin-top:0.35rem;font-family:var(--mono);word-break:break-word}
+.xf-step.done .xf-bar > i{background:#22c55e}
+.xf-step.failed .xf-bar > i{background:var(--error-text)}
+.xf-step.failed .xf-note{color:var(--error-text)}
+#xfer-modal .xfer-actions{display:flex;justify-content:flex-end;margin-top:1.2rem}
+#xfer-modal .xfer-actions button{background:transparent;color:var(--dim);border:1px solid var(--border);border-radius:var(--radius-xs);padding:0.55rem 1.3rem;font-weight:600;font-size:0.85rem;font-family:var(--font);min-height:44px;cursor:pointer}
 /* ---- session rename ---- */
 .session-row input.rename-input{flex:1;background:var(--bg);border:1px solid var(--accent);border-radius:var(--radius-xs);color:var(--text);font-family:var(--font);font-size:0.85rem;padding:5px 9px;outline:none;min-width:0}
 /* ---- theme wash ---- */

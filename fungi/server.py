@@ -283,6 +283,10 @@ class WebUIRuntime:
     def mail_read(self, mail_id: str) -> dict:  # noqa: ARG002 (room mode overrides)
         return {"ok": False}
 
+    def transfer_progress(self, job_id: str) -> dict:  # noqa: ARG002 (room mode overrides)
+        """Send-file progress for the browser's own job id (room mode)."""
+        return {"error": "no transfer jobs outside room mode"}
+
     def set_consent_mode(self, host: str, mode: str) -> None:
         pass
 
@@ -475,6 +479,9 @@ class YesSirHandler(BaseHTTPRequestHandler):
                 self._send_json(self.runtime.comm_log(host))
         elif route == "/mail":
             self._send_json(self.runtime.mail())
+        elif route == "/transfer-progress":
+            job = (parse_qs(url.query).get("id") or [""])[0]
+            self._send_json(self.runtime.transfer_progress(job))
         elif route == "/events":
             self._handle_events((parse_qs(url.query).get("sessionId") or [None])[0])
         elif route == "/spawn-pending":

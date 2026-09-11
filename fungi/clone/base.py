@@ -27,6 +27,23 @@ DIRECT_TYPES = ("chat", "transfer")  # courier-off delivers these without a turn
 MAX_CHAT_HISTORY = 200  # chat messages kept per clone; older entries are dropped
 
 
+def _qa_lines(questions: list, value) -> str:
+    """Carrier question + answer, one pair per line, for a late answer turn.
+
+    The courier's inquire does not block, so by the time the owner answers, the
+    turn that asked is over and its tool call is not in the clone's history —
+    the answer must carry its own question, or the courier reads "周六" with no
+    idea what it refers to.
+    """
+    answers = value if isinstance(value, list) else [value]
+    out = []
+    for i, q in enumerate(questions):
+        item = q if isinstance(q, dict) else {}
+        answer = answers[i] if i < len(answers) else ""
+        out.append(f"问: {item.get('question') or ''}\n答: {answer}")
+    return "\n".join(out)
+
+
 class LocalTransport:
     """For clones hosted on the server process itself: direct relay + store."""
 
@@ -64,16 +81,32 @@ class LocalTransport:
             return {"error": "no hub attached"}
         return self.hub.create_transfer(self.host, path, to_host, name)
 
-    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
-        """Stage a real local file (server-role: the file is on this disk)."""
+    def upload_transfer(self, path: str, name: str, to_host: str, progress=None) -> dict:
+        """Stage a real local file (server-role: the file is on this disk).
+
+        `progress(sent, total)` mirrors the remote client's: the send-file modal
+        shows the same bar whether the bytes leave this process over HTTP or
+        land on the hub in-process.
+        """
         if self.hub is None:
             return {"error": "no hub attached"}
         src = Path(path)
         if not src.is_file():
             return {"error": f"no such file: {path}"}
+        total = src.stat().st_size
+        sent = 0
+
+        def read(size: int) -> bytes:
+            nonlocal sent
+            chunk = src_fh.read(size)
+            sent += len(chunk)
+            if progress is not None:
+                progress(sent, total)
+            return chunk
+
         try:
-            with src.open("rb") as fh:
-                return self.hub.upload_transfer(self.host, to_host, name, fh.read)
+            with src.open("rb") as src_fh:
+                return self.hub.upload_transfer(self.host, to_host, name, read)
         except OSError as exc:
             return {"error": f"cannot read {path}: {exc}"}
 
@@ -121,8 +154,8 @@ class RemoteTransport:
     def transfer(self, path: str, name: str, to_host: str) -> dict:
         return self.client.create_transfer(path, name, to_host)
 
-    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
-        return self.client.upload_transfer(path, name, to_host)
+    def upload_transfer(self, path: str, name: str, to_host: str, progress=None) -> dict:
+        return self.client.upload_transfer(path, name, to_host, progress)
 
     def download_transfer(self, transfer_id: str, dest: Path) -> None:
         self.client.download_transfer(transfer_id, dest)
@@ -269,7 +302,8 @@ class Clone:
     def dispatch(self, env: Envelope) -> None:
         """Control envelopes wake blocked tools inline; turns are queued."""
         if env.type == "answer" and env.reply_to:
-            self.pending.resolve(env.reply_to, env.body.get("value"))
+            if not self.pending.resolve(env.reply_to, env.body.get("value")):
+                self._answer_turn(env)
         elif env.type == "result" and env.reply_to:
             self.pending.resolve(env.reply_to, env.body)
         elif env.type == "err":
@@ -285,6 +319,27 @@ class Clone:
             self._work.put(env)
         elif env.type in TURN_TYPES:
             self._work.put(env)
+
+    def _answer_turn(self, env: Envelope) -> None:
+        """An answer nobody is blocked on: the owner answering a question this
+        clone asked (its inquire does not block, so the turn that asked it
+        ended long ago). Turn it into a chat turn of its own.
+
+        A verdict without carrier questions gets no turn: it belongs to a
+        consent ask whose tool already timed out, and there is nothing to
+        interpret — a bare "yes" would only confuse the courier.
+        """
+        questions = env.body.get("questions")
+        if not isinstance(questions, list) or not questions:
+            return
+        self._work.put(
+            Envelope(
+                src=env.src,
+                dst=self.addr,
+                type="chat",
+                body={"text": _qa_lines(questions, env.body.get("value")), "owner_answer": True},
+            )
+        )
 
 
     # ── turns ──
@@ -307,6 +362,10 @@ class Clone:
             # Feedback on a report, from the friend view's feedback box: OUR
             # owner talking to us. Nothing about it goes to the counterpart.
             return f"[主人的反馈] {env.body.get('text', '')}"
+        if env.body.get("owner_answer"):
+            # The owner's answer to a question this clone asked (see
+            # _answer_turn): a turn of its own, carrying the question with it.
+            return f"[主人的答复] {env.body.get('text', '')}"
         return f"[{env.src}] {env.body.get('text', '')}"
 
     def resolved_prompt(self) -> str:

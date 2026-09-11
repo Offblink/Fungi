@@ -63,14 +63,17 @@ class Client:
         body = {"token": self.token, "host": self.host, "path": path, **kw}
         return self.post(f"/api/fs/{op}", body)[1]
 
-    def upload_transfer(self, path: str, name: str, to_host: str) -> dict:
+    def upload_transfer(self, path: str, name: str, to_host: str, progress=None) -> dict:
         """Raw-bytes upload, HubClient.upload_transfer compatible."""
         q = urllib.parse.urlencode(
             {"token": self.token, "host": self.host, "to": to_host, "name": name}
         )
+        data = Path(path).read_bytes()
+        if progress is not None:
+            progress(len(data), len(data))  # one shot: this double does not stream
         req = urllib.request.Request(
             self.base + f"/api/transfer/upload?{q}",
-            data=Path(path).read_bytes(),
+            data=data,
             headers={"Content-Type": "application/octet-stream"},
             method="POST",
         )
