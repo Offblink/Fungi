@@ -362,6 +362,13 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   一并加到 reasoning/tool/error 行（含 live tape 的 reasoning/tool/result）。桌面此前只给我方正文加了
   `friend-mine`；手机端干脆**没有侧**，对面的行还落进 `.msg.user` 的强调色气泡里（看着像"我说的"）。
   现两端同一套 `side` 类：对面在左（素底），我方在右。移动端会话视图不受影响。
+- **好友视图的实时思考自动展开**（2026-09-11 用户报告：「只显示一个 Thinking，点进去才展开；
+  本机会话是流式时自动展开、思考结束收起」）：本机会话的实时渲染器 `app.js::renderTurnLive` 一直在
+  `<details>` 上写 `det.open = !closed`，而好友视图的实时磁带走共享的 `common.js::renderLiveEvents`，
+  它建 `<details>` 时**根本没设 `open`**——于是永远收起（`56a8e5a` 引入好友视图旁观时就没这一步）。
+  现在共享渲染器同样按 `reasoning_end` 记 `closed`：正在写的那个 `open`，写完了收起，一轮里多个思考块
+  各按自己的结束事件算（与 `renderTurnLive` 的语义逐条一致）。转录里的旧思考两边都仍是收起——只动实时。
+  回归：`test_webui_friend.py::test_friend_live_thinking_opens_while_it_streams`（去掉修复即超时失败）。
 - **设置页显示当前配置**（用户要求）：三个框不再是空的——接口地址/模型直接预填（可编辑），API Key
   只把掩码 `sk-12…a5f4` 放进**占位符**（真 key 依旧不上屏，空框 = 保持不变的老语义不变）；保存后
   `_load_fields()` 让框回到当前值（不是清空），进页(`showEvent`)也刷新一次，命令行/WebUI 改过模型能立刻看到。

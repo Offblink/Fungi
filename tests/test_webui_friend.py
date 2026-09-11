@@ -759,3 +759,38 @@ def test_mobile_detail_rows_track_our_prose(mobile_page, rooms):
     assert sides["peer"] == "flex-start", sides  # 对面在左
     assert sides["reasoning"] == sides["prose"], sides
     assert sides["tool"] == sides["prose"], sides
+
+
+@contextlib.contextmanager
+def _live_tape(room, peer, events):
+    """What the room's taped sink holds while a comm clone turn runs."""
+    with room._live_lock:
+        room._live_tapes[peer] = [{"kind": k, "content": c} for k, c in events]
+    try:
+        yield
+    finally:
+        room._clear_live_tape(peer)
+
+
+def test_friend_live_thinking_opens_while_it_streams(page, rooms):
+    """2026-09-11 用户报告：「好友视图里思考只显示一个 Thinking…，点进去才展开；
+    本机会话是流式时自动展开、思考结束收起。」实时磁带与转录共用渲染器，
+    这条 parity 只有真浏览器能证明——转录里的旧思考两边一样是收起的。"""
+    server, _client = rooms
+    _seed_transcript(server, "beta", [{"role": "system", "content": "You are the comm agent."}])
+    _open_friend(page)
+
+    with _live_tape(server, "beta", [("reasoning_start", None), ("reasoning", "想想要不要回")]):
+        page.wait_for_function("() => msgs.querySelector('details.msg.reasoning')?.open === true")
+
+    with _live_tape(
+        server,
+        "beta",
+        [
+            ("reasoning_start", None),
+            ("reasoning", "想想要不要回"),
+            ("reasoning_end", None),
+            ("text", "在的"),
+        ],
+    ):
+        page.wait_for_function("() => msgs.querySelector('details.msg.reasoning')?.open === false")

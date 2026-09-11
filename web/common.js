@@ -734,8 +734,17 @@
     const runs = [];
     for (const ev of live || []) {
       const k = ev && ev.kind;
-      if (k === 'reasoning_start' || k === 'reasoning_end') continue;
+      if (k === 'reasoning_start') continue;
       const last = runs[runs.length - 1];
+      if (k === 'reasoning_end') {
+        // The session view collapses a reasoning block the moment its stream
+        // ends and leaves only the one still being written open; the friend
+        // view spectates the same turn, so it must read the same way
+        // (2026-09-11 user report: the friend view only ever showed the
+        // "Thinking…" line, expanded on a click).
+        if (last && last.kind === 'reasoning') last.closed = true;
+        continue;
+      }
       if ((k === 'text' || k === 'reasoning') && last && last.kind === k) {
         last.text += liveEvText(ev);
         continue;
@@ -749,6 +758,7 @@
       } else if (r.kind === 'reasoning') {
         const det = document.createElement('details');
         det.className = 'msg reasoning' + agentSide;
+        det.open = !r.closed;   // still streaming: open, exactly like the session view
         det.innerHTML = '<summary>Thinking\u2026</summary>' + opts.reasoningHtml(r.text);
         p.append(det);
       } else if (r.kind === 'tool') {
