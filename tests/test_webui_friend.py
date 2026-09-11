@@ -822,9 +822,9 @@ def test_every_report_row_offers_feedback_for_our_courier_only(page, rooms):
         " === '已发给信使'"
     )
     # it landed in OUR courier's transcript (the owner's row, then its answer)
-    page.wait_for_function("() => msgs.textContent.includes('[主人的反馈] 时间记错了')")
+    page.wait_for_function("() => msgs.textContent.includes('[评价] 时间记错了')")
     stored = (server._comm_store.load("comm-beta") or {})["messages"]
-    assert "[主人的反馈] 时间记错了，是 17:15 不是 17:30" in [m.get("content") for m in stored]
+    assert "[评价] 时间记错了，是 17:15 不是 17:30" in [m.get("content") for m in stored]
 
 
 def test_the_mobile_friend_view_offers_feedback_too(mobile_page, rooms):
@@ -838,4 +838,4 @@ def test_the_mobile_friend_view_offers_feedback_too(mobile_page, rooms):
     box = mobile_page.locator(".report-feedback").first
     box.locator("input").fill("记错了，是 17:15")
     box.locator("button").click()
-    mobile_page.wait_for_function("() => msgs.textContent.includes('[主人的反馈] 记错了')")
+    mobile_page.wait_for_function("() => msgs.textContent.includes('[评价] 记错了')")

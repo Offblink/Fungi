@@ -71,7 +71,9 @@ class _Tray(QSystemTrayIcon):
 
     def _on_activated(self, reason) -> None:
         if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
-            self._window.show_and_raise()
+            # 点图标 = 直接进 WebUI 的好友视图（2026-09-11 用户要求）。启动器仍从
+            # 菜单的「显示主界面」进得去——他说的只是「点图标」。
+            self._window.open_webui_from_tray()
         elif reason == QSystemTrayIcon.Context:
             # PULL_UP, same as the room-mode tray (fungi/tray.py): the cursor is
             # at the screen bottom, so the default DROP_DOWN anchors the menu's

@@ -39,9 +39,14 @@ def window(qapp):
 class FakeRoom:
     def __init__(self):
         self.stopped = False
+        self.webui_calls = 0
 
     def stop(self):
         self.stopped = True
+
+    def open_webui(self, open_browser=True):
+        self.webui_calls += 1  # the tray's click target (tests/test_gui.py tray cases)
+        return "http://localhost:1"
 
 
 @pytest.fixture(autouse=True)
@@ -482,6 +487,23 @@ def test_tray_menu_pulls_up_from_the_icon(window, monkeypatch):
 
     tray._on_activated(QSystemTrayIcon.Context)
     assert seen["args"][2] == MenuAnimationType.PULL_UP, seen
+    tray.hide()
+    page.room = None
+
+
+def test_tray_icon_click_opens_the_webui(window):
+    """2026-09-11 用户要求：「点击图标跳转 webUI（现在是启动器）」——点图标进 WebUI
+    的好友视图，启动器改从菜单的「显示主界面」进（那条菜单项还在）。"""
+    from PyQt5.QtWidgets import QSystemTrayIcon
+
+    page = window.host_page
+    room = FakeRoom()
+    page.room = room
+    window._tray = None
+    window.update_tray()
+    tray = window._tray
+    tray._on_activated(QSystemTrayIcon.Trigger)
+    assert room.webui_calls == 1
     tray.hide()
     page.room = None
 
@@ -1139,6 +1161,62 @@ def test_stop_ring_silences_this_message_only(window, ringing):
     assert ringer.ringing is True           # a new message rings again
 
 
+def test_a_tone_asks_both_backends_for_a_single_play(monkeypatch):
+    """一次性播放（用户 2026-09-11：「铃声只响一次，但是图标保持闪动」）：Qt 后端的
+    loop count 是 1，winsound 不带 SND_LOOP —— 试听与来信铃是同一种播放。"""
+    from types import SimpleNamespace  # a QSoundEffect stand-in lives below
+
+    from fungi.gui import ring as ring_mod
+
+    loops: list[int] = []
+    effect = SimpleNamespace(  # only the calls ring.py makes on QSoundEffect
+        setSource=lambda url: None,
+        setLoopCount=loops.append,
+        setVolume=lambda volume: None,
+        play=lambda: None,
+        stop=lambda: None,
+    )
+    monkeypatch.setattr(ring_mod, "QSoundEffect", lambda: effect)
+    ring_mod.Ringer().start("alert")
+    assert loops == [1]
+
+    winsound = pytest.importorskip("winsound")
+    flags: list[int] = []
+    monkeypatch.setattr(winsound, "PlaySound", lambda path, f=None: flags.append(f))
+    fallback = ring_mod.Ringer()
+    monkeypatch.setattr(fallback, "_ensure_effect", lambda: None)  # 没有多媒体插件那台机器
+    fallback.start("alert")
+    assert flags == [winsound.SND_FILENAME | winsound.SND_ASYNC]
+    assert not flags[0] & winsound.SND_LOOP
+
+
+def test_the_unread_poll_rings_once_not_once_per_second(window, monkeypatch):
+    """铃声只发一次：`Ringer.ringing` 从 start() 一直到 stop() 都是 True —— 未读轮询
+    每秒问一次，若它在 WAV 放完就变回 False，同一首会每秒重播。"""
+    cfg = gui.load_config()
+    cfg.ring, cfg.ring_tone = True, "alert"
+    gui.save_config(cfg)
+    plays: list[str] = []
+    ringer = gui.Ringer()
+    monkeypatch.setattr(ringer, "_play_qt", lambda path: plays.append(path) or True)
+    monkeypatch.setattr(ringer, "_play_winsound", lambda path: False)
+    monkeypatch.setattr(window, "_ringer", ringer)
+    room = _UnreadRoom()
+    window.host_page.room = room
+    window.update_tray()
+    try:
+        room.last_unread = 1
+        window._unread_since = time.monotonic() - gui.app.RING_GRACE_S - 1
+        for _ in range(5):  # five polls: a real ring's worth of seconds
+            window._poll_unread()
+        assert plays == [gui.tone_path("alert")]
+    finally:
+        room.last_unread = 0
+        window._poll_unread()
+        window.host_page.room = None
+        window.update_tray()
+
+
 def test_ring_switch_hides_the_tone_picker_and_the_choice_is_saved(window, monkeypatch):
     """设置页：关掉就不显示铃声选择；换一个音色即时保存并试听一次。"""
     page = window.cfg_page
@@ -1154,6 +1232,22 @@ def test_ring_switch_hides_the_tone_picker_and_the_choice_is_saved(window, monke
     page.tone_combo.setCurrentIndex(3)
     assert gui.load_config().ring_tone == gui.TONE_IDS[3]
     assert preview.played == ["preview:" + gui.TONE_IDS[3]]
+
+
+def test_the_audition_button_plays_the_tone_that_is_already_selected(window, monkeypatch):
+    """2026-09-11 用户报告：「选中的铃声也要可以试听（现在不行）」——换选项才响的旧行为
+    没法听当前那一首。按钮不动下拉框，直接听它。"""
+    page = window.cfg_page
+    page.ring_switch.setChecked(True)
+    assert not page.tone_row.isHidden()  # 铃声开着时按钮才在屏幕上
+    preview = _RecordingRinger()
+    monkeypatch.setattr(page, "_preview", preview)
+
+    selected = page.tone_combo.currentIndex()
+    page.preview_btn.click()
+    assert page.tone_combo.currentIndex() == selected  # 没动下拉框
+    assert preview.played == ["preview:" + gui.TONE_IDS[selected]]
+    assert gui.load_config().ring_tone == gui.TONE_IDS[selected]
 
 
 def test_tray_icon_flashes_and_offers_to_stop_the_ring(window, ringing):

@@ -546,14 +546,15 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   ——它就是未读提示本身，误报的代价只是一枚图标。
 - **铃声资产**：`assets/ringtones/*.wav`（7 个：叮咚/风铃/蜂鸣/警示/通知/钢琴/合成器），
   由 `scripts/make_ringtones.py` 按用户 Get It 应用的合成配方生成（44.1kHz 单声道，仓库里不带 numpy）。
-  播放是 QtMultimedia 的 `QSoundEffect` 循环；缺多媒体插件退 `winsound`；都没有就静音——
-  没有声卡不能拖垮 GUI。exe 打包加了 `--add-data "assets;assets"`。
-- **设置页「来信提醒」**：铃声开关（默认开，写 `config.ring`）+ 铃声选择下拉（换一个即保存并试听一次）。
+  播放是 QtMultimedia 的 `QSoundEffect`（**一声**，见 §26.2；第十二轮起不再是循环）；缺多媒体插件退
+  `winsound`；都没有就静音——没有声卡不能拖垮 GUI。exe 打包加了 `--add-data "assets;assets"`。
+- **设置页「来信提醒」**：铃声开关（默认开，写 `config.ring`）+ 铃声选择下拉（换一个即保存并试听一次）
+  + 「试听」按钮（听当前选中的那一首，见 §26.2）。
   **关掉不显示铃声选择**（用户明确要求），未读的图标闪动照旧。
 - **托盘**：未读时图标在两版之间闪（`tray.make_icon(badge=True)` 的红点版），菜单只在响铃时多出
   「停止铃声」——停的是这一条的铃，闪动留着；未读清零后重新武装，下一条照响。
 - 回归：`tests/test_gui.py` 的四条（宽限期、关铃仍闪、停止铃声只停这一条、开关收起下拉）
-  + `test_tray_icon_flashes_and_offers_to_stop_the_ring`。
+  + `test_tray_icon_flashes_and_offers_to_stop_the_ring`（第十二轮另加三条，见 §26.2）。
 
 ### 25.3 发文件的进度条（模态，完成自动关闭；手机两步）
 
@@ -576,3 +577,61 @@ fs 守卫仍是白名单三分区（`public/` 自由、`homes/<host>/` 属主、
   job id 存在 `#xfer-overlay.dataset.job` 上（控制台与浏览器测试的唯一把手）。
 - 回归：`tests/test_webui_transfer.py`（真浏览器 4 条：条与说明的渲染、桌面上传全流程并落在 hub、
   手机两跳并把文件落进 inbox、失败留在屏幕上）+ `tests/test_friend_send.py` 的 job 状态两条。
+
+## 26. 增补（2026-09-11）：铃声只响一次且能试听；汇报的「评价」框；点托盘图标进 WebUI
+
+用户原话：「铃声只响一次，但是图标保持闪动（即不变）。选中的铃声也要可以试听（现在不行）。
+将反馈输入框里面的提示改为"评价一下"，"主人的反馈"改成"评价"（太尬了）」，
+外加「点击图标跳转webUI（现在是启动器）」。
+
+### 26.1 铃声一声：`Ringer` 从循环改成一次性播放
+
+- `fungi/gui/ring.py::Ringer.start()` 过去用 `QSoundEffect.Infinite`（`LOOP_FOREVER`）/ winsound 的
+  `SND_LOOP` 循环，一直响到被读掉。现在两个后端都只播一次（loop count 1 / 不带 `SND_LOOP`），
+  `LOOP_FOREVER` 随之删除；`preview()` 与来信铃从此是同一种播放。
+- **`ringing` 的语义是本节要害**：它从 `start()` 到 `stop()` 一直是 True，**不是**「此刻有声音」。
+  `app.py::_poll_unread` 每秒调 `_start_ring`，拿它做幂等判据（`if self._ringer.ringing: return`）；
+  若它在 WAV 放完就变回 False，同一首会被每秒重播一遍。
+- **图标不受牵连**：闪动由 `RoomBase.last_unread` 驱动（`_poll_unread` → `_Tray.set_alert`），
+  与铃声各自独立——铃声停了图标照闪，直到那条被读掉。
+- **托盘「停止铃声」保留**：现在掐的是还在响的尾音（并清标志，下一条重新武装）。
+- 回归：`test_a_tone_asks_both_backends_for_a_single_play`（Qt 的 loop count == 1、winsound 的 flags
+  不含 `SND_LOOP`；改回循环即红）、`test_the_unread_poll_rings_once_not_once_per_second`
+  （五次轮询只发一次播放请求）。
+
+### 26.2 选中的铃声也能试听：铃声那一行多了「试听」按钮
+
+- 过去只接了 `tone_combo.currentIndexChanged`——**换到别的项才响**，想听当前那一首没有入口
+  （这正是用户说的「现在不行」）。
+- `ConfigPage.preview_btn = PushButton("试听")`，`_row("铃声选择", self.tone_combo, self.preview_btn)`
+  放在行尾（`_row` 的第三个参数就是行尾控件）；`clicked` → `_preview_selected()` →
+  `_preview_tone(currentIndex())`：听当前音色并顺手写盘。槽不带参数——`clicked` 传的是 checked(bool)，
+  不是索引。
+- 不引新依赖：复用 `ring.Ringer.preview()`（懒建的 `self._preview`）。
+- 回归：`test_the_audition_button_plays_the_tone_that_is_already_selected`（不动下拉框、点按钮，
+  试听记录里就是当前音色，且配置一致）。
+
+### 26.3 汇报框的措辞：`[主人的反馈]` → `[评价]`，placeholder → 「评价一下」
+
+- **行内标签**：`fungi/clone/base.py::render_input` 的 `from_owner` 分支渲染成 `[评价] {text}`。
+- **prompt 必须同字面量**：`fungi/clone/comm.py::COMM_SYSTEM_PROMPT` 里那条同步改写
+  （「it reaches you as a `[评价]` message … from the 评价 box under the report」）——
+  信使靠这个标记认人，代码与 prompt 差一个字它就认不出这是主人的话。
+- **输入框提示**：`web/common.js::attachReportFeedback` 的 `placeholder` 改成「评价一下」。
+- §24 是第十轮的历史记录（含用户当时原话），**不改写**；口径以本节为准（2026-09-11 起）。
+- 回归（硬比对字面量，已同步）：
+  `tests/test_friend_send.py::test_courier_feedback_wakes_our_courier_and_never_the_peer`、
+  `tests/test_webui_friend.py::test_every_report_row_offers_feedback_for_our_courier_only`、
+  `test_the_mobile_friend_view_offers_feedback_too`。
+- 帮助页「信使」条目与 `docs/README-详细版.docx` 同步为「评价框」（`README.md` 不动——用户明令）。
+
+### 26.4 点托盘图标 → 进 WebUI（原来是唤起启动器）
+
+- `fungi/gui/trayicon.py::_Tray._on_activated` 的 `Trigger` / `DoubleClick` 从 `show_and_raise()`
+  改为 `open_webui_from_tray()`（`FungiGui` 上那个 = `rooms[0].open_webui()`）。
+- **启动器仍进得去**：菜单里的「显示主界面」保持 `show_and_raise`——用户说的只是「点图标」。
+- 房间模式的托盘（`fungi/tray.py::TrayController`）本来就是「点击 → 开 WebUI」，未动
+  （`tests/test_tray.py` 钉着）。
+- 与未读的配合：响铃时点图标正好直接开好友视图，读掉即停闪。
+- 回归：`tests/test_gui.py::test_tray_icon_click_opens_the_webui`
+  （`FakeRoom` 记 `open_webui` 的调用次数）。

@@ -128,7 +128,7 @@ class ConfigPage(QWidget):
         ring_row.addStretch(1)
         root.addLayout(ring_row)
         ring_hint = BodyLabel(
-            "朋友留言还没读时响铃，托盘图标同时闪动；点开好友视图即停。\n"
+            "朋友留言还没读时响一声，托盘图标一直闪到那条被读掉；点开好友视图即停。\n"
             "关掉只是不响，未读照样闪。"
         )
         ring_hint.setWordWrap(True)
@@ -141,7 +141,10 @@ class ConfigPage(QWidget):
         )
         self.tone_combo.setFixedWidth(180)
         self.tone_combo.currentIndexChanged.connect(self._preview_tone)
-        self.tone_row = _row("铃声选择", self.tone_combo)
+        # 当前选中的那一首也要能听（换选项才响的旧行为，选回原样就没法试听）
+        self.preview_btn = PushButton("试听")
+        self.preview_btn.clicked.connect(self._preview_selected)
+        self.tone_row = _row("铃声选择", self.tone_combo, self.preview_btn)
         self.tone_row.setVisible(self.ring_switch.isChecked())
         root.addWidget(self.tone_row)
 
@@ -416,6 +419,13 @@ class ConfigPage(QWidget):
         if self._preview is None:
             self._preview = ring.Ringer()
         self._preview.preview(tone)
+
+    def _preview_selected(self) -> None:
+        """试听按钮：听**当前选中**的那一首（下拉框的槽只在换选项时才响）。
+
+        `clicked` 传的是 checked(bool)，不是索引——所以这条不带参数。
+        """
+        self._preview_tone(self.tone_combo.currentIndex())
 
     def _toggle_courier(self, checked: bool) -> None:
         """信使开关：即时写盘；通讯 clone 每个信封重读配置，无需重启。"""

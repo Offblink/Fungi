@@ -359,9 +359,11 @@ class Clone:
             who = str(env.body.get("sender_name") or parse_addr(env.src)[0])
             return f"[来自 {who} 的用户] {env.body.get('text', '')}"
         if env.body.get("from_owner"):
-            # Feedback on a report, from the friend view's feedback box: OUR
-            # owner talking to us. Nothing about it goes to the counterpart.
-            return f"[主人的反馈] {env.body.get('text', '')}"
+            # 评价, from the friend view's box under a report: OUR owner talking
+            # to us. Nothing about it goes to the counterpart. (The label was
+            # [主人的反馈] until 2026-09-11 — the prompt in clone/comm.py carries
+            # the same string, and must, or the courier cannot recognise it.)
+            return f"[评价] {env.body.get('text', '')}"
         if env.body.get("owner_answer"):
             # The owner's answer to a question this clone asked (see
             # _answer_turn): a turn of its own, carrying the question with it.

@@ -744,7 +744,7 @@
     const form = document.createElement('form');
     form.className = 'report-feedback';
     form.innerHTML =
-      '<input type="text" placeholder="给信使说点什么——只有它看得见" />' +
+      '<input type="text" placeholder="评价一下" />' +
       '<button type="submit" aria-label="发送"></button>' +
       '<span class="fb-hint"></span>';
     const input = form.querySelector('input');

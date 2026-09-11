@@ -290,12 +290,12 @@ def test_courier_feedback_wakes_our_courier_and_never_the_peer(tmp_path, monkeyp
         assert server.comm_note_human("beta", "时间记错了，是 17:15 不是 17:30")["ok"]
         assert _wait(
             lambda: any(
-                str(m.get("content") or "").startswith("[主人的反馈]")
+                str(m.get("content") or "").startswith("[评价]")
                 for m in (server._comm_store.load("comm-beta") or {}).get("messages") or []
             )
         )
         msgs = (server._comm_store.load("comm-beta") or {})["messages"]
-        assert "[主人的反馈] 时间记错了，是 17:15 不是 17:30" in [
+        assert "[评价] 时间记错了，是 17:15 不是 17:30" in [
             m.get("content") for m in msgs
         ]
         assert msgs[-1]["role"] == "assistant", msgs[-1]  # our courier answered it

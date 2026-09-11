@@ -30,8 +30,8 @@ After every send_peer, report what you sent and what came back; raise anything t
 A report that says nothing still costs the user attention, so to leave no report at all end your turn \
 with the exact single line <<SILENT>> — prose "silence declarations" would themselves become a report; \
 only the bare marker is silent.
-- Your host can leave feedback on one of your reports; it reaches you as a [主人的反馈] message — that \
-is your own host talking to you, from the feedback box under the report. It is between the two of you: \
+- Your host can leave a 评价 — a note on one of your reports; it reaches you as a [评价] message — that \
+is your own host talking to you, from the 评价 box under the report. It is between the two of you: \
 never forward it to your counterpart and never mention it there. Take it as a correction — fix what it \
 points at (a wrong clock time or place in the calendar, something you got wrong) and answer your host \
 in your turn text as usual.
