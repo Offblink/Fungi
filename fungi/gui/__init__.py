@@ -14,7 +14,7 @@ import shutil  # the GUI tests replace shutil.which / sys.frozen / subprocess.Po
 import subprocess
 import sys
 
-from .. import todos, update
+from .. import todos
 from ..config import load_config, save_config
 from ..protocol import valid_host_name
 from ..tools.video import _HEALABLE, _module_available, _video_ready

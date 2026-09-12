@@ -707,6 +707,7 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
   `_internal.old` / `Fungi.exe.old`），不再有「exe 已让位、_internal 还原失败」那种半坏状态。
 - 回归：`tests/test_update.py::test_update_exe_recovers_when_the_running_exe_is_gone`、
   `test_update_exe_installs_the_runtime_even_without_one_on_disk`（两条在改前都是那条 WinError 2）。
+  **（2026-09-12 追记：整块更新功能已按用户裁决移除，见 §34——本节连同这两条用例都是历史记录。）**
 - **注意**：修复只有到**下一个 release** 才到得了 exe 用户手里——那台机器先手动解压新版 zip 覆盖一次。
 
 ### 30.2 任务栏图标：找回被误删的 `--icon`，并给进程一个身份
@@ -841,3 +842,22 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
   （`isAccepted() is True`、tray 不可见），改后绿。
 - 口径提醒：托盘图标的生命周期是「有房间才有」（`update_tray` 在创建/加入房间时调用）——与是否打开过
   WebUI 无关；关窗行为由 `rooms()` 是否非空决定。要真正退出仍是托盘菜单「退出」或页面上的「离开房间」。
+
+## 34. 调整（2026-09-12）：整块「软件更新」功能移除（用户裁决）
+
+用户报告：「更新失败：`<urlopen error [WinError 10054] 远程主机强迫关闭了一个现有的连接。>`」，
+随后裁决「算了，去掉整个更新功能」。
+
+- **为什么这条路终归不可靠**：更新包要从 `github.com` 的资产主机下载（302 到
+  `release-assets.githubusercontent.com`）。本机实测：**直连 3/3 被重置**（WinError 10054），只有经本地
+  代理才通。而「自动找代理」本身有陷阱——`urllib` 对**显式** `ProxyHandler` 也照样做 `proxy_bypass`
+  判断，于是游离的 `NO_PROXY` 能把兜底代理一起屏蔽；何况不同主机的代理端口各不相同
+  （用户原话：「有的主机都不是 7897」）。与其堆兜底，不如去掉。
+- **处置**：删除 `fungi/update.py`（下载 / 原地换装 / relaunch / `git pull` / 版本检查）、设置页的
+  「软件更新」一节及其线程与信号、`fungi/gui/__init__.py` 里对它的 re-export、`tests/test_update.py`、
+  `tests/test_gui.py` 的两条更新用例。**保留** `local_version()`——迁到 `fungi/config.py`
+  （`fungi --version` 与「版本只住 pyproject」的单一真源不变），回归 `tests/test_config.py`。
+- **代价（明确记录）**：exe 用户从此**手动**更新——到 Releases 页下载 `fungi-vX.Y.Z-windows-x64.zip`
+  覆盖解压；源码用户仍是 `git pull`（本就不自动装依赖）。要重造可参考 `v0.5.0` tag 的历史实现。
+- **顺带消失**：`.old` 残留清扫（`cleanup_old_install`）——旧安装里若还留着 `Fungi.exe.old` /
+  `_internal.old`，手工删掉即可。

@@ -16,8 +16,7 @@ import socket
 import sys
 from pathlib import Path
 
-from fungi.config import PROJECT_ROOT
-from fungi.update import local_version
+from fungi.config import PROJECT_ROOT, local_version
 
 
 def build_parser() -> argparse.ArgumentParser:

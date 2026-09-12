@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,6 +19,20 @@ RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
 DEFAULT_API_KEY = "sk-your-key-here"
 DEFAULT_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 DEFAULT_MODEL = "deepseek-v4-pro"
+
+
+def _pyproject() -> Path:
+    """Source layout: repo root. Frozen: the copy bundled next to web/."""
+    for cand in (PROJECT_ROOT / "pyproject.toml", RESOURCE_ROOT / "pyproject.toml"):
+        if cand.is_file():
+            return cand
+    raise FileNotFoundError("pyproject.toml not found (bundled copy missing?)")
+
+
+def local_version() -> str:
+    """Version string from pyproject.toml, e.g. "0.5.0" (the only place it lives)."""
+    with _pyproject().open("rb") as fh:
+        return tomllib.load(fh)["project"]["version"]
 
 
 @dataclass

@@ -5,7 +5,7 @@
 > **2026-09-11 现状对照**（历史章节照旧，下列事实已随代码前进）：托盘与 GUI 统一 PyQt5 + qfluentwidgets
 > （2026-09-03 的 PyQt6 定案已于 09-05 废除）；Redis 不引入（09-03 评审）；**包结构块已更新为当前仓库**——
 > 前端在**仓库根 `web/`**（不在 `fungi/` 内），GUI 拆成 `fungi/gui/` 包，新增 `todos.py` / `skills.py` /
-> `diary.py` / `cards.py` / `consent_rules.py` / `pending.py` / `room.py` / `update.py` 与
+> `diary.py` / `cards.py` / `consent_rules.py` / `pending.py` / `room.py` 与
 > `hub/{asks,client,commlog,mail}.py`；通讯 Agent 的工具面见 spec §6.1（`send_peer` 是唯一出网通道，
 > `ask_consent`/`ask_user` 已改名 `confirm`/`inquire`），信使自 2026-09-10 起不再有 `spawn` / `background`。
 
@@ -130,7 +130,6 @@ fungi/
   session.py  events.py  llm.py  agent.py  trilayer.py   # 移植自 YESIR（Sink 适配）
   skills.py                 # 技能沉淀（data/skills/<name>/SKILL.md + 列表注入 prompt）
   todos.py                  # 主人日历（data/todos.json）+ RULES + todo 工具
-  update.py                 # 版本自检（只提醒；GUI 设置页点按钮才更新）
   tray.py                   # PyQt5 托盘：运行时画图标 + fluent 菜单 + showMessage 通知
   hub/
     app.py                  # ThreadingHTTPServer + 房间路由 + fs 调度（守卫在 store）
