@@ -310,6 +310,17 @@ agent 气泡轨道漂移 + 进度环。
 
 手机扫码后弹「链接已失效」遮罩。根因**不是 token 不一致**（GUI 二维码与 `~/.fungi/webui_token` 同源，房间 Token 与 WebUI t= 是两回事，GUI 已加说明文字），而是：`m.html` 引用的 `/m.css`、`/m.js`、`/vendor/*` 是写死路径无法带 token，手机（非 loopback）全部 403 → CSS 丢失使遮罩失去 `display:none` 直接露出、JS 丢失页面死掉。修复：静态壳资源（页面/css/js/vendor）豁免门禁——壳里没有数据，无 token 打开 `/m` 时 m.js 正常运行并显示有样式的重扫码遮罩；数据端点保持全门禁；`/vendor/..` 穿越仍 403。同时：marked 从 jsdelivr CDN vendor 化到 `/vendor/marked.min.js`（国内手机网络 CDN 不可达会让 m.js 首行 ReferenceError 全页死掉，桌面 index.html 一并改本地）；遮罩改为默认可见、有 token 才隐藏（JS 挂掉也显示有意义提示）；连接被手机 reset 的 10054 噪音 traceback 由 `WebUIServer.handle_error` 吞掉。
 
+## 手机端第二道门：防火墙按「程序」放行（2026-09-12）
+
+用户报告「exe 扫码进不去移动 WebUI」，源码版却能进。根因不在前端也不在服务端：Windows 防火墙的入站例外
+**按程序**给，`python.exe` 当年被放行过、新解压的 `Fungi.exe` 没有 → 手机的包被静默丢弃（桌面零提示、
+手机一直转圈）。二维码地址本身没问题（`http://<lan_ip>:<port>/m?t=<token>`，WebUI 绑 `0.0.0.0`）。
+
+落地：手机端页自检「当前 exe 有没有入站放行」，没有就显示一行说明 + 「放行防火墙（手机才能连）」按钮，
+点它走 UAC 调 `New-NetFirewallRule`（幂等：先删同名规则再加），随后自动复检。实现与坑（PowerShell 探测
+1.8~2.6s 必须异步、程序可能有多条规则所以按数字判断、缓存策略、GUI 测试不许 shell out）见 `docs/spec.md` §32。
+规则按**程序路径**匹配：换目录/换版本的 exe 要重新放行。
+
 ## 视频模型门控（2026-09-06 深夜；同夜改为统一就绪检查）
 
 用户诉求："不要在要用的时候才下载"、"维持正常运行的都要一并检查"。VidSense 已 vendored 进仓库（顶层 `vidsense/`，上游 Offblink/VidSense 仍是开发上游，更新手动拷），三层落地：

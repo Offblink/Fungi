@@ -24,6 +24,7 @@ from qfluentwidgets import (
     SubtitleLabel,
 )
 
+from . import firewall
 from .widgets import _copy, _copy_button, _row
 
 
@@ -44,7 +45,8 @@ class MobilePage(QWidget):
 
         hint = BodyLabel(
             "发起或加入房间后，用手机相机扫码即可在手机上打开移动版 WebUI。\n"
-            "手机连不上时检查 Windows 防火墙（公用网络常拦 Python 入站）；换网络后点「刷新二维码」。"
+            "手机连不上时先看下面的防火墙提示（Windows 按「程序」放行入站连接）；"
+            "换网络后点「刷新二维码」。"
         )
         hint.setWordWrap(True)
         root.addWidget(hint)
@@ -78,6 +80,24 @@ class MobilePage(QWidget):
         self._dep_timer.setInterval(1000)
         self._dep_timer.timeout.connect(self._poll_qr_dep)
 
+        # Windows Firewall allows inbound per program: a freshly extracted exe
+        # has no rule of its own, so the phone silently times out. Warn about it
+        # and offer the UAC fix (the segno / VidSense one-click shape).
+        self.fw_label = BodyLabel("")
+        self.fw_label.setWordWrap(True)
+        self.fw_label.hide()
+        root.addWidget(self.fw_label)
+
+        self.fw_btn = PushButton(FluentIcon.WIFI, "放行防火墙（手机才能连）")
+        self.fw_btn.clicked.connect(self._allow_firewall)
+        self.fw_btn.hide()
+        root.addWidget(self.fw_btn)
+
+        self._fw_proc: subprocess.Popen | None = None
+        self._fw_timer = QTimer(self)
+        self._fw_timer.setInterval(500)
+        self._fw_timer.timeout.connect(self._poll_firewall)
+
         self.refresh()
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt naming)
@@ -93,6 +113,7 @@ class MobilePage(QWidget):
                 "先在「发起房间」或「加入房间」页启动房间，再回到这里生成二维码。"
             )
             self.url_edit.clear()
+            self._show_firewall(None)  # nothing to reach until a room runs
             return
         # The address is useful on its own (a phone can type it), so resolve it
         # first: the old order returned on a missing QR dependency before the
@@ -103,6 +124,7 @@ class MobilePage(QWidget):
 
         self.url_edit.setText(lan_payload(port, loopback=True)["url"])
         self.url_edit.setCursorPosition(0)  # 长地址默认滚到尾部，读起来像只剩 token
+        self._refresh_firewall()
         try:
             import segno  # noqa: PLC0415 (graceful degrade when not installed)
         except ImportError as exc:
@@ -175,3 +197,53 @@ class MobilePage(QWidget):
                 parent=self.window_ref,
             )
         self.refresh()
+
+    # ── Windows Firewall: the usual reason a phone cannot get in ──
+
+    def _refresh_firewall(self) -> None:
+        """Show the firewall state, probing Windows when the answer is not cached."""
+        if not firewall.supported() or not self.window_ref.rooms():
+            self._show_firewall(None)  # nothing to reach: stay quiet
+            return
+        known = firewall.cached()
+        if known is not None:
+            self._show_firewall(known)
+            return
+        if self._fw_proc is not None:
+            return  # a probe is already in flight
+        self._fw_proc = firewall.start_check()
+        if self._fw_proc is not None:
+            self._fw_timer.start()
+
+    def _poll_firewall(self) -> None:
+        if self._fw_proc is None or self._fw_proc.poll() is None:
+            return
+        proc, self._fw_proc = self._fw_proc, None
+        self._fw_timer.stop()
+        verdict = firewall.finish_check(proc)
+        # The room may have been left while the probe ran: nothing to warn about.
+        self._show_firewall(verdict if self.window_ref.rooms() else None)
+
+    def _show_firewall(self, allowed: bool | None) -> None:
+        blocked = allowed is False
+        if blocked:
+            self.fw_label.setText(
+                f"手机连不上多半是这个原因：Windows 防火墙还没有放行 "
+                f"{firewall.program_label()} 的入站连接"
+                "（源码版早就放行过 python.exe，打包版通常没人放行）。"
+            )
+        self.fw_label.setVisible(blocked)
+        self.fw_btn.setVisible(blocked)
+
+    def _allow_firewall(self) -> None:
+        error = firewall.request_allow()
+        if error is not None:
+            InfoBar.warning("没有放行", error, duration=4000, parent=self.window_ref)
+            return
+        InfoBar.success(
+            "已请求放行",
+            "在系统弹窗里同意后手机就能连；本页稍后自动复检",
+            duration=3000,
+            parent=self.window_ref,
+        )
+        QTimer.singleShot(2000, self._refresh_firewall)  # 授权之后再问一次

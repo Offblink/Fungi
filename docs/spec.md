@@ -780,3 +780,37 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
 `WSL_UTF8=1`，wsl 改用 UTF-8，与本模块的 utf-8 解码对齐。回归：
 `tests/test_tools.py::test_bash_children_see_utf8_wsl_env`、
 `tests/test_bash_session.py::test_session_children_see_utf8_wsl_env`（改前两条皆红：`Environment variable WSL_UTF8 not defined`）。
+
+## 32. 增补（2026-09-12）：手机端二维码进不去——防火墙按「程序」放行，页面自检 + 一键放行
+
+用户报告：「exe 扫二维码进不去移动 WebUI」（源码版能进）。真凶不是代码：
+
+- Windows 防火墙的入站例外是**按程序**的。本机取证：`python.exe`/`pythonw.exe` 有 8 条 Public 配置的
+  Allow 规则（当年跑源码时点过「允许访问」），而 `Fungi.exe` **一条都没有**；WLAN 是 Public 配置且
+  `DefaultInboundAction` 未配置 ⇒ 默认阻断入站。手机发出的包被**静默丢弃**——桌面侧零报错，手机侧一直转圈。
+- 二维码侧无问题：地址是 `http://<lan_ip>:<webui 端口>/m?t=<token>`（端口取自真实监听端口，WebUI 绑
+  `0.0.0.0`）；v0.4.1 包里 `_internal/web/*`、`_internal/segno` 都在。
+- 现场修复：给该 `Fungi.exe` 加一条入站 Allow（TCP / Private,Public），手机立刻能进。**这条规则是
+  按程序路径匹配的**：换目录、换版本的 exe 需要重新放行（同目录覆盖更新则沿用）。
+
+### 32.1 落地：手机端页自检 + 一键放行（`fungi/gui/firewall.py` + `fungi/gui/mobile.py`）
+
+- **检测**：`firewall.check_command()` 跑 `powershell -EncodedCommand`（UTF-16LE base64 → CJK 路径与引号
+  全免疫），数「Enabled + Inbound + Allow 且程序等于 `sys.executable` 真实路径」的规则条数；
+  `parse_count` 只读**最后一行**并按数字判断——程序可能同时拥有多条规则（python.exe 就是 2 条），
+  这正是第一版按 `== "1"` 判断踩到的坑。结果缓存：True 永久有效，「无规则」30s 过期（用户可能刚点了放行）。
+- **异步**：探测是一个 PowerShell 进程（本机实测 1.8~2.6s），所以走 `Popen` + `QTimer` 500ms 轮询，
+  不阻塞 GUI；没有房间时既不探测也不显示。
+- **提示与放行**：判定为「无规则」时，页面在二维码下方显示
+  「手机连不上多半是这个原因：Windows 防火墙还没有放行 `Fungi.exe` 的入站连接（源码版早就放行过
+  python.exe，打包版通常没人放行）」+「放行防火墙（手机才能连）」按钮。按钮经
+  `ShellExecuteW("runas")`（UAC）执行同一份 `-EncodedCommand` 脚本：先删同名规则再
+  `New-NetFirewallRule -Direction Inbound -Action Allow -Protocol TCP -Profile Private,Public`（幂等），
+  成功后清缓存并在 2s 后复检；UAC 被取消（返回 5）则 InfoBar 如实说明，不装作成功。
+- 页面顶部提示文案改口：不再说「公用网络常拦 Python 入站」（源码视角），改为「看下面的防火墙提示」。
+- 回归：`tests/test_gui.py::test_firewall_probe_parses_the_rule_count`、
+  `test_firewall_allow_rule_targets_this_program_only`、
+  `test_mobile_page_offers_the_firewall_fix_when_this_program_is_blocked`；该文件另有 autouse fixture 把
+  `firewall.start_check` 打桩成 `None`（真判定依机器而变且 PowerShell 慢，GUI 测试不该 shell out）。
+- 验证：真机探测 `python.exe`→True（2 条规则）、今天手工加的 `Fungi.exe`→True、`notepad.exe`→False；
+  真实平台截图确认「无规则」态显示提示+按钮、「有规则」态两者皆隐。

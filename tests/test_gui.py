@@ -62,6 +62,17 @@ def _fresh_pages(window):
     window.join_page.leave_btn.setVisible(False)
 
 
+@pytest.fixture(autouse=True)
+def _no_live_firewall_probe(monkeypatch):
+    """Never shell out to PowerShell from a GUI test: it is slow, and the verdict
+    depends on this machine's own rules. Each test stubs the verdict it needs."""
+    from fungi.gui import firewall
+
+    monkeypatch.setattr(firewall, "start_check", lambda program=None: None)
+    yield
+    firewall.forget()
+
+
 def test_three_pages_present(window):
     assert window.host_page.objectName() == "hostPage"
     assert window.join_page.objectName() == "joinPage"
@@ -142,6 +153,71 @@ def test_mobile_page_renders_qr_for_running_room(window):
         window.host_page.room = None
         page.refresh()
     assert page.url_edit.text() == ""
+
+
+def test_firewall_probe_parses_the_rule_count():
+    from fungi.gui import firewall
+
+    assert firewall.parse_count("1") is True
+    assert firewall.parse_count("0\n") is False
+    assert firewall.parse_count("2") is True  # python.exe owns two rules
+    assert firewall.parse_count("Get-NetFirewallRule : Access is denied.\n0") is False
+    assert firewall.parse_count("") is None
+    assert firewall.parse_count("PowerShell is not recognized\n") is None
+
+
+def test_firewall_allow_rule_targets_this_program_only():
+    """交给 Windows 的放行脚本必须是「入站 / 允许 / 只认这个程序」。"""
+    import base64
+
+    from fungi.gui import firewall
+
+    exe = r"C:\Program Files\Fungi\Fungi.exe"
+    cmd = firewall.allow_command(exe)
+    assert cmd[0].lower().startswith("powershell")
+    script = base64.b64decode(cmd[-1]).decode("utf-16-le")
+    assert exe in script
+    assert "-Direction Inbound -Action Allow" in script
+    assert firewall.rule_name(exe) == "Fungi mobile WebUI (Fungi.exe)"
+
+
+def test_mobile_page_offers_the_firewall_fix_when_this_program_is_blocked(window, monkeypatch):
+    """2026-09-12 用户报告：exe 扫码进不去移动 WebUI——打包版从没被防火墙放行过
+    （源码版 python.exe 早就放行）。页面要看得出来，并把放行做成一次点击。"""
+    from fungi.gui import firewall
+
+    page = window.mobile_page
+
+    class FakeWebRoom:
+        def open_webui(self, open_browser=True):
+            return "http://localhost:12345"
+
+    window.host_page.room = FakeWebRoom()
+    monkeypatch.setattr(firewall, "supported", lambda: True)
+    try:
+        monkeypatch.setattr(firewall, "cached", lambda program=None: False)
+        page.refresh()
+        assert page.fw_btn.isVisibleTo(page)
+        assert "防火墙" in page.fw_label.text()
+        assert firewall.program_label() in page.fw_label.text()
+
+        monkeypatch.setattr(firewall, "cached", lambda program=None: True)
+        page.refresh()
+        assert not page.fw_btn.isVisibleTo(page)
+        assert not page.fw_label.isVisibleTo(page)
+
+        asked: list[str] = []
+        monkeypatch.setattr(firewall, "cached", lambda program=None: False)
+        monkeypatch.setattr(
+            firewall, "request_allow", lambda program=None: asked.append("runas") or None
+        )
+        page.refresh()
+        page.fw_btn.click()
+        assert asked == ["runas"]  # 点按钮 = 请 Windows 提权加规则
+    finally:
+        window.host_page.room = None
+        page.refresh()
+        assert not page.fw_btn.isVisibleTo(page)  # 没房间就不显示
 
 
 def test_host_page_starts_server_in_process(window, monkeypatch):
