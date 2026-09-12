@@ -816,6 +816,27 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
 - 验证：真机探测 `python.exe`→True（2 条规则）、今天手工加的 `Fungi.exe`→True、`notepad.exe`→False；
   真实平台截图确认「无规则」态显示提示+按钮、「有规则」态两者皆隐。
 
+### 32.2 调整（2026-09-12，用户反馈）：状态常显 + 未放行时自动发起 UAC
+
+用户两句话：「首先我没看到手机端有所谓的自检+放行」「其次为啥你不直接 uac 呢」。查下来两条都成立：
+
+- **为什么看不见**：提示行与按钮**只在判定为「被挡」时才显示**。而他本机那条路径早就被放行过——
+  两条 enabled+inbound+allow 规则（上一轮手工加的 `Fungi exe (mobile WebUI)`，以及应用自己建的
+  `Fungi mobile WebUI (Fungi.exe)`，后者只可能由「一键放行」生成）→ 探测返回 True → 整页安静 →
+  功能看起来根本不存在。同理，没起房间时也不显示（没有可连的东西）。
+- **改法**：`_show_firewall` 分三态——`True`：常显一行「Windows 防火墙已放行 <程序名> 的入站连接，手机可以直接连。」
+  （`False` 才藏起来的设计被判定为把功能藏没了）；`False`：显示原因 + 按钮，并**由应用自己发起一次 UAC**
+  （`_fw_prompted`，每页生命周期只自动一次；用户取消后不再自动纠缠，按钮留着手动重试）；
+  `None`（没房间 / 非 Windows / 探测失败）照旧什么都不显示，不许瞎报状态。
+- **UAC 的边界**：它**无法静默**——`ShellExecuteW("runas")` 必弹系统确认框。所以「直接 UAC」省掉的只是
+  **那一次点击**，不是那次确认；自动弹窗只发生在「房间运行中 + 探测判定被挡 + 打开手机端页」这一刻。
+- 顶部提示不再指着「下面的防火墙提示」，只说扫码与刷新——状态行自己会说话。
+- **探测的脆弱点（本轮踩到）**：规则匹配是整串比较（PowerShell `-eq`，大小写不敏感但对**斜杠方向敏感**），
+  所以只能喂 `os.path.realpath(sys.executable)`（原生反斜杠）。用正斜杠路径手工查询会得到 0 条、误判「未放行」。
+- 回归：`tests/test_gui.py::test_mobile_page_asks_windows_for_the_rule_by_itself_only_once` + 放宽后的
+  `test_mobile_page_offers_the_firewall_fix_when_this_program_is_blocked`（已放行态改为断言状态行可见）。
+  GUI 测试的 autouse fixture 现在把 `firewall.request_allow` 也打桩，否则「被挡」态一进页面就会真弹 UAC。
+
 ## 33. 修复（2026-09-12）：关窗其实没停进托盘，进程直接退了（房间被杀）
 
 用户报告：「压根没有最小化到托盘的能力，无论何种情况下，关闭启动器就关闭了应用」。

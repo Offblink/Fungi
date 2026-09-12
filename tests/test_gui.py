@@ -60,6 +60,7 @@ def _fresh_pages(window):
     window.join_page.room = None
     window.join_page.join_btn.setEnabled(True)
     window.join_page.leave_btn.setVisible(False)
+    window.mobile_page._fw_prompted = False  # the auto-UAC fires once per page life
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +70,8 @@ def _no_live_firewall_probe(monkeypatch):
     from fungi.gui import firewall
 
     monkeypatch.setattr(firewall, "start_check", lambda program=None: None)
+    # The blocked state raises UAC by itself now: no test may reach the real one.
+    monkeypatch.setattr(firewall, "request_allow", lambda program=None: None)
     yield
     firewall.forget()
 
@@ -230,10 +233,12 @@ def test_mobile_page_offers_the_firewall_fix_when_this_program_is_blocked(window
         assert "防火墙" in page.fw_label.text()
         assert firewall.program_label() in page.fw_label.text()
 
+        # 2026-09-12 用户：「放行之后整页安静，我看不出来有自检这回事」——状态常显。
         monkeypatch.setattr(firewall, "cached", lambda program=None: True)
         page.refresh()
+        assert page.fw_label.isVisibleTo(page)
+        assert "已放行" in page.fw_label.text()
         assert not page.fw_btn.isVisibleTo(page)
-        assert not page.fw_label.isVisibleTo(page)
 
         asked: list[str] = []
         monkeypatch.setattr(firewall, "cached", lambda program=None: False)
@@ -247,6 +252,37 @@ def test_mobile_page_offers_the_firewall_fix_when_this_program_is_blocked(window
         window.host_page.room = None
         page.refresh()
         assert not page.fw_btn.isVisibleTo(page)  # 没房间就不显示
+        assert not page.fw_label.isVisibleTo(page)
+
+
+def test_mobile_page_asks_windows_for_the_rule_by_itself_only_once(window, monkeypatch):
+    """2026-09-12 用户追问「为啥不直接 UAC」：检测到被挡就自己提权，不必先点按钮；
+    取消过就不再自动纠缠（按钮留着随时重试）。"""
+    from fungi.gui import firewall
+
+    page = window.mobile_page
+
+    class FakeWebRoom:
+        def open_webui(self, open_browser=True):
+            return "http://localhost:12345"
+
+    calls: list[str] = []
+    window.host_page.room = FakeWebRoom()
+    monkeypatch.setattr(firewall, "supported", lambda: True)
+    monkeypatch.setattr(firewall, "cached", lambda program=None: False)
+    monkeypatch.setattr(
+        firewall, "request_allow", lambda program=None: calls.append("runas") or None
+    )
+    try:
+        page.refresh()
+        assert calls == ["runas"]
+        page.refresh()  # 复检仍是被挡：不再自动弹第二次
+        assert calls == ["runas"]
+        page.fw_btn.click()
+        assert calls == ["runas", "runas"]
+    finally:
+        window.host_page.room = None
+        page.refresh()
 
 
 def test_host_page_starts_server_in_process(window, monkeypatch):

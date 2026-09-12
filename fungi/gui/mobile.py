@@ -45,7 +45,6 @@ class MobilePage(QWidget):
 
         hint = BodyLabel(
             "发起或加入房间后，用手机相机扫码即可在手机上打开移动版 WebUI。\n"
-            "手机连不上时先看下面的防火墙提示（Windows 按「程序」放行入站连接）；"
             "换网络后点「刷新二维码」。"
         )
         hint.setWordWrap(True)
@@ -81,8 +80,11 @@ class MobilePage(QWidget):
         self._dep_timer.timeout.connect(self._poll_qr_dep)
 
         # Windows Firewall allows inbound per program: a freshly extracted exe
-        # has no rule of its own, so the phone silently times out. Warn about it
-        # and offer the UAC fix (the segno / VidSense one-click shape).
+        # has no rule of its own, so the phone silently times out. The state is
+        # always on screen (a hidden warning reads as "no such feature"), and the
+        # UAC fix fires by itself once per run — cancelling still leaves the
+        # button for a retry.
+        self._fw_prompted = False
         self.fw_label = BodyLabel("")
         self.fw_label.setWordWrap(True)
         self.fw_label.hide()
@@ -225,15 +227,26 @@ class MobilePage(QWidget):
         self._show_firewall(verdict if self.window_ref.rooms() else None)
 
     def _show_firewall(self, allowed: bool | None) -> None:
-        blocked = allowed is False
-        if blocked:
+        """Three states: blocked (say why, offer the fix, ask UAC once), allowed
+        (say so — silence would hide the feature), unknown (stay quiet)."""
+        if allowed is None:  # no room, non-Windows, or an unreadable probe
+            self.fw_label.setVisible(False)
+            self.fw_btn.setVisible(False)
+            return
+        name = firewall.program_label()
+        if allowed:
+            self.fw_label.setText(f"Windows 防火墙已放行 {name} 的入站连接，手机可以直接连。")
+            self.fw_btn.setVisible(False)
+        else:
             self.fw_label.setText(
-                f"手机连不上多半是这个原因：Windows 防火墙还没有放行 "
-                f"{firewall.program_label()} 的入站连接"
+                f"手机连不上多半是这个原因：Windows 防火墙还没有放行 {name} 的入站连接"
                 "（源码版早就放行过 python.exe，打包版通常没人放行）。"
             )
-        self.fw_label.setVisible(blocked)
-        self.fw_btn.setVisible(blocked)
+            self.fw_btn.setVisible(True)
+            if not self._fw_prompted:  # ask Windows once; a cancelled prompt is final
+                self._fw_prompted = True
+                self._allow_firewall()
+        self.fw_label.setVisible(True)
 
     def _allow_firewall(self) -> None:
         error = firewall.request_allow()
