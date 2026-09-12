@@ -53,9 +53,29 @@ jobs:
           --exclude-module PyQt6 --exclude-module PySide2 --exclude-module PySide6
           --exclude-module shiboken2 --exclude-module shiboken6
 
+      # The two documents a tester gets sent for travel at the top of the
+      # bundle (next to Fungi.exe), not through --add-data: onedir would bury
+      # them in _internal/, where nobody looks.
       - name: Zip exe bundle
         shell: pwsh
-        run: Compress-Archive -Path dist/Fungi -DestinationPath "fungi-$($env:GITHUB_REF_NAME)-windows-x64.zip"
+        run: |
+          Copy-Item README.md dist/Fungi/
+          New-Item -ItemType Directory -Force dist/Fungi/docs | Out-Null
+          Copy-Item "docs/测试人员必看！.docx" dist/Fungi/docs/
+          Compress-Archive -Path dist/Fungi -DestinationPath "fungi-$($env:GITHUB_REF_NAME)-windows-x64.zip"
+
+      # A file can drop out of the bundle without failing the build (--icon
+      # did, 0066456), so assert both documents are in the zip we publish.
+      - name: Check the bundle carries both documents
+        shell: python
+        run: |
+          import os, zipfile
+          archive = zipfile.ZipFile("fungi-%s-windows-x64.zip" % os.environ["GITHUB_REF_NAME"])
+          names = archive.namelist()
+          assert "Fungi/README.md" in names, names
+          guide = [n for n in names if n.startswith("Fungi/docs/")]
+          assert len(guide) == 1 and guide[0].endswith(".docx"), names
+          print("bundled:", ascii(guide[0]), archive.getinfo(guide[0]).file_size, "bytes")
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

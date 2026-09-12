@@ -8,5 +8,8 @@ __pycache__/
 inbox/
 output/
 
-# Working documents the user edits in Word (kept on disk, out of the repo)
+# Working documents the user edits in Word (kept on disk, out of the repo).
+# The tester guide is the exception: the exe bundle ships it, and the bundle is
+# built from the repo on a runner, so it has to be tracked.
 docs/*.docx
+!docs/测试人员必看！.docx
