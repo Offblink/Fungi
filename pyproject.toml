@@ -1,6 +1,6 @@
 [project]
 name = "fungi"
-version = "0.4.1"
+version = "0.5.0"
 description = "Fungi — LAN multi-host Orchestrator network built on the YESIR TriLayer agent harness"
 requires-python = ">=3.13"
 dependencies = ["segno>=1.6", "pillow>=10.0"]
