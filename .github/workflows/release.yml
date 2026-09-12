@@ -55,7 +55,8 @@ jobs:
 
       # The two documents a tester gets sent for travel at the top of the
       # bundle (next to Fungi.exe), not through --add-data: onedir would bury
-      # them in _internal/, where nobody looks.
+      # them in _internal/, where nobody looks. The detailed README is not
+      # copied here: it ships in the source zip, for readers of the source.
       - name: Zip exe bundle
         shell: pwsh
         run: |
