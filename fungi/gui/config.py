@@ -148,18 +148,7 @@ class ConfigPage(QWidget):
         self.tone_row.setVisible(self.ring_switch.isChecked())
         root.addWidget(self.tone_row)
 
-        # 视频模型：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
-        root.addSpacing(10)
-        root.addWidget(SubtitleLabel("VidSense"))
-        self.video_status = BodyLabel()
-        self.video_status.setWordWrap(True)
-        root.addWidget(self.video_status)
-        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
-        self.download_btn.clicked.connect(self._download_models)
-        root.addWidget(self.download_btn)
-
-
-        # 实验性功能（大标题）→ 日记（小标题 + 右侧开关 + 说明）——压轴
+        # 实验性功能（大标题）→ 日记 / 视频理解（小标题）——压轴
         root.addSpacing(10)
         root.addWidget(SubtitleLabel("实验性"))
         diary_title_row = QHBoxLayout()
@@ -185,6 +174,19 @@ class ConfigPage(QWidget):
         )
         diary_hint.setWordWrap(True)
         root.addWidget(diary_hint)
+
+        # 视频理解（小标题）：进场自动检查，缺失才给下载入口（video 工具拒绝现场下载）
+        root.addSpacing(10)
+        video_lbl = BodyLabel("视频理解")
+        video_lbl.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        root.addWidget(video_lbl)
+        self.video_label = video_lbl  # tests pin its place under 实验性
+        self.video_status = BodyLabel()
+        self.video_status.setWordWrap(True)
+        root.addWidget(self.video_status)
+        self.download_btn = PushButton(FluentIcon.DOWNLOAD, "下载缺失模型")
+        self.download_btn.clicked.connect(self._download_models)
+        root.addWidget(self.download_btn)
 
         # 软件更新：自动检查，落后才亮按钮（不自动更新）
         root.addSpacing(10)

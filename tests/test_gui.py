@@ -155,6 +155,35 @@ def test_mobile_page_renders_qr_for_running_room(window):
     assert page.url_edit.text() == ""
 
 
+def test_settings_put_video_understanding_under_experimental_below_diary(window):
+    """用户定调（2026-09-12）：视频理解不再是顶层「VidSense」段，而是「实验性」之下、
+    日记下面的小标题——与 Diary 并列。"""
+    page = window.cfg_page
+    root = page.layout()
+
+    def slot(target):
+        """Row index holding `target`: a row is either a widget or a sub-layout."""
+        for i in range(root.count()):
+            item = root.itemAt(i)
+            sub = item.layout()
+            if item.widget() is target or (sub is not None and sub.indexOf(target) >= 0):
+                return i
+        return -1
+
+    def heading(text):
+        for i in range(root.count()):
+            widget = root.itemAt(i).widget()
+            if widget is not None and getattr(widget, "text", lambda: None)() == text:
+                return i
+        return -1
+
+    experimental = heading("实验性")
+    assert experimental > -1, "「实验性」大标题不见了"
+    assert heading("VidSense") == -1, "视频理解又回到顶层了"
+    assert slot(page.diary_switch) > experimental
+    assert slot(page.video_label) > slot(page.diary_switch)  # 视频理解在日记下面
+
+
 def test_firewall_probe_parses_the_rule_count():
     from fungi.gui import firewall
 
