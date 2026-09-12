@@ -571,8 +571,33 @@ def test_close_parks_room_to_tray(window):
     window.close()
     assert not room.stopped  # close hides to tray; the room keeps running
     assert not window.isVisible()
+    assert window._tray.isVisible()  # 托盘图标留着：那是回窗口与 WebUI 的路
     window._tray.hide()
     page.room = None
+
+
+def test_close_parks_instead_of_closing_the_window(window):
+    """2026-09-12 真机实测：关窗原来会把关闭事件交回 QWidget 的默认实现 → 事件被 accept →
+    「最后一个窗口已关闭」触发 quitOnLastWindowClosed → **进程直接退出**（房间被杀、托盘图标
+    同时被 hide 掉）。「关窗转托盘后台房间不停」要成立，事件必须保持 ignored、托盘必须留着。"""
+    from PyQt5.QtGui import QCloseEvent
+
+    page = window.host_page
+    room = FakeRoom()
+    page.room = room
+    window._tray = None
+    window.show()
+    try:
+        assert window.isVisible()
+        event = QCloseEvent()
+        window.closeEvent(event)
+        assert not event.isAccepted()  # 吃下事件 = 窗口真关 = 应用退出
+        assert not window.isVisible()  # 只是藏起来
+        assert window._tray.isVisible()  # 回得去的路还在
+        assert not room.stopped
+    finally:
+        window._tray.hide()
+        page.room = None
 
 
 def test_tray_menu_pulls_up_from_the_icon(window, monkeypatch):

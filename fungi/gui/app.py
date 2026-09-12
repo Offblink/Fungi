@@ -179,12 +179,22 @@ class FungiGui(FluentWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if self.rooms():
-            # Closing the window parks the room in the tray; only the tray
-            # menu's 退出 (or a page's 离开房间 button) actually stops it.
+            # Closing the window parks the room in the tray; only the tray menu's
+            # 退出 (or a page's 离开房间 button) actually stops it.
+            #
+            # The event must STAY ignored and must NOT be chained into QWidget's
+            # own handler: the default implementation accepts the close, the last
+            # window then counts as closed, and quitOnLastWindowClosed kills the
+            # process — which stopped the room AND hid the tray icon, the exact
+            # opposite of parking (2026-09-12 probe: tray_visible=False and
+            # exec_() returned on its own right after the close).
             event.ignore()
             self.hide()
             if self._tray is None:
                 self.update_tray()
+            if self._tray is not None:
+                self._tray.show()  # the way back has to stay visible
+            return
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)

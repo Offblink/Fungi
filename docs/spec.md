@@ -814,3 +814,30 @@ vidsense 子进程的 Python 解释器）——需要视频理解请用源码方
   `firewall.start_check` 打桩成 `None`（真判定依机器而变且 PowerShell 慢，GUI 测试不该 shell out）。
 - 验证：真机探测 `python.exe`→True（2 条规则）、今天手工加的 `Fungi.exe`→True、`notepad.exe`→False；
   真实平台截图确认「无规则」态显示提示+按钮、「有规则」态两者皆隐。
+
+## 33. 修复（2026-09-12）：关窗其实没停进托盘，进程直接退了（房间被杀）
+
+用户报告：「压根没有最小化到托盘的能力，无论何种情况下，关闭启动器就关闭了应用」。
+
+- **病因**：`FungiGui.closeEvent` 在「停到托盘」分支里把关闭事件 `ignore()` 之后**继续往下走**，
+  先无条件 `self._tray.hide()`（把回窗口的唯一入口也抹了），再 `super().closeEvent(event)` —— Qt 的
+  默认实现会 **accept** 关闭事件，于是「最后一个窗口已关闭」触发 `quitOnLastWindowClosed=True`，
+  **整个进程退出**：房间随之消失、WebUI 也断。真机探针（真实平台，构造带假房间的 `FungiGui`：
+  `show()` → `close()` → 逐时刻读 `isVisible()`，并用「`exec_()` 会不会自己返回」判断进程是否退出）：
+
+  | 时刻 | 修前 | 修后 |
+  |---|---|---|
+  | 房间启动 | win ✓ tray ✓ | win ✓ tray ✓ |
+  | 关窗 | win ✗ **tray ✗** | win ✗ tray ✓ |
+  | 关窗 2s 后 | **`exec_()` 自己返回（进程退出）** | 进程仍在、房间未停 |
+  | 托盘菜单「显示主界面」 | 无处可点 | 窗口回来（`show_and_raise`） |
+
+- **修法**（`fungi/gui/app.py`）：有房间时 `event.ignore()` + `self.hide()` + `self._tray.show()` 之后
+  **直接 return**，不再调 `super().closeEvent`、也不再 hide 托盘；没有房间时那条「hide 托盘 → 正常关闭」
+  的路径保持不变（此时进程确实无事可做）。
+- 回归：`tests/test_gui.py::test_close_parks_room_to_tray`（关窗后托盘仍可见）、
+  `test_close_parks_instead_of_closing_the_window`（新：直接发一个 `QCloseEvent` 给 `closeEvent`，
+  断言事件**没被 accept** —— 吃下它就等于关窗口、进而退出应用）。两条在改前**都红**
+  （`isAccepted() is True`、tray 不可见），改后绿。
+- 口径提醒：托盘图标的生命周期是「有房间才有」（`update_tray` 在创建/加入房间时调用）——与是否打开过
+  WebUI 无关；关窗行为由 `rooms()` 是否非空决定。要真正退出仍是托盘菜单「退出」或页面上的「离开房间」。
